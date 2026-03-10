@@ -1,7 +1,7 @@
 --[[
     Skill Hub - Murder Mystery 2
-    Design: Rinns Hub Blue Lock Style
-    Game: Murder Mystery 2
+    By: ameksi-web
+    GitHub: https://github.com/ameksi-web/Skill-Hub
 ]]
 
 local Players           = game:GetService("Players")
@@ -10,49 +10,30 @@ local Workspace         = game:GetService("Workspace")
 local TweenService      = game:GetService("TweenService")
 local UserInputService  = game:GetService("UserInputService")
 local RunService        = game:GetService("RunService")
-local HttpService       = game:GetService("HttpService")
 local Player            = Players.LocalPlayer
-local Mouse             = Player:GetMouse()
-
--- ═══════════════════════════════════════
---  ПРОВЕРКА ИГРЫ
--- ═══════════════════════════════════════
-local MM2_PLACE_IDS = {142823291, 142823291}
-local isMM2 = table.find(MM2_PLACE_IDS, game.PlaceId) ~= nil
 
 -- ═══════════════════════════════════════
 --  СОСТОЯНИЯ
 -- ═══════════════════════════════════════
 local STATE = {
-    ESPEnabled      = false,
-    GunBotEnabled   = false,
-    KnifeAuraEnabled= false,
-    AutoCollectEnabled = false,
-    SpeedHackEnabled= false,
-    NoClipEnabled   = false,
-    InfiniteCoins   = false,
-    AutoFarmEnabled = false,
-    AntiBanEnabled  = true,
-    GodModeEnabled  = false,
-    ShowKiller      = false,
-    ShowSheriff     = false,
-    FakeLag         = false,
-    MurderESP       = false,
-    SheriffESP      = false,
+    ESPEnabled       = false,
+    MurderESP        = false,
+    GunBot           = false,
+    KnifeAura        = false,
+    GodMode          = false,
+    InfiniteCoins    = false,
+    AutoFarm         = false,
+    SpeedHack        = false,
+    NoClip           = false,
+    AntiBan          = true,
+    FakeLag          = false,
 }
 
 local SETTINGS = {
-    WalkSpeed       = 16,
-    JumpPower       = 50,
-    ESPDistance     = 500,
-    KnifeAuraRadius = 10,
+    WalkSpeed        = 50,
+    JumpPower        = 100,
+    KnifeAuraRadius  = 10,
 }
-
--- ═══════════════════════════════════════
---  ЗАГРУЗКА ЛОГОТИПА С GITHUB
--- ═══════════════════════════════════════
-local LOGO_URL = "https://raw.githubusercontent.com/ameksi-web/Skill-Hub/main/Logo/logo.png"
-local logoLoaded = false
 
 -- ═══════════════════════════════════════
 --  УДАЛИТЬ СТАРЫЙ GUI
@@ -64,33 +45,21 @@ end
 -- ═══════════════════════════════════════
 --  ЦВЕТА (Rinns Hub Blue Lock стиль)
 -- ═══════════════════════════════════════
-local Colors = {
-    -- Основные
-    BG          = Color3.fromRGB(8,   10,  20),   -- Очень тёмный синий
-    BG2         = Color3.fromRGB(12,  15,  30),   -- Тёмный синий
-    BG3         = Color3.fromRGB(18,  22,  45),   -- Синий фон карточки
-    
-    -- Акцент Blue Lock (яркий синий / cyan)
-    Accent      = Color3.fromRGB(0,   140, 255),  -- Основной синий
-    AccentDark  = Color3.fromRGB(0,   90,  200),  -- Тёмный синий
-    AccentGlow  = Color3.fromRGB(30,  160, 255),  -- Светящийся
-    Cyan        = Color3.fromRGB(0,   220, 255),  -- Cyan акцент
-    
-    -- Текст
+local C = {
+    BG          = Color3.fromRGB(8,   10,  20),
+    BG2         = Color3.fromRGB(12,  15,  30),
+    BG3         = Color3.fromRGB(18,  22,  45),
+    Accent      = Color3.fromRGB(0,   140, 255),
+    AccentDark  = Color3.fromRGB(0,   90,  200),
+    Cyan        = Color3.fromRGB(0,   220, 255),
     TextPrimary = Color3.fromRGB(255, 255, 255),
     TextSecond  = Color3.fromRGB(160, 175, 210),
     TextDim     = Color3.fromRGB(90,  105, 150),
-    
-    -- Статус
     Green       = Color3.fromRGB(50,  255, 130),
     Red         = Color3.fromRGB(255, 70,  70),
     Yellow      = Color3.fromRGB(255, 210, 50),
     Purple      = Color3.fromRGB(150, 80,  255),
-    
-    -- Полоска
     Divider     = Color3.fromRGB(25,  35,  70),
-    
-    -- Кнопка вкл
     BtnOn       = Color3.fromRGB(0,   50,  140),
     BtnOff      = Color3.fromRGB(20,  25,  55),
 }
@@ -105,1037 +74,966 @@ ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.DisplayOrder = 999
 ScreenGui.Parent = Player.PlayerGui
 
--- ───────────────────────────────────────
---  ГЛАВНОЕ ОКНО
--- ───────────────────────────────────────
+-- Главное окно
 local Main = Instance.new("Frame")
 Main.Name = "Main"
 Main.Size = UDim2.new(0, 560, 0, 440)
 Main.Position = UDim2.new(0.5, -280, 0.5, -220)
-Main.BackgroundColor3 = Colors.BG
+Main.BackgroundColor3 = C.BG
 Main.BorderSizePixel = 0
-Main.ClipsDescendants = true
 Main.Active = true
+Main.ClipsDescendants = true
 Main.Parent = ScreenGui
-
 Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 16)
 
--- Внешнее свечение
-local outerGlow = Instance.new("ImageLabel")
-outerGlow.Name = "OuterGlow"
-outerGlow.Size = UDim2.new(1, 60, 1, 60)
-outerGlow.Position = UDim2.new(0, -30, 0, -30)
-outerGlow.BackgroundTransparency = 1
-outerGlow.Image = "rbxassetid://5028857084"
-outerGlow.ImageColor3 = Colors.Accent
-outerGlow.ImageTransparency = 0.75
-outerGlow.ZIndex = 0
-outerGlow.Parent = Main
+-- Обводка
+local mainStroke = Instance.new("UIStroke", Main)
+mainStroke.Color = C.Accent
+mainStroke.Thickness = 1.5
 
--- Акцент-линия сверху (Blue Lock стиль)
-local topLine = Instance.new("Frame")
+-- Линия сверху
+local topLine = Instance.new("Frame", Main)
 topLine.Size = UDim2.new(1, 0, 0, 2)
-topLine.BackgroundColor3 = Colors.Accent
+topLine.BackgroundColor3 = C.Accent
 topLine.BorderSizePixel = 0
 topLine.ZIndex = 10
-topLine.Parent = Main
 
--- Градиент линии
-local lineGrad = Instance.new("UIGradient")
+local lineGrad = Instance.new("UIGradient", topLine)
 lineGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Colors.BG),
-    ColorSequenceKeypoint.new(0.3, Colors.Accent),
-    ColorSequenceKeypoint.new(0.7, Colors.Cyan),
-    ColorSequenceKeypoint.new(1, Colors.BG),
+    ColorSequenceKeypoint.new(0,   C.BG),
+    ColorSequenceKeypoint.new(0.3, C.Accent),
+    ColorSequenceKeypoint.new(0.7, C.Cyan),
+    ColorSequenceKeypoint.new(1,   C.BG),
 })
-lineGrad.Parent = topLine
 
--- ───────────────────────────────────────
+-- ═══════════════════════════════════════
 --  DRAG
--- ───────────────────────────────────────
+-- ═══════════════════════════════════════
 local dragging, dragInput, dragStart, startPos
-local function setupDrag(frame)
-    frame.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-            dragStart = input.Position
-            startPos = Main.Position
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
-            end)
-        end
-    end)
-    frame.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement then
-            dragInput = input
-        end
-    end)
-end
 
-UserInputService.InputChanged:Connect(function(input)
-    if input == dragInput and dragging then
-        local delta = input.Position - dragStart
-        local newPos = UDim2.new(
-            startPos.X.Scale, startPos.X.Offset + delta.X,
-            startPos.Y.Scale, startPos.Y.Offset + delta.Y
-        )
-        TweenService:Create(Main, TweenInfo.new(0.05), {Position = newPos}):Play()
+Main.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging  = true
+        dragStart = input.Position
+        startPos  = Main.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
     end
 end)
 
--- ───────────────────────────────────────
---  ЛЕВАЯ БОКОВАЯ ПАНЕЛЬ (навигация)
--- ───────────────────────────────────────
-local Sidebar = Instance.new("Frame")
-Sidebar.Name = "Sidebar"
-Sidebar.Size = UDim2.new(0, 160, 1, 0)
-Sidebar.BackgroundColor3 = Colors.BG2
+Main.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        local d = input.Position - dragStart
+        Main.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + d.X,
+            startPos.Y.Scale, startPos.Y.Offset + d.Y
+        )
+    end
+end)
+
+-- ═══════════════════════════════════════
+--  ЛЕВЫЙ САЙДБАР
+-- ═══════════════════════════════════════
+local Sidebar = Instance.new("Frame", Main)
+Sidebar.Size = UDim2.new(0, 155, 1, 0)
+Sidebar.BackgroundColor3 = C.BG2
 Sidebar.BorderSizePixel = 0
 Sidebar.ZIndex = 2
-Sidebar.Parent = Main
+Instance.new("UICorner", Sidebar).CornerRadius = UDim.new(0, 16)
 
--- Нижние углы — квадратные (только левые округлые)
-local sideCorner = Instance.new("UICorner", Sidebar)
-sideCorner.CornerRadius = UDim.new(0, 16)
+-- Фикс правых углов сайдбара
+local sF = Instance.new("Frame", Sidebar)
+sF.Size = UDim2.new(0, 16, 1, 0)
+sF.Position = UDim2.new(1, -16, 0, 0)
+sF.BackgroundColor3 = C.BG2
+sF.BorderSizePixel = 0
 
-local sideFix = Instance.new("Frame", Sidebar)
-sideFix.Size = UDim2.new(0, 16, 1, 0)
-sideFix.Position = UDim2.new(1, -16, 0, 0)
-sideFix.BackgroundColor3 = Colors.BG2
-sideFix.BorderSizePixel = 0
-sideFix.ZIndex = 1
+-- Лого блок
+local logoBlock = Instance.new("Frame", Sidebar)
+logoBlock.Size = UDim2.new(1, 0, 0, 105)
+logoBlock.BackgroundTransparency = 1
+logoBlock.ZIndex = 3
 
--- Лого + название в сайдбаре
-local logoFrame = Instance.new("Frame")
-logoFrame.Size = UDim2.new(1, 0, 0, 110)
-logoFrame.BackgroundTransparency = 1
-logoFrame.ZIndex = 3
-logoFrame.Parent = Sidebar
+-- Иконка (вместо png — текстовая)
+local logoIcon = Instance.new("TextLabel", logoBlock)
+logoIcon.Size = UDim2.new(0, 55, 0, 55)
+logoIcon.Position = UDim2.new(0.5, -27, 0, 10)
+logoIcon.BackgroundColor3 = C.BtnOn
+logoIcon.Text = "💀"
+logoIcon.TextSize = 28
+logoIcon.BorderSizePixel = 0
+logoIcon.ZIndex = 4
+Instance.new("UICorner", logoIcon).CornerRadius = UDim.new(0, 12)
 
--- Логотип (загружаем с GitHub)
-local logoImg = Instance.new("ImageLabel")
-logoImg.Size = UDim2.new(0, 55, 0, 55)
-logoImg.Position = UDim2.new(0.5, -27, 0, 12)
-logoImg.BackgroundTransparency = 1
-logoImg.Image = LOGO_URL
-logoImg.ScaleType = Enum.ScaleType.Fit
-logoImg.ZIndex = 5
-logoImg.Parent = logoFrame
+-- Свечение иконки
+local iconGlow = Instance.new("ImageLabel", logoBlock)
+iconGlow.Size = UDim2.new(0, 75, 0, 75)
+iconGlow.Position = UDim2.new(0.5, -37, 0, 0)
+iconGlow.BackgroundTransparency = 1
+iconGlow.Image = "rbxassetid://5028857084"
+iconGlow.ImageColor3 = C.Accent
+iconGlow.ImageTransparency = 0.6
+iconGlow.ZIndex = 3
 
-Instance.new("UICorner", logoImg).CornerRadius = UDim.new(0, 12)
+local hubTitle = Instance.new("TextLabel", logoBlock)
+hubTitle.Size = UDim2.new(1, 0, 0, 20)
+hubTitle.Position = UDim2.new(0, 0, 0, 70)
+hubTitle.BackgroundTransparency = 1
+hubTitle.Text = "Skill Hub"
+hubTitle.TextColor3 = C.TextPrimary
+hubTitle.TextSize = 16
+hubTitle.Font = Enum.Font.GothamBold
+hubTitle.ZIndex = 4
 
--- Свечение логотипа
-local logoGlow = Instance.new("ImageLabel")
-logoGlow.Size = UDim2.new(0, 75, 0, 75)
-logoGlow.Position = UDim2.new(0.5, -37, 0, 2)
-logoGlow.BackgroundTransparency = 1
-logoGlow.Image = "rbxassetid://5028857084"
-logoGlow.ImageColor3 = Colors.Accent
-logoGlow.ImageTransparency = 0.6
-logoGlow.ZIndex = 4
-logoGlow.Parent = logoFrame
-
--- Название
-local hubName = Instance.new("TextLabel")
-hubName.Size = UDim2.new(1, 0, 0, 22)
-hubName.Position = UDim2.new(0, 0, 0, 72)
-hubName.BackgroundTransparency = 1
-hubName.Text = "Skill Hub"
-hubName.TextColor3 = Colors.TextPrimary
-hubName.TextSize = 17
-hubName.Font = Enum.Font.GothamBold
-hubName.ZIndex = 5
-hubName.Parent = logoFrame
-
--- Подпись
-local hubSub = Instance.new("TextLabel")
-hubSub.Size = UDim2.new(1, 0, 0, 16)
-hubSub.Position = UDim2.new(0, 0, 0, 93)
+local hubSub = Instance.new("TextLabel", logoBlock)
+hubSub.Size = UDim2.new(1, 0, 0, 15)
+hubSub.Position = UDim2.new(0, 0, 0, 89)
 hubSub.BackgroundTransparency = 1
 hubSub.Text = "Murder Mystery 2"
-hubSub.TextColor3 = Colors.Accent
+hubSub.TextColor3 = C.Accent
 hubSub.TextSize = 11
 hubSub.Font = Enum.Font.Gotham
-hubSub.ZIndex = 5
-hubSub.Parent = logoFrame
+hubSub.ZIndex = 4
 
--- Разделитель под лого
-local logoDivider = Instance.new("Frame")
-logoDivider.Size = UDim2.new(1, -24, 0, 1)
-logoDivider.Position = UDim2.new(0, 12, 0, 112)
-logoDivider.BackgroundColor3 = Colors.Divider
+-- Разделитель
+local logoDivider = Instance.new("Frame", Sidebar)
+logoDivider.Size = UDim2.new(1, -20, 0, 1)
+logoDivider.Position = UDim2.new(0, 10, 0, 108)
+logoDivider.BackgroundColor3 = C.Divider
 logoDivider.BorderSizePixel = 0
 logoDivider.ZIndex = 3
-logoDivider.Parent = Sidebar
 
 -- Навигация
-local NavList = Instance.new("Frame")
-NavList.Size = UDim2.new(1, 0, 1, -125)
-NavList.Position = UDim2.new(0, 0, 0, 118)
-NavList.BackgroundTransparency = 1
-NavList.ZIndex = 3
-NavList.Parent = Sidebar
+local NavFrame = Instance.new("Frame", Sidebar)
+NavFrame.Size = UDim2.new(1, 0, 1, -115)
+NavFrame.Position = UDim2.new(0, 0, 0, 112)
+NavFrame.BackgroundTransparency = 1
+NavFrame.ZIndex = 3
 
-local navLayout = Instance.new("UIListLayout", NavList)
+local navLayout = Instance.new("UIListLayout", NavFrame)
 navLayout.Padding = UDim.new(0, 3)
-navLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
-local navPad = Instance.new("UIPadding", NavList)
-navPad.PaddingLeft = UDim.new(0, 8)
-navPad.PaddingRight = UDim.new(0, 8)
+local navPad = Instance.new("UIPadding", NavFrame)
+navPad.PaddingLeft  = UDim.new(0, 7)
+navPad.PaddingRight = UDim.new(0, 7)
 
--- ───────────────────────────────────────
---  ПРАВАЯ ПАНЕЛЬ (контент)
--- ───────────────────────────────────────
-local ContentPanel = Instance.new("Frame")
-ContentPanel.Name = "ContentPanel"
-ContentPanel.Size = UDim2.new(1, -160, 1, 0)
-ContentPanel.Position = UDim2.new(0, 160, 0, 0)
-ContentPanel.BackgroundColor3 = Colors.BG
-ContentPanel.BorderSizePixel = 0
-ContentPanel.ZIndex = 2
-ContentPanel.Parent = Main
+-- Версия
+local verLbl = Instance.new("TextLabel", Sidebar)
+verLbl.Size = UDim2.new(1, 0, 0, 18)
+verLbl.Position = UDim2.new(0, 0, 1, -20)
+verLbl.BackgroundTransparency = 1
+verLbl.Text = "v1.0 | MM2"
+verLbl.TextColor3 = C.TextDim
+verLbl.TextSize = 11
+verLbl.Font = Enum.Font.Gotham
+verLbl.ZIndex = 4
 
--- Заголовок правой панели
-local ContentHeader = Instance.new("Frame")
-ContentHeader.Size = UDim2.new(1, 0, 0, 52)
-ContentHeader.BackgroundColor3 = Colors.BG2
-ContentHeader.BorderSizePixel = 0
-ContentHeader.ZIndex = 3
-ContentHeader.Parent = ContentPanel
-setupDrag(ContentHeader)
+-- ═══════════════════════════════════════
+--  ПРАВАЯ ПАНЕЛЬ
+-- ═══════════════════════════════════════
+local RightPanel = Instance.new("Frame", Main)
+RightPanel.Size = UDim2.new(1, -155, 1, 0)
+RightPanel.Position = UDim2.new(0, 155, 0, 0)
+RightPanel.BackgroundColor3 = C.BG
+RightPanel.BorderSizePixel = 0
+RightPanel.ZIndex = 2
 
-local headerFix = Instance.new("Frame", ContentHeader)
-headerFix.Size = UDim2.new(1, 0, 0, 16)
-headerFix.Position = UDim2.new(0, 0, 1, -16)
-headerFix.BackgroundColor3 = Colors.BG2
-headerFix.BorderSizePixel = 0
-headerFix.ZIndex = 2
+-- Хедер
+local Header = Instance.new("Frame", RightPanel)
+Header.Size = UDim2.new(1, 0, 0, 50)
+Header.BackgroundColor3 = C.BG2
+Header.BorderSizePixel = 0
+Header.ZIndex = 3
 
--- Название текущей страницы
-local PageTitle = Instance.new("TextLabel")
-PageTitle.Name = "PageTitle"
-PageTitle.Size = UDim2.new(1, -120, 1, 0)
-PageTitle.Position = UDim2.new(0, 18, 0, 0)
+local hFix = Instance.new("Frame", Header)
+hFix.Size = UDim2.new(1, 0, 0, 16)
+hFix.Position = UDim2.new(0, 0, 1, -16)
+hFix.BackgroundColor3 = C.BG2
+hFix.BorderSizePixel = 0
+
+local PageTitle = Instance.new("TextLabel", Header)
+PageTitle.Size = UDim2.new(1, -110, 1, 0)
+PageTitle.Position = UDim2.new(0, 15, 0, 0)
 PageTitle.BackgroundTransparency = 1
-PageTitle.Text = "ESP & Visuals"
-PageTitle.TextColor3 = Colors.TextPrimary
-PageTitle.TextSize = 18
+PageTitle.Text = "ESP / Visuals"
+PageTitle.TextColor3 = C.TextPrimary
+PageTitle.TextSize = 17
 PageTitle.Font = Enum.Font.GothamBold
 PageTitle.TextXAlignment = Enum.TextXAlignment.Left
 PageTitle.ZIndex = 5
-PageTitle.Parent = ContentHeader
 
 -- Кнопки окна
-local function makeWinBtn(text, color, xOffset)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 28, 0, 28)
-    btn.Position = UDim2.new(1, xOffset, 0.5, -14)
-    btn.BackgroundColor3 = color
-    btn.Text = text
-    btn.TextColor3 = Color3.new(1, 1, 1)
-    btn.TextSize = 14
-    btn.Font = Enum.Font.GothamBold
-    btn.BorderSizePixel = 0
-    btn.ZIndex = 6
-    btn.Parent = ContentHeader
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 7)
-    return btn
+local function makeWinBtn(txt, col, xOff)
+    local b = Instance.new("TextButton", Header)
+    b.Size = UDim2.new(0, 28, 0, 28)
+    b.Position = UDim2.new(1, xOff, 0.5, -14)
+    b.BackgroundColor3 = col
+    b.Text = txt
+    b.TextColor3 = Color3.new(1, 1, 1)
+    b.TextSize = 14
+    b.Font = Enum.Font.GothamBold
+    b.BorderSizePixel = 0
+    b.ZIndex = 6
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 7)
+    return b
 end
 
-local MinBtn   = makeWinBtn("—", Color3.fromRGB(255, 165, 0), -68)
-local CloseBtn = makeWinBtn("✕", Color3.fromRGB(220, 40, 40), -35)
+local MinBtn   = makeWinBtn("—", Color3.fromRGB(255, 165, 0), -65)
+local CloseBtn = makeWinBtn("✕", Color3.fromRGB(220, 40, 40),  -33)
 
--- Разделитель
-local headerDivider = Instance.new("Frame")
-headerDivider.Size = UDim2.new(1, 0, 0, 1)
-headerDivider.Position = UDim2.new(0, 0, 1, -1)
-headerDivider.BackgroundColor3 = Colors.Divider
-headerDivider.BorderSizePixel = 0
-headerDivider.ZIndex = 4
-headerDivider.Parent = ContentHeader
+local hDiv = Instance.new("Frame", Header)
+hDiv.Size = UDim2.new(1, 0, 0, 1)
+hDiv.Position = UDim2.new(0, 0, 1, -1)
+hDiv.BackgroundColor3 = C.Divider
+hDiv.BorderSizePixel = 0
+hDiv.ZIndex = 4
 
--- Скролл контента
-local ContentScroll = Instance.new("ScrollingFrame")
-ContentScroll.Size = UDim2.new(1, -12, 1, -65)
-ContentScroll.Position = UDim2.new(0, 6, 0, 56)
-ContentScroll.BackgroundTransparency = 1
-ContentScroll.BorderSizePixel = 0
-ContentScroll.ScrollBarThickness = 3
-ContentScroll.ScrollBarImageColor3 = Colors.Accent
-ContentScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-ContentScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-ContentScroll.ZIndex = 3
-ContentScroll.Parent = ContentPanel
+-- Скролл
+local Scroll = Instance.new("ScrollingFrame", RightPanel)
+Scroll.Size = UDim2.new(1, -10, 1, -58)
+Scroll.Position = UDim2.new(0, 5, 0, 54)
+Scroll.BackgroundTransparency = 1
+Scroll.BorderSizePixel = 0
+Scroll.ScrollBarThickness = 3
+Scroll.ScrollBarImageColor3 = C.Accent
+Scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+Scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+Scroll.ZIndex = 3
 
-local contentLayout = Instance.new("UIListLayout", ContentScroll)
-contentLayout.Padding = UDim.new(0, 6)
-contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
+local scrollLayout = Instance.new("UIListLayout", Scroll)
+scrollLayout.Padding = UDim.new(0, 5)
+scrollLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
-local contentPad = Instance.new("UIPadding", ContentScroll)
-contentPad.PaddingTop = UDim.new(0, 6)
-contentPad.PaddingBottom = UDim.new(0, 6)
+local scrollPad = Instance.new("UIPadding", Scroll)
+scrollPad.PaddingTop    = UDim.new(0, 5)
+scrollPad.PaddingBottom = UDim.new(0, 5)
 
 -- ═══════════════════════════════════════
---  СТРАНИЦЫ
+--  НАВИГАЦИЯ
 -- ═══════════════════════════════════════
-local Pages = {}
-local currentPage = nil
+local navEntries   = {}
+local activePage   = nil
 
-local function showPage(name)
-    if currentPage == name then return end
-    currentPage = name
-    -- Скрываем все элементы
-    for _, child in ipairs(ContentScroll:GetChildren()) do
-        if child:IsA("Frame") and child.Name:find("_item") then
-            child.Visible = child.Name:find("^"..name)
-        end
-    end
-    PageTitle.Text = name
-end
-
--- ═══════════════════════════════════════
---  СТРОИТЕЛЬ КНОПОК
--- ═══════════════════════════════════════
-local function makeSection(title, pageTag)
-    local sec = Instance.new("Frame")
-    sec.Name = pageTag .. "_section_" .. title
-    sec.Size = UDim2.new(1, 0, 0, 28)
-    sec.BackgroundTransparency = 1
-    sec.LayoutOrder = #ContentScroll:GetChildren()
-    sec.ZIndex = 3
-    sec.Parent = ContentScroll
-
-    local line = Instance.new("Frame", sec)
-    line.Size = UDim2.new(1, -10, 0, 1)
-    line.Position = UDim2.new(0, 5, 0.5, 0)
-    line.BackgroundColor3 = Colors.Divider
-    line.BorderSizePixel = 0
-
-    local lineGr = Instance.new("UIGradient", line)
-    lineGr.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Colors.Accent),
-        ColorSequenceKeypoint.new(1, Colors.BG),
-    })
-
-    local lbl = Instance.new("TextLabel", sec)
-    lbl.Size = UDim2.new(0, 120, 1, 0)
-    lbl.Position = UDim2.new(0, 8, 0, 0)
-    lbl.BackgroundColor3 = Colors.BG
-    lbl.BorderSizePixel = 0
-    lbl.Text = "  " .. title .. "  "
-    lbl.TextColor3 = Colors.Accent
-    lbl.TextSize = 12
-    lbl.Font = Enum.Font.GothamBold
-    lbl.ZIndex = 4
-
-    return sec
-end
-
--- Кнопка-переключатель (Rinns Hub стиль)
-local function makeToggle(pageTag, name, desc, stateKey, callback)
-    local item = Instance.new("Frame")
-    item.Name = pageTag .. "_item_" .. name
-    item.Size = UDim2.new(1, 0, 0, 58)
-    item.BackgroundColor3 = Colors.BG3
-    item.BorderSizePixel = 0
-    item.LayoutOrder = #ContentScroll:GetChildren()
-    item.ZIndex = 3
-    item.Parent = ContentScroll
-
-    Instance.new("UICorner", item).CornerRadius = UDim.new(0, 10)
-
-    local itemStroke = Instance.new("UIStroke", item)
-    itemStroke.Color = Colors.Divider
-    itemStroke.Thickness = 1
-
-    -- Левая цветная полоска
-    local leftBar = Instance.new("Frame", item)
-    leftBar.Size = UDim2.new(0, 3, 0, 38)
-    leftBar.Position = UDim2.new(0, 0, 0.5, -19)
-    leftBar.BackgroundColor3 = Colors.Accent
-    leftBar.BorderSizePixel = 0
-    Instance.new("UICorner", leftBar).CornerRadius = UDim.new(0, 3)
-
-    -- Название
-    local nameLbl = Instance.new("TextLabel", item)
-    nameLbl.Size = UDim2.new(1, -100, 0, 22)
-    nameLbl.Position = UDim2.new(0, 16, 0, 8)
-    nameLbl.BackgroundTransparency = 1
-    nameLbl.Text = name
-    nameLbl.TextColor3 = Colors.TextPrimary
-    nameLbl.TextSize = 14
-    nameLbl.Font = Enum.Font.GothamBold
-    nameLbl.TextXAlignment = Enum.TextXAlignment.Left
-    nameLbl.ZIndex = 4
-
-    -- Описание
-    local descLbl = Instance.new("TextLabel", item)
-    descLbl.Size = UDim2.new(1, -100, 0, 16)
-    descLbl.Position = UDim2.new(0, 16, 0, 32)
-    descLbl.BackgroundTransparency = 1
-    descLbl.Text = desc
-    descLbl.TextColor3 = Colors.TextDim
-    descLbl.TextSize = 11
-    descLbl.Font = Enum.Font.Gotham
-    descLbl.TextXAlignment = Enum.TextXAlignment.Left
-    descLbl.ZIndex = 4
-
-    -- Toggle Switch (Blue Lock стиль)
-    local switchBG = Instance.new("Frame", item)
-    switchBG.Size = UDim2.new(0, 48, 0, 26)
-    switchBG.Position = UDim2.new(1, -62, 0.5, -13)
-    switchBG.BackgroundColor3 = Colors.BtnOff
-    switchBG.BorderSizePixel = 0
-    switchBG.ZIndex = 5
-    Instance.new("UICorner", switchBG).CornerRadius = UDim.new(1, 0)
-
-    local switchCircle = Instance.new("Frame", switchBG)
-    switchCircle.Size = UDim2.new(0, 20, 0, 20)
-    switchCircle.Position = UDim2.new(0, 3, 0.5, -10)
-    switchCircle.BackgroundColor3 = Colors.TextDim
-    switchCircle.BorderSizePixel = 0
-    switchCircle.ZIndex = 6
-    Instance.new("UICorner", switchCircle).CornerRadius = UDim.new(1, 0)
-
-    local switchBtn = Instance.new("TextButton", switchBG)
-    switchBtn.Size = UDim2.new(1, 0, 1, 0)
-    switchBtn.BackgroundTransparency = 1
-    switchBtn.Text = ""
-    switchBtn.ZIndex = 7
-
-    -- Кликабельна вся карточка
-    local itemBtn = Instance.new("TextButton", item)
-    itemBtn.Size = UDim2.new(1, -70, 1, 0)
-    itemBtn.BackgroundTransparency = 1
-    itemBtn.Text = ""
-    itemBtn.ZIndex = 4
-
-    local function updateSwitch()
-        local on = STATE[stateKey]
-        TweenService:Create(switchBG, TweenInfo.new(0.2), {
-            BackgroundColor3 = on and Colors.Accent or Colors.BtnOff
-        }):Play()
-        TweenService:Create(switchCircle, TweenInfo.new(0.2), {
-            Position = on and UDim2.new(1, -23, 0.5, -10) or UDim2.new(0, 3, 0.5, -10),
-            BackgroundColor3 = on and Colors.TextPrimary or Colors.TextDim
-        }):Play()
-        TweenService:Create(itemStroke, TweenInfo.new(0.2), {
-            Color = on and Colors.AccentDark or Colors.Divider
-        }):Play()
-        TweenService:Create(leftBar, TweenInfo.new(0.2), {
-            BackgroundColor3 = on and Colors.Cyan or Colors.Accent
-        }):Play()
-    end
-
-    local function toggle()
-        STATE[stateKey] = not STATE[stateKey]
-        updateSwitch()
-        callback(STATE[stateKey])
-    end
-
-    switchBtn.MouseButton1Click:Connect(toggle)
-    itemBtn.MouseButton1Click:Connect(toggle)
-
-    updateSwitch()
-    return item
-end
-
--- Кнопка действия
-local function makeButton(pageTag, name, desc, callback)
-    local item = Instance.new("Frame")
-    item.Name = pageTag .. "_item_" .. name
-    item.Size = UDim2.new(1, 0, 0, 58)
-    item.BackgroundColor3 = Colors.BG3
-    item.BorderSizePixel = 0
-    item.LayoutOrder = #ContentScroll:GetChildren()
-    item.ZIndex = 3
-    item.Parent = ContentScroll
-
-    Instance.new("UICorner", item).CornerRadius = UDim.new(0, 10)
-    local itemStroke = Instance.new("UIStroke", item)
-    itemStroke.Color = Colors.Divider
-    itemStroke.Thickness = 1
-
-    local leftBar = Instance.new("Frame", item)
-    leftBar.Size = UDim2.new(0, 3, 0, 38)
-    leftBar.Position = UDim2.new(0, 0, 0.5, -19)
-    leftBar.BackgroundColor3 = Colors.Purple
-    leftBar.BorderSizePixel = 0
-    Instance.new("UICorner", leftBar).CornerRadius = UDim.new(0, 3)
-
-    local nameLbl = Instance.new("TextLabel", item)
-    nameLbl.Size = UDim2.new(1, -100, 0, 22)
-    nameLbl.Position = UDim2.new(0, 16, 0, 8)
-    nameLbl.BackgroundTransparency = 1
-    nameLbl.Text = name
-    nameLbl.TextColor3 = Colors.TextPrimary
-    nameLbl.TextSize = 14
-    nameLbl.Font = Enum.Font.GothamBold
-    nameLbl.TextXAlignment = Enum.TextXAlignment.Left
-    nameLbl.ZIndex = 4
-
-    local descLbl = Instance.new("TextLabel", item)
-    descLbl.Size = UDim2.new(1, -100, 0, 16)
-    descLbl.Position = UDim2.new(0, 16, 0, 32)
-    descLbl.BackgroundTransparency = 1
-    descLbl.Text = desc
-    descLbl.TextColor3 = Colors.TextDim
-    descLbl.TextSize = 11
-    descLbl.Font = Enum.Font.Gotham
-    descLbl.TextXAlignment = Enum.TextXAlignment.Left
-    descLbl.ZIndex = 4
-
-    local runBtn = Instance.new("TextButton", item)
-    runBtn.Size = UDim2.new(0, 64, 0, 28)
-    runBtn.Position = UDim2.new(1, -72, 0.5, -14)
-    runBtn.BackgroundColor3 = Colors.AccentDark
-    runBtn.Text = "RUN"
-    runBtn.TextColor3 = Colors.TextPrimary
-    runBtn.TextSize = 12
-    runBtn.Font = Enum.Font.GothamBold
-    runBtn.BorderSizePixel = 0
-    runBtn.ZIndex = 5
-    Instance.new("UICorner", runBtn).CornerRadius = UDim.new(0, 8)
-
-    runBtn.MouseButton1Click:Connect(function()
-        TweenService:Create(runBtn, TweenInfo.new(0.1), {
-            BackgroundColor3 = Colors.Cyan
-        }):Play()
-        task.spawn(callback)
-        task.delay(0.4, function()
-            TweenService:Create(runBtn, TweenInfo.new(0.2), {
-                BackgroundColor3 = Colors.AccentDark
-            }):Play()
-        end)
-    end)
-
-    -- Hover эффект
-    runBtn.MouseEnter:Connect(function()
-        TweenService:Create(runBtn, TweenInfo.new(0.15), {
-            BackgroundColor3 = Colors.Accent
-        }):Play()
-    end)
-    runBtn.MouseLeave:Connect(function()
-        TweenService:Create(runBtn, TweenInfo.new(0.15), {
-            BackgroundColor3 = Colors.AccentDark
-        }):Play()
-    end)
-
-    return item
-end
-
--- Слайдер
-local function makeSlider(pageTag, name, desc, min, max, default, settingKey, callback)
-    local item = Instance.new("Frame")
-    item.Name = pageTag .. "_item_" .. name
-    item.Size = UDim2.new(1, 0, 0, 72)
-    item.BackgroundColor3 = Colors.BG3
-    item.BorderSizePixel = 0
-    item.LayoutOrder = #ContentScroll:GetChildren()
-    item.ZIndex = 3
-    item.Parent = ContentScroll
-
-    Instance.new("UICorner", item).CornerRadius = UDim.new(0, 10)
-    local itemStroke = Instance.new("UIStroke", item)
-    itemStroke.Color = Colors.Divider
-    itemStroke.Thickness = 1
-
-    local leftBar = Instance.new("Frame", item)
-    leftBar.Size = UDim2.new(0, 3, 0, 52)
-    leftBar.Position = UDim2.new(0, 0, 0.5, -26)
-    leftBar.BackgroundColor3 = Colors.Yellow
-    leftBar.BorderSizePixel = 0
-    Instance.new("UICorner", leftBar).CornerRadius = UDim.new(0, 3)
-
-    local nameLbl = Instance.new("TextLabel", item)
-    nameLbl.Size = UDim2.new(0.6, 0, 0, 20)
-    nameLbl.Position = UDim2.new(0, 16, 0, 6)
-    nameLbl.BackgroundTransparency = 1
-    nameLbl.Text = name
-    nameLbl.TextColor3 = Colors.TextPrimary
-    nameLbl.TextSize = 14
-    nameLbl.Font = Enum.Font.GothamBold
-    nameLbl.TextXAlignment = Enum.TextXAlignment.Left
-    nameLbl.ZIndex = 4
-
-    local valLbl = Instance.new("TextLabel", item)
-    valLbl.Size = UDim2.new(0.4, -16, 0, 20)
-    valLbl.Position = UDim2.new(0.6, 0, 0, 6)
-    valLbl.BackgroundTransparency = 1
-    valLbl.Text = tostring(default)
-    valLbl.TextColor3 = Colors.Cyan
-    valLbl.TextSize = 14
-    valLbl.Font = Enum.Font.GothamBold
-    valLbl.TextXAlignment = Enum.TextXAlignment.Right
-    valLbl.ZIndex = 4
-
-    local descLbl = Instance.new("TextLabel", item)
-    descLbl.Size = UDim2.new(1, -20, 0, 14)
-    descLbl.Position = UDim2.new(0, 16, 0, 26)
-    descLbl.BackgroundTransparency = 1
-    descLbl.Text = desc
-    descLbl.TextColor3 = Colors.TextDim
-    descLbl.TextSize = 11
-    descLbl.Font = Enum.Font.Gotham
-    descLbl.TextXAlignment = Enum.TextXAlignment.Left
-    descLbl.ZIndex = 4
-
-    -- Track
-    local track = Instance.new("Frame", item)
-    track.Size = UDim2.new(1, -32, 0, 6)
-    track.Position = UDim2.new(0, 16, 0, 50)
-    track.BackgroundColor3 = Colors.BtnOff
-    track.BorderSizePixel = 0
-    track.ZIndex = 4
-    Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
-
-    -- Fill
-    local fill = Instance.new("Frame", track)
-    local startPct = (default - min) / (max - min)
-    fill.Size = UDim2.new(startPct, 0, 1, 0)
-    fill.BackgroundColor3 = Colors.Accent
-    fill.BorderSizePixel = 0
-    fill.ZIndex = 5
-    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
-
-    -- Thumb
-    local thumb = Instance.new("Frame", track)
-    thumb.Size = UDim2.new(0, 16, 0, 16)
-    thumb.Position = UDim2.new(startPct, -8, 0.5, -8)
-    thumb.BackgroundColor3 = Colors.TextPrimary
-    thumb.BorderSizePixel = 0
-    thumb.ZIndex = 6
-    Instance.new("UICorner", thumb).CornerRadius = UDim.new(1, 0)
-
-    -- Gradient fill
-    local fillGrad = Instance.new("UIGradient", fill)
-    fillGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Colors.AccentDark),
-        ColorSequenceKeypoint.new(1, Colors.Cyan),
-    })
-
-    local sliding = false
-    local currentVal = default
-
-    local function updateSlider(x)
-        local abs = track.AbsolutePosition.X
-        local w   = track.AbsoluteSize.X
-        local pct = math.clamp((x - abs) / w, 0, 1)
-        currentVal = math.floor(min + (max - min) * pct)
-        fill.Size = UDim2.new(pct, 0, 1, 0)
-        thumb.Position = UDim2.new(pct, -8, 0.5, -8)
-        valLbl.Text = tostring(currentVal)
-        if settingKey then SETTINGS[settingKey] = currentVal end
-        if callback then callback(currentVal) end
-    end
-
-    track.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            sliding = true
-            updateSlider(input.Position.X)
-        end
-    end)
-
-    UserInputService.InputChanged:Connect(function(input)
-        if sliding and input.UserInputType == Enum.UserInputType.MouseMovement then
-            updateSlider(input.Position.X)
-        end
-    end)
-
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            sliding = false
-        end
-    end)
-
-    return item
-end
-
--- ═══════════════════════════════════════
---  НАВИГАЦИЯ (вкладки сайдбара)
--- ═══════════════════════════════════════
-local navItems = {}
-local activeNavItem = nil
-
-local function makeNavItem(text, emoji, pageTag)
-    local btn = Instance.new("TextButton")
-    btn.Name = "Nav_" .. pageTag
-    btn.Size = UDim2.new(1, 0, 0, 38)
+local function makeNav(emoji, text, tag)
+    local btn = Instance.new("TextButton", NavFrame)
+    btn.Size = UDim2.new(1, 0, 0, 36)
     btn.BackgroundTransparency = 1
     btn.Text = ""
     btn.BorderSizePixel = 0
-    btn.LayoutOrder = #navItems + 1
     btn.ZIndex = 5
-    btn.Parent = NavList
-
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 9)
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
 
     local indicator = Instance.new("Frame", btn)
-    indicator.Size = UDim2.new(0, 3, 0, 22)
-    indicator.Position = UDim2.new(0, 0, 0.5, -11)
-    indicator.BackgroundColor3 = Colors.Accent
-    indicator.BorderSizePixel = 0
+    indicator.Size = UDim2.new(0, 3, 0, 20)
+    indicator.Position = UDim2.new(0, 0, 0.5, -10)
+    indicator.BackgroundColor3 = C.Accent
     indicator.BackgroundTransparency = 1
+    indicator.BorderSizePixel = 0
     Instance.new("UICorner", indicator).CornerRadius = UDim.new(1, 0)
 
-    local emojiLbl = Instance.new("TextLabel", btn)
-    emojiLbl.Size = UDim2.new(0, 26, 1, 0)
-    emojiLbl.Position = UDim2.new(0, 8, 0, 0)
-    emojiLbl.BackgroundTransparency = 1
-    emojiLbl.Text = emoji
-    emojiLbl.TextSize = 16
-    emojiLbl.ZIndex = 6
+    local eLbl = Instance.new("TextLabel", btn)
+    eLbl.Size = UDim2.new(0, 24, 1, 0)
+    eLbl.Position = UDim2.new(0, 7, 0, 0)
+    eLbl.BackgroundTransparency = 1
+    eLbl.Text = emoji
+    eLbl.TextSize = 15
+    eLbl.ZIndex = 6
 
-    local textLbl = Instance.new("TextLabel", btn)
-    textLbl.Size = UDim2.new(1, -38, 1, 0)
-    textLbl.Position = UDim2.new(0, 36, 0, 0)
-    textLbl.BackgroundTransparency = 1
-    textLbl.Text = text
-    textLbl.TextColor3 = Colors.TextSecond
-    textLbl.TextSize = 13
-    textLbl.Font = Enum.Font.Gotham
-    textLbl.TextXAlignment = Enum.TextXAlignment.Left
-    textLbl.ZIndex = 6
+    local tLbl = Instance.new("TextLabel", btn)
+    tLbl.Size = UDim2.new(1, -35, 1, 0)
+    tLbl.Position = UDim2.new(0, 33, 0, 0)
+    tLbl.BackgroundTransparency = 1
+    tLbl.Text = text
+    tLbl.TextColor3 = C.TextSecond
+    tLbl.TextSize = 12
+    tLbl.Font = Enum.Font.Gotham
+    tLbl.TextXAlignment = Enum.TextXAlignment.Left
+    tLbl.ZIndex = 6
 
     local function activate()
-        -- Сбросить все
-        for _, ni in ipairs(navItems) do
-            TweenService:Create(ni.btn, TweenInfo.new(0.2), {
-                BackgroundTransparency = 1
-            }):Play()
-            TweenService:Create(ni.indicator, TweenInfo.new(0.2), {
-                BackgroundTransparency = 1
-            }):Play()
-            TweenService:Create(ni.text, TweenInfo.new(0.2), {
-                TextColor3 = Colors.TextSecond
-            }):Play()
-            ni.text.Font = Enum.Font.Gotham
+        for _, e in ipairs(navEntries) do
+            TweenService:Create(e.btn, TweenInfo.new(0.2), {BackgroundTransparency = 1}):Play()
+            TweenService:Create(e.ind, TweenInfo.new(0.2), {BackgroundTransparency = 1}):Play()
+            TweenService:Create(e.lbl, TweenInfo.new(0.2), {TextColor3 = C.TextSecond}):Play()
+            e.lbl.Font = Enum.Font.Gotham
         end
-        -- Активировать текущую
-        TweenService:Create(btn, TweenInfo.new(0.2), {
-            BackgroundTransparency = 0
-        }):Play()
-        btn.BackgroundColor3 = Colors.BtnOn
-        TweenService:Create(indicator, TweenInfo.new(0.2), {
-            BackgroundTransparency = 0
-        }):Play()
-        TweenService:Create(textLbl, TweenInfo.new(0.2), {
-            TextColor3 = Colors.TextPrimary
-        }):Play()
-        textLbl.Font = Enum.Font.GothamBold
-        activeNavItem = pageTag
 
-        -- Показать страницу
+        btn.BackgroundColor3 = C.BtnOn
+        TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundTransparency = 0}):Play()
+        TweenService:Create(indicator, TweenInfo.new(0.2), {BackgroundTransparency = 0}):Play()
+        TweenService:Create(tLbl, TweenInfo.new(0.2), {TextColor3 = C.TextPrimary}):Play()
+        tLbl.Font = Enum.Font.GothamBold
+        activePage = tag
         PageTitle.Text = text
-        for _, child in ipairs(ContentScroll:GetChildren()) do
+
+        for _, child in ipairs(Scroll:GetChildren()) do
             if child:IsA("Frame") then
-                local show = child.Name:sub(1, #pageTag) == pageTag
-                child.Visible = show
+                child.Visible = child.Name:sub(1, #tag) == tag
             end
         end
     end
 
     btn.MouseButton1Click:Connect(activate)
 
-    -- Hover
     btn.MouseEnter:Connect(function()
-        if activeNavItem ~= pageTag then
-            TweenService:Create(btn, TweenInfo.new(0.15), {
-                BackgroundTransparency = 0.7
-            }):Play()
-            btn.BackgroundColor3 = Colors.BtnOn
+        if activePage ~= tag then
+            btn.BackgroundColor3 = C.BtnOn
+            TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundTransparency = 0.7}):Play()
         end
     end)
     btn.MouseLeave:Connect(function()
-        if activeNavItem ~= pageTag then
-            TweenService:Create(btn, TweenInfo.new(0.15), {
-                BackgroundTransparency = 1
-            }):Play()
+        if activePage ~= tag then
+            TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundTransparency = 1}):Play()
         end
     end)
 
-    local entry = {btn = btn, indicator = indicator, text = textLbl, tag = pageTag, activate = activate}
-    table.insert(navItems, entry)
-    return entry
+    table.insert(navEntries, {btn = btn, ind = indicator, lbl = tLbl, tag = tag, activate = activate})
+    return activate
 end
 
--- ═══════════════════════════════════════
---  СОЗДАНИЕ ВКЛАДОК
--- ═══════════════════════════════════════
-local navESP     = makeNavItem("ESP / Visuals", "👁️", "esp")
-local navCombat  = makeNavItem("Combat",        "⚔️", "combat")
-local navFarm    = makeNavItem("Farm / Coins",  "💰", "farm")
-local navMove    = makeNavItem("Movement",      "🏃", "move")
-local navAnti    = makeNavItem("Anti-Ban",      "🛡️", "anti")
-local navMisc    = makeNavItem("Misc",          "🔧", "misc")
-
--- Версия внизу сайдбара
-local verLabel = Instance.new("TextLabel")
-verLabel.Size = UDim2.new(1, 0, 0, 20)
-verLabel.Position = UDim2.new(0, 0, 1, -22)
-verLabel.BackgroundTransparency = 1
-verLabel.Text = "v1.0 | MM2"
-verLabel.TextColor3 = Colors.TextDim
-verLabel.TextSize = 11
-verLabel.Font = Enum.Font.Gotham
-verLabel.ZIndex = 4
-verLabel.Parent = Sidebar
+local activateESP    = makeNav("👁️", "ESP / Visuals", "esp")
+local activateCombat = makeNav("⚔️", "Combat",        "combat")
+local activateFarm   = makeNav("💰", "Farm / Coins",  "farm")
+local activateMove   = makeNav("🏃", "Movement",      "move")
+local activateAnti   = makeNav("🛡️", "Anti-Ban",      "anti")
+local activateMisc   = makeNav("🔧", "Misc",          "misc")
 
 -- ═══════════════════════════════════════
---  ЛОГИКА MM2
+--  СТРОИТЕЛИ ЭЛЕМЕНТОВ
 -- ═══════════════════════════════════════
+local itemIdx = 0
 
--- ESP
-local espObjects = {}
-local function clearESP()
-    for _, v in ipairs(espObjects) do
-        pcall(function() v:Destroy() end)
+local function makeSection(tag, text)
+    itemIdx += 1
+    local f = Instance.new("Frame", Scroll)
+    f.Name = tag .. "_sec_" .. itemIdx
+    f.Size = UDim2.new(1, 0, 0, 26)
+    f.BackgroundTransparency = 1
+    f.LayoutOrder = itemIdx
+    f.ZIndex = 3
+
+    local line = Instance.new("Frame", f)
+    line.Size = UDim2.new(1, -10, 0, 1)
+    line.Position = UDim2.new(0, 5, 0.5, 0)
+    line.BackgroundColor3 = C.Divider
+    line.BorderSizePixel = 0
+
+    local g = Instance.new("UIGradient", line)
+    g.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, C.Accent),
+        ColorSequenceKeypoint.new(1, C.BG),
+    })
+
+    local lbl = Instance.new("TextLabel", f)
+    lbl.Size = UDim2.new(0, 0, 1, 0)
+    lbl.AutomaticSize = Enum.AutomaticSize.X
+    lbl.Position = UDim2.new(0, 8, 0, 0)
+    lbl.BackgroundColor3 = C.BG
+    lbl.BorderSizePixel = 0
+    lbl.Text = "  " .. text .. "  "
+    lbl.TextColor3 = C.Accent
+    lbl.TextSize = 11
+    lbl.Font = Enum.Font.GothamBold
+    lbl.ZIndex = 4
+end
+
+-- Toggle
+local function makeToggle(tag, name, desc, stateKey, cb)
+    itemIdx += 1
+    local item = Instance.new("Frame", Scroll)
+    item.Name = tag .. "_item_" .. itemIdx
+    item.Size = UDim2.new(1, 0, 0, 56)
+    item.BackgroundColor3 = C.BG3
+    item.BorderSizePixel = 0
+    item.LayoutOrder = itemIdx
+    item.ZIndex = 3
+    Instance.new("UICorner", item).CornerRadius = UDim.new(0, 10)
+
+    local stroke = Instance.new("UIStroke", item)
+    stroke.Color = C.Divider
+    stroke.Thickness = 1
+
+    local bar = Instance.new("Frame", item)
+    bar.Size = UDim2.new(0, 3, 0, 36)
+    bar.Position = UDim2.new(0, 0, 0.5, -18)
+    bar.BackgroundColor3 = C.Accent
+    bar.BorderSizePixel = 0
+    Instance.new("UICorner", bar).CornerRadius = UDim.new(0, 3)
+
+    local nLbl = Instance.new("TextLabel", item)
+    nLbl.Size = UDim2.new(1, -95, 0, 20)
+    nLbl.Position = UDim2.new(0, 14, 0, 7)
+    nLbl.BackgroundTransparency = 1
+    nLbl.Text = name
+    nLbl.TextColor3 = C.TextPrimary
+    nLbl.TextSize = 13
+    nLbl.Font = Enum.Font.GothamBold
+    nLbl.TextXAlignment = Enum.TextXAlignment.Left
+    nLbl.ZIndex = 4
+
+    local dLbl = Instance.new("TextLabel", item)
+    dLbl.Size = UDim2.new(1, -95, 0, 15)
+    dLbl.Position = UDim2.new(0, 14, 0, 30)
+    dLbl.BackgroundTransparency = 1
+    dLbl.Text = desc
+    dLbl.TextColor3 = C.TextDim
+    dLbl.TextSize = 10
+    dLbl.Font = Enum.Font.Gotham
+    dLbl.TextXAlignment = Enum.TextXAlignment.Left
+    dLbl.ZIndex = 4
+
+    -- Switch
+    local swBG = Instance.new("Frame", item)
+    swBG.Size = UDim2.new(0, 44, 0, 24)
+    swBG.Position = UDim2.new(1, -54, 0.5, -12)
+    swBG.BackgroundColor3 = C.BtnOff
+    swBG.BorderSizePixel = 0
+    swBG.ZIndex = 5
+    Instance.new("UICorner", swBG).CornerRadius = UDim.new(1, 0)
+
+    local swCircle = Instance.new("Frame", swBG)
+    swCircle.Size = UDim2.new(0, 18, 0, 18)
+    swCircle.Position = UDim2.new(0, 3, 0.5, -9)
+    swCircle.BackgroundColor3 = C.TextDim
+    swCircle.BorderSizePixel = 0
+    swCircle.ZIndex = 6
+    Instance.new("UICorner", swCircle).CornerRadius = UDim.new(1, 0)
+
+    local swBtn = Instance.new("TextButton", swBG)
+    swBtn.Size = UDim2.new(1, 0, 1, 0)
+    swBtn.BackgroundTransparency = 1
+    swBtn.Text = ""
+    swBtn.ZIndex = 7
+
+    local cardBtn = Instance.new("TextButton", item)
+    cardBtn.Size = UDim2.new(1, -65, 1, 0)
+    cardBtn.BackgroundTransparency = 1
+    cardBtn.Text = ""
+    cardBtn.ZIndex = 4
+
+    local function upd()
+        local on = STATE[stateKey]
+        TweenService:Create(swBG, TweenInfo.new(0.2), {
+            BackgroundColor3 = on and C.Accent or C.BtnOff
+        }):Play()
+        TweenService:Create(swCircle, TweenInfo.new(0.2), {
+            Position = on and UDim2.new(1,-21,0.5,-9) or UDim2.new(0,3,0.5,-9),
+            BackgroundColor3 = on and C.TextPrimary or C.TextDim,
+        }):Play()
+        TweenService:Create(stroke, TweenInfo.new(0.2), {
+            Color = on and C.AccentDark or C.Divider
+        }):Play()
+        TweenService:Create(bar, TweenInfo.new(0.2), {
+            BackgroundColor3 = on and C.Cyan or C.Accent
+        }):Play()
     end
-    espObjects = {}
+
+    local function toggle()
+        STATE[stateKey] = not STATE[stateKey]
+        upd(); cb(STATE[stateKey])
+    end
+
+    swBtn.MouseButton1Click:Connect(toggle)
+    cardBtn.MouseButton1Click:Connect(toggle)
+    upd()
 end
 
-local function createESP(player, color)
-    if player == Player then return end
-    local char = player.Character
+-- Button
+local function makeButton(tag, name, desc, cb)
+    itemIdx += 1
+    local item = Instance.new("Frame", Scroll)
+    item.Name = tag .. "_item_" .. itemIdx
+    item.Size = UDim2.new(1, 0, 0, 56)
+    item.BackgroundColor3 = C.BG3
+    item.BorderSizePixel = 0
+    item.LayoutOrder = itemIdx
+    item.ZIndex = 3
+    Instance.new("UICorner", item).CornerRadius = UDim.new(0, 10)
+    local stroke = Instance.new("UIStroke", item)
+    stroke.Color = C.Divider; stroke.Thickness = 1
+
+    local bar = Instance.new("Frame", item)
+    bar.Size = UDim2.new(0, 3, 0, 36)
+    bar.Position = UDim2.new(0, 0, 0.5, -18)
+    bar.BackgroundColor3 = C.Purple
+    bar.BorderSizePixel = 0
+    Instance.new("UICorner", bar).CornerRadius = UDim.new(0, 3)
+
+    local nLbl = Instance.new("TextLabel", item)
+    nLbl.Size = UDim2.new(1, -95, 0, 20)
+    nLbl.Position = UDim2.new(0, 14, 0, 7)
+    nLbl.BackgroundTransparency = 1
+    nLbl.Text = name
+    nLbl.TextColor3 = C.TextPrimary
+    nLbl.TextSize = 13
+    nLbl.Font = Enum.Font.GothamBold
+    nLbl.TextXAlignment = Enum.TextXAlignment.Left
+    nLbl.ZIndex = 4
+
+    local dLbl = Instance.new("TextLabel", item)
+    dLbl.Size = UDim2.new(1, -95, 0, 15)
+    dLbl.Position = UDim2.new(0, 14, 0, 30)
+    dLbl.BackgroundTransparency = 1
+    dLbl.Text = desc
+    dLbl.TextColor3 = C.TextDim
+    dLbl.TextSize = 10
+    dLbl.Font = Enum.Font.Gotham
+    dLbl.TextXAlignment = Enum.TextXAlignment.Left
+    dLbl.ZIndex = 4
+
+    local runBtn = Instance.new("TextButton", item)
+    runBtn.Size = UDim2.new(0, 58, 0, 26)
+    runBtn.Position = UDim2.new(1, -67, 0.5, -13)
+    runBtn.BackgroundColor3 = C.AccentDark
+    runBtn.Text = "RUN"
+    runBtn.TextColor3 = C.TextPrimary
+    runBtn.TextSize = 12
+    runBtn.Font = Enum.Font.GothamBold
+    runBtn.BorderSizePixel = 0
+    runBtn.ZIndex = 5
+    Instance.new("UICorner", runBtn).CornerRadius = UDim.new(0, 7)
+
+    runBtn.MouseButton1Click:Connect(function()
+        TweenService:Create(runBtn, TweenInfo.new(0.1), {BackgroundColor3 = C.Cyan}):Play()
+        task.spawn(cb)
+        task.delay(0.5, function()
+            TweenService:Create(runBtn, TweenInfo.new(0.2), {BackgroundColor3 = C.AccentDark}):Play()
+        end)
+    end)
+    runBtn.MouseEnter:Connect(function()
+        TweenService:Create(runBtn, TweenInfo.new(0.15), {BackgroundColor3 = C.Accent}):Play()
+    end)
+    runBtn.MouseLeave:Connect(function()
+        TweenService:Create(runBtn, TweenInfo.new(0.15), {BackgroundColor3 = C.AccentDark}):Play()
+    end)
+end
+
+-- Slider
+local function makeSlider(tag, name, desc, min, max, default, settingKey, cb)
+    itemIdx += 1
+    local item = Instance.new("Frame", Scroll)
+    item.Name = tag .. "_item_" .. itemIdx
+    item.Size = UDim2.new(1, 0, 0, 70)
+    item.BackgroundColor3 = C.BG3
+    item.BorderSizePixel = 0
+    item.LayoutOrder = itemIdx
+    item.ZIndex = 3
+    Instance.new("UICorner", item).CornerRadius = UDim.new(0, 10)
+    local stroke = Instance.new("UIStroke", item)
+    stroke.Color = C.Divider; stroke.Thickness = 1
+
+    local bar = Instance.new("Frame", item)
+    bar.Size = UDim2.new(0, 3, 0, 50)
+    bar.Position = UDim2.new(0, 0, 0.5, -25)
+    bar.BackgroundColor3 = C.Yellow
+    bar.BorderSizePixel = 0
+    Instance.new("UICorner", bar).CornerRadius = UDim.new(0, 3)
+
+    local nLbl = Instance.new("TextLabel", item)
+    nLbl.Size = UDim2.new(0.6, 0, 0, 20)
+    nLbl.Position = UDim2.new(0, 14, 0, 5)
+    nLbl.BackgroundTransparency = 1
+    nLbl.Text = name
+    nLbl.TextColor3 = C.TextPrimary
+    nLbl.TextSize = 13
+    nLbl.Font = Enum.Font.GothamBold
+    nLbl.TextXAlignment = Enum.TextXAlignment.Left
+    nLbl.ZIndex = 4
+
+    local vLbl = Instance.new("TextLabel", item)
+    vLbl.Size = UDim2.new(0.4, -14, 0, 20)
+    vLbl.Position = UDim2.new(0.6, 0, 0, 5)
+    vLbl.BackgroundTransparency = 1
+    vLbl.Text = tostring(default)
+    vLbl.TextColor3 = C.Cyan
+    vLbl.TextSize = 13
+    vLbl.Font = Enum.Font.GothamBold
+    vLbl.TextXAlignment = Enum.TextXAlignment.Right
+    vLbl.ZIndex = 4
+
+    local dLbl = Instance.new("TextLabel", item)
+    dLbl.Size = UDim2.new(1, -20, 0, 14)
+    dLbl.Position = UDim2.new(0, 14, 0, 25)
+    dLbl.BackgroundTransparency = 1
+    dLbl.Text = desc
+    dLbl.TextColor3 = C.TextDim
+    dLbl.TextSize = 10
+    dLbl.Font = Enum.Font.Gotham
+    dLbl.TextXAlignment = Enum.TextXAlignment.Left
+    dLbl.ZIndex = 4
+
+    local track = Instance.new("Frame", item)
+    track.Size = UDim2.new(1, -28, 0, 5)
+    track.Position = UDim2.new(0, 14, 0, 48)
+    track.BackgroundColor3 = C.BtnOff
+    track.BorderSizePixel = 0
+    track.ZIndex = 4
+    Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
+
+    local pct0 = (default - min) / (max - min)
+    local fill = Instance.new("Frame", track)
+    fill.Size = UDim2.new(pct0, 0, 1, 0)
+    fill.BackgroundColor3 = C.Accent
+    fill.BorderSizePixel = 0
+    fill.ZIndex = 5
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+    local fg = Instance.new("UIGradient", fill)
+    fg.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, C.AccentDark),
+        ColorSequenceKeypoint.new(1, C.Cyan),
+    })
+
+    local thumb = Instance.new("Frame", track)
+    thumb.Size = UDim2.new(0, 14, 0, 14)
+    thumb.Position = UDim2.new(pct0, -7, 0.5, -7)
+    thumb.BackgroundColor3 = C.TextPrimary
+    thumb.BorderSizePixel = 0
+    thumb.ZIndex = 6
+    Instance.new("UICorner", thumb).CornerRadius = UDim.new(1, 0)
+
+    local sliding = false
+    local curVal  = default
+
+    local function updSlider(x)
+        local p = math.clamp((x - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+        curVal = math.floor(min + (max - min) * p)
+        fill.Size = UDim2.new(p, 0, 1, 0)
+        thumb.Position = UDim2.new(p, -7, 0.5, -7)
+        vLbl.Text = tostring(curVal)
+        if settingKey then SETTINGS[settingKey] = curVal end
+        if cb then cb(curVal) end
+    end
+
+    track.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            sliding = true; updSlider(i.Position.X)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if sliding and i.UserInputType == Enum.UserInputType.MouseMovement then
+            updSlider(i.Position.X)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            sliding = false
+        end
+    end)
+end
+
+-- ═══════════════════════════════════════
+--  MM2 ЛОГИКА
+-- ═══════════════════════════════════════
+
+-- Найти все RemoteEvent / RemoteFunction
+local function getRemotes(pattern)
+    local list = {}
+    for _, obj in ipairs(game:GetDescendants()) do
+        if (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")) then
+            if not pattern or obj.Name:lower():find(pattern:lower()) then
+                table.insert(list, obj)
+            end
+        end
+    end
+    return list
+end
+
+-- ─── ESP ───
+local espBBs = {}
+
+local function clearESP()
+    for _, bb in ipairs(espBBs) do
+        pcall(function() bb:Destroy() end)
+    end
+    espBBs = {}
+end
+
+local function addESP(plr, color)
+    if plr == Player then return end
+    task.spawn(function()
+        local char = plr.Character or plr.CharacterAdded:Wait()
+        local root = char:WaitForChild("HumanoidRootPart", 5)
+        local hum  = char:FindFirstChildOfClass("Humanoid")
+        if not root then return end
+
+        local bb = Instance.new("BillboardGui")
+        bb.Name = "SH_ESP"
+        bb.AlwaysOnTop = true
+        bb.Size = UDim2.new(0, 130, 0, 50)
+        bb.StudsOffset = Vector3.new(0, 3.5, 0)
+        bb.Adornee = root
+        bb.Parent = Workspace
+
+        local nL = Instance.new("TextLabel", bb)
+        nL.Size = UDim2.new(1, 0, 0.55, 0)
+        nL.BackgroundTransparency = 1
+        nL.Text = plr.Name
+        nL.TextColor3 = color
+        nL.TextSize = 14
+        nL.Font = Enum.Font.GothamBold
+        nL.TextStrokeTransparency = 0.5
+
+        local hL = Instance.new("TextLabel", bb)
+        hL.Size = UDim2.new(1, 0, 0.45, 0)
+        hL.Position = UDim2.new(0, 0, 0.55, 0)
+        hL.BackgroundTransparency = 1
+        hL.Text = "HP: ?"
+        hL.TextColor3 = C.Green
+        hL.TextSize = 11
+        hL.Font = Enum.Font.Gotham
+        hL.TextStrokeTransparency = 0.5
+
+        -- Определяем роль по оружию
+        local function getColor()
+            if plr.Character then
+                for _, tool in ipairs(plr.Character:GetChildren()) do
+                    if tool:IsA("Tool") then
+                        local n = tool.Name:lower()
+                        if n:find("knife") or n:find("murder") then
+                            return C.Red   -- Убийца
+                        elseif n:find("gun") or n:find("sheriff") then
+                            return C.Yellow -- Шериф
+                        end
+                    end
+                end
+            end
+            return color
+        end
+
+        local conn = RunService.Heartbeat:Connect(function()
+            if not STATE.ESPEnabled and not STATE.MurderESP then
+                bb:Destroy(); conn:Disconnect(); return
+            end
+            if hum then
+                hL.Text = "HP: " .. math.floor(hum.Health)
+                hL.TextColor3 = hum.Health > 50 and C.Green or C.Red
+            end
+            nL.TextColor3 = getColor()
+        end)
+
+        table.insert(espBBs, bb)
+        plr.CharacterRemoving:Connect(function()
+            bb:Destroy()
+            conn:Disconnect()
+        end)
+    end)
+end
+
+local function refreshESP()
+    clearESP()
+    if not STATE.ESPEnabled and not STATE.MurderESP then return end
+    for _, p in ipairs(Players:GetPlayers()) do
+        addESP(p, C.TextPrimary)
+    end
+    Players.PlayerAdded:Connect(function(p)
+        if STATE.ESPEnabled or STATE.MurderESP then
+            addESP(p, C.TextPrimary)
+        end
+    end)
+end
+
+-- ─── АВТО-СБОР МОНЕТ ───
+-- Монеты: Workspace → Coins → [CoinObject] → MainCoin (BasePart)
+local function collectCoins()
+    local char = Player.Character
     if not char then return end
     local root = char:FindFirstChild("HumanoidRootPart")
-    local hum  = char:FindFirstChildOfClass("Humanoid")
     if not root then return end
 
-    -- BillboardGui над головой
-    local bb = Instance.new("BillboardGui")
-    bb.Name = "SkillHubESP"
-    bb.AlwaysOnTop = true
-    bb.Size = UDim2.new(0, 120, 0, 45)
-    bb.StudsOffset = Vector3.new(0, 3, 0)
-    bb.Adornee = root
-    bb.Parent = Workspace
+    -- Папка Coins в Workspace
+    local coinsFolder = Workspace:FindFirstChild("Coins")
+    if coinsFolder then
+        for _, coinObj in ipairs(coinsFolder:GetChildren()) do
+            if not STATE.AutoFarm then break end
 
-    local nameLbl = Instance.new("TextLabel", bb)
-    nameLbl.Size = UDim2.new(1, 0, 0.6, 0)
-    nameLbl.BackgroundTransparency = 1
-    nameLbl.Text = player.Name
-    nameLbl.TextColor3 = color
-    nameLbl.TextSize = 14
-    nameLbl.Font = Enum.Font.GothamBold
-    nameLbl.TextStrokeTransparency = 0
+            -- Ищем MainCoin внутри
+            local mainCoin = coinObj:FindFirstChild("MainCoin")
+                or coinObj:FindFirstChildWhichIsA("BasePart")
+                or (coinObj:IsA("BasePart") and coinObj)
 
-    local hpLbl = Instance.new("TextLabel", bb)
-    hpLbl.Size = UDim2.new(1, 0, 0.4, 0)
-    hpLbl.Position = UDim2.new(0, 0, 0.6, 0)
-    hpLbl.BackgroundTransparency = 1
-    hpLbl.Text = "HP: " .. (hum and math.floor(hum.Health) or "?")
-    hpLbl.TextColor3 = Colors.Green
-    hpLbl.TextSize = 11
-    hpLbl.Font = Enum.Font.Gotham
-    hpLbl.TextStrokeTransparency = 0
+            if mainCoin then
+                local saved = root.CFrame
+                -- Телепорт к монете
+                root.CFrame = CFrame.new(mainCoin.Position) * CFrame.new(0, 2, 0)
+                task.wait(0.08)
 
-    -- Обновление HP
-    local conn = RunService.Heartbeat:Connect(function()
-        if not STATE.ESPEnabled then
-            bb:Destroy()
-            return
-        end
-        if hum then
-            hpLbl.Text = "HP: " .. math.floor(hum.Health)
-        end
-    end)
+                -- Touch (самый надёжный способ)
+                pcall(function()
+                    if firetouchinterest then
+                        firetouchinterest(root, mainCoin, 0)
+                        task.wait(0.05)
+                        firetouchinterest(root, mainCoin, 1)
+                    end
+                end)
 
-    table.insert(espObjects, bb)
-    table.insert(espObjects, {Destroy = function() conn:Disconnect() end})
-end
-
-local function updateESP()
-    clearESP()
-    if not STATE.ESPEnabled then return end
-
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= Player then
-            local color = Colors.TextPrimary
-            createESP(p, color)
-        end
-    end
-end
-
--- Murder ESP (показ убийцы/шерифа)
-local function getMM2Role(player)
-    pcall(function()
-        for _, folder in ipairs(ReplicatedStorage:GetDescendants()) do
-            if folder.Name == "GameData" or folder.Name == "PlayerData" or folder.Name == "RoleData" then
-                for _, v in ipairs(folder:GetChildren()) do
-                    if v.Name == player.Name or v.Name == "Role" then
-                        return v.Value
+                -- ProximityPrompt
+                for _, pp in ipairs(coinObj:GetDescendants()) do
+                    if pp:IsA("ProximityPrompt") then
+                        pcall(function() fireproximityprompt(pp) end)
                     end
                 end
+
+                -- ClickDetector
+                for _, cd in ipairs(coinObj:GetDescendants()) do
+                    if cd:IsA("ClickDetector") then
+                        pcall(function() fireclickdetector(cd) end)
+                    end
+                end
+
+                task.wait(0.05)
             end
+        end
+    end
+
+    -- Также ищем монеты везде в Workspace
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if not STATE.AutoFarm then break end
+        local n = obj.Name:lower()
+        if (n == "coin" or n == "coinobject" or n == "maincoin")
+           and (obj:IsA("BasePart") or obj:IsA("MeshPart")) then
+            local d = (obj.Position - root.Position).Magnitude
+            if d < 500 then
+                root.CFrame = CFrame.new(obj.Position) * CFrame.new(0, 2, 0)
+                task.wait(0.08)
+                pcall(function()
+                    if firetouchinterest then
+                        firetouchinterest(root, obj, 0)
+                        task.wait(0.05)
+                        firetouchinterest(root, obj, 1)
+                    end
+                end)
+            end
+        end
+    end
+
+    -- Remote'ы монет
+    for _, r in ipairs(getRemotes("coin")) do
+        pcall(function()
+            if r:IsA("RemoteEvent") then
+                r:FireServer("Collect")
+                r:FireServer("Add", 999999)
+                r:FireServer(999999)
+            end
+        end)
+    end
+end
+
+-- ─── AUTO FARM LOOP ───
+local farmThread = nil
+local function startFarm()
+    if farmThread then task.cancel(farmThread) end
+    farmThread = task.spawn(function()
+        while STATE.AutoFarm and task.wait(0.15) do
+            pcall(collectCoins)
         end
     end)
-    -- Ищем через Values у персонажа
-    if player.Character then
-        local role = player.Character:FindFirstChild("Role")
-            or player.Character:FindFirstChild("Murder")
-            or player.Character:FindFirstChild("Sheriff")
-        if role then return role.Value end
-    end
-    return "Unknown"
 end
 
--- Показ убийцы в чате
-local function showRoles()
-    local killerName = "Unknown"
-    local sheriffName = "Unknown"
-
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= Player and p.Character then
-            -- Проверяем нож (убийца держит нож)
-            local knife = p.Character:FindFirstChild("Knife")
-                or p.Character:FindFirstChild("MM2Knife")
-                or p.Character:FindFirstChildWhichIsA("Tool")
-            if knife and (knife.Name:lower():find("knife") or knife.Name:lower():find("murder")) then
-                killerName = p.Name
-            end
-            -- Проверяем пистолет (шериф)
-            local gun = p.Character:FindFirstChild("Gun")
-                or p.Character:FindFirstChild("Sheriff")
-            if gun and (gun.Name:lower():find("gun") or gun.Name:lower():find("sheriff")) then
-                sheriffName = p.Name
-            end
-        end
-    end
-
-    -- Вывод в чат / на экране
-    game:GetService("StarterGui"):SetCore("ChatMakeSystemMessage", {
-        Text = "[SkillHub] 🔪 Killer: " .. killerName .. " | 🔫 Sheriff: " .. sheriffName,
-        Color = Color3.fromRGB(255, 100, 100),
-        Font = Enum.Font.GothamBold,
-        FontSize = Enum.FontSize.Size18,
-    })
-end
-
--- GunBot (авто-стрельба по убийце)
-local gunBotConn = nil
-local function startGunBot()
-    if gunBotConn then gunBotConn:Disconnect() end
-    gunBotConn = RunService.Heartbeat:Connect(function()
-        if not STATE.GunBotEnabled then
-            gunBotConn:Disconnect()
-            return
-        end
-        pcall(function()
-            local char = Player.Character
-            if not char then return end
-            local root = char:FindFirstChild("HumanoidRootPart")
-            if not root then return end
-
-            -- Ищем убийцу
-            for _, p in ipairs(Players:GetPlayers()) do
-                if p ~= Player and p.Character then
-                    local proot = p.Character:FindFirstChild("HumanoidRootPart")
-                    local knife = p.Character:FindFirstChild("Knife")
-                        or p.Character:FindFirstChildWhichIsA("Tool")
-                    if proot and knife and knife.Name:lower():find("knife") then
-                        local dist = (proot.Position - root.Position).Magnitude
-                        if dist < SETTINGS.ESPDistance then
-                            -- Наводка на убийцу
-                            local tool = char:FindFirstChildWhichIsA("Tool")
-                            if tool then
-                                for _, r in ipairs(ReplicatedStorage:GetDescendants()) do
-                                    if r:IsA("RemoteEvent") then
-                                        local n = r.Name:lower()
-                                        if n:find("shoot") or n:find("fire")
-                                           or n:find("gun") or n:find("bullet") then
-                                            r:FireServer(proot.Position, proot)
-                                        end
-                                    end
-                                end
+-- ─── INFINITE COINS ───
+local coinThread = nil
+local function startInfiniteCoins()
+    if coinThread then task.cancel(coinThread) end
+    coinThread = task.spawn(function()
+        while STATE.InfiniteCoins and task.wait(1) do
+            pcall(function()
+                -- leaderstats
+                local ls = Player:FindFirstChild("leaderstats")
+                if ls then
+                    for _, v in ipairs(ls:GetChildren()) do
+                        if v:IsA("IntValue") or v:IsA("NumberValue") then
+                            local n = v.Name:lower()
+                            if n:find("coin") or n:find("gold")
+                               or n:find("cash") or n:find("money") then
+                                v.Value = 999999999
                             end
                         end
                     end
                 end
-            end
-        end)
-    end)
-end
 
--- Knife Aura (убийца — авто-убийство рядом)
-local knifeAuraConn = nil
-local function startKnifeAura()
-    if knifeAuraConn then knifeAuraConn:Disconnect() end
-    knifeAuraConn = RunService.Heartbeat:Connect(function()
-        if not STATE.KnifeAuraEnabled then
-            knifeAuraConn:Disconnect()
-            return
-        end
-        pcall(function()
-            local char = Player.Character
-            if not char then return end
-            local root = char:FindFirstChild("HumanoidRootPart")
-            if not root then return end
-
-            for _, p in ipairs(Players:GetPlayers()) do
-                if p ~= Player and p.Character then
-                    local proot = p.Character:FindFirstChild("HumanoidRootPart")
-                    local phum = p.Character:FindFirstChildOfClass("Humanoid")
-                    if proot and phum and phum.Health > 0 then
-                        local dist = (proot.Position - root.Position).Magnitude
-                        if dist <= SETTINGS.KnifeAuraRadius then
-                            -- Телепорт и убийство
-                            root.CFrame = proot.CFrame * CFrame.new(0, 0, -2)
-                            for _, r in ipairs(ReplicatedStorage:GetDescendants()) do
-                                if r:IsA("RemoteEvent") then
-                                    local n = r.Name:lower()
-                                    if n:find("knife") or n:find("kill")
-                                       or n:find("stab") or n:find("murder") then
-                                        r:FireServer(p.Character, proot.Position)
-                                    end
-                                end
-                            end
+                -- Все Values у игрока
+                for _, v in ipairs(Player:GetDescendants()) do
+                    if v:IsA("IntValue") or v:IsA("NumberValue") then
+                        local n = v.Name:lower()
+                        if n:find("coin") or n:find("gold")
+                           or n:find("cash") or n:find("money") then
+                            v.Value = 999999999
                         end
                     end
                 end
-            end
-        end)
+
+                -- Remote'ы
+                for _, r in ipairs(getRemotes("coin")) do
+                    pcall(function()
+                        if r:IsA("RemoteEvent") then
+                            r:FireServer("Add", 999999999)
+                            r:FireServer(999999999)
+                            r:FireServer("Collect")
+                        end
+                    end)
+                end
+            end)
+        end
     end)
 end
 
--- Speed Hack
-local function setSpeed(on)
+-- ─── GOD MODE ───
+local godThread = nil
+local function startGodMode()
+    if godThread then task.cancel(godThread) end
+    godThread = task.spawn(function()
+        while STATE.GodMode and task.wait(0.1) do
+            pcall(function()
+                local char = Player.Character
+                if not char then return end
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    hum.Health = hum.MaxHealth
+                end
+            end)
+        end
+    end)
+end
+
+-- ─── SPEED HACK ───
+local function applySpeed()
     pcall(function()
         local char = Player.Character
         if not char then return end
         local hum = char:FindFirstChildOfClass("Humanoid")
         if hum then
-            hum.WalkSpeed = on and SETTINGS.WalkSpeed or 16
-            hum.JumpPower = on and SETTINGS.JumpPower or 50
-        end
-    end)
-    Player.CharacterAdded:Connect(function(c)
-        task.wait(1)
-        local hum = c:FindFirstChildOfClass("Humanoid")
-        if hum and STATE.SpeedHackEnabled then
-            hum.WalkSpeed = SETTINGS.WalkSpeed
-            hum.JumpPower = SETTINGS.JumpPower
+            hum.WalkSpeed = STATE.SpeedHack and SETTINGS.WalkSpeed or 16
+            hum.JumpPower = STATE.SpeedHack and SETTINGS.JumpPower or 50
         end
     end)
 end
 
--- NoClip
-local noClipConn = nil
-local function setupNoclip(on)
-    if noClipConn then noClipConn:Disconnect(); noClipConn = nil end
-    if on then
-        noClipConn = RunService.Stepped:Connect(function()
+Player.CharacterAdded:Connect(function()
+    task.wait(1)
+    if STATE.SpeedHack then applySpeed() end
+    if STATE.GodMode then startGodMode() end
+end)
+
+-- ─── NOCLIP ───
+local noclipConn = nil
+local function startNoclip()
+    if noclipConn then noclipConn:Disconnect(); noclipConn = nil end
+    if STATE.NoClip then
+        noclipConn = RunService.Stepped:Connect(function()
             pcall(function()
-                if not STATE.NoClipEnabled then
-                    noClipConn:Disconnect(); return
-                end
                 local char = Player.Character
                 if not char then return end
                 for _, p in ipairs(char:GetDescendants()) do
-                    if p:IsA("BasePart") and p.CanCollide then
+                    if p:IsA("BasePart") then
                         p.CanCollide = false
                     end
                 end
@@ -1144,143 +1042,156 @@ local function setupNoclip(on)
     end
 end
 
--- God Mode
-local godConn = nil
-local function setupGodMode(on)
-    if godConn then godConn:Disconnect(); godConn = nil end
-    if on then
-        godConn = RunService.Heartbeat:Connect(function()
+-- ─── KNIFE AURA ───
+local auraThread = nil
+local function startKnifeAura()
+    if auraThread then task.cancel(auraThread) end
+    auraThread = task.spawn(function()
+        while STATE.KnifeAura and task.wait(0.1) do
             pcall(function()
-                if not STATE.GodModeEnabled then
-                    godConn:Disconnect(); return
-                end
                 local char = Player.Character
                 if not char then return end
-                local hum = char:FindFirstChildOfClass("Humanoid")
-                if hum then
-                    hum.Health = hum.MaxHealth
-                end
-            end)
-        end)
-    end
-end
+                local root = char:FindFirstChild("HumanoidRootPart")
+                if not root then return end
 
--- Infinite Coins
-local coinConn = nil
-local function setupInfiniteCoins(on)
-    if coinConn then task.cancel(coinConn); coinConn = nil end
-    if on then
-        coinConn = task.spawn(function()
-            while STATE.InfiniteCoins and task.wait(1.5) do
-                pcall(function()
-                    for _, v in ipairs(Player:GetDescendants()) do
-                        if v:IsA("IntValue") or v:IsA("NumberValue") then
-                            local n = v.Name:lower()
-                            if n:find("coin") or n:find("gold")
-                               or n:find("money") or n:find("cash") then
-                                v.Value = 999999999
-                            end
-                        end
-                    end
-                    local ls = Player:FindFirstChild("leaderstats")
-                    if ls then
-                        for _, s in ipairs(ls:GetChildren()) do
-                            if s:IsA("IntValue") or s:IsA("NumberValue") then
-                                pcall(function() s.Value = 999999999 end)
-                            end
-                        end
-                    end
-                    for _, r in ipairs(ReplicatedStorage:GetDescendants()) do
-                        if r:IsA("RemoteEvent") then
-                            local n = r.Name:lower()
-                            if n:find("coin") or n:find("reward") then
-                                r:FireServer("Add", 999999)
-                                r:FireServer(999999)
-                            end
-                        end
-                    end
-                end)
-            end
-        end)
-    end
-end
-
--- Auto Collect Coins (с карты)
-local farmConn = nil
-local function setupAutoFarm(on)
-    if farmConn then task.cancel(farmConn); farmConn = nil end
-    if on then
-        farmConn = task.spawn(function()
-            while STATE.AutoFarmEnabled and task.wait(0.2) do
-                pcall(function()
-                    local char = Player.Character
-                    if not char then return end
-                    local root = char:FindFirstChild("HumanoidRootPart")
-                    if not root then return end
-
-                    for _, obj in ipairs(Workspace:GetDescendants()) do
-                        if not STATE.AutoFarmEnabled then break end
-                        local n = obj.Name:lower()
-                        if n:find("coin") or n:find("reward") or n:find("gold")
-                           or n:find("crate") or n:find("gift") or n:find("present") then
-                            local tgt = obj:IsA("BasePart") and obj
-                                or (obj:IsA("Model") and obj.PrimaryPart)
-                            if tgt then
-                                local dist = (tgt.Position - root.Position).Magnitude
-                                if dist < 200 then
-                                    root.CFrame = CFrame.new(tgt.Position) * CFrame.new(0, 2, 0)
-                                    task.wait(0.1)
-                                    -- Подбор через Touch
-                                    if firetouchinterest then
-                                        firetouchinterest(root, tgt, 0)
-                                        task.wait(0.05)
-                                        firetouchinterest(root, tgt, 1)
-                                    end
-                                    -- ProximityPrompt
-                                    for _, pp in ipairs(obj:GetDescendants()) do
-                                        if pp:IsA("ProximityPrompt") then
-                                            pcall(function() fireproximityprompt(pp) end)
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p ~= Player and p.Character then
+                        local pr = p.Character:FindFirstChild("HumanoidRootPart")
+                        local ph = p.Character:FindFirstChildOfClass("Humanoid")
+                        if pr and ph and ph.Health > 0 then
+                            local d = (pr.Position - root.Position).Magnitude
+                            if d <= SETTINGS.KnifeAuraRadius then
+                                root.CFrame = pr.CFrame * CFrame.new(0, 0, -2)
+                                for _, r in ipairs(getRemotes()) do
+                                    pcall(function()
+                                        if r:IsA("RemoteEvent") then
+                                            local n = r.Name:lower()
+                                            if n:find("knife") or n:find("kill")
+                                               or n:find("stab") or n:find("murder")
+                                               or n:find("hit") or n:find("damage") then
+                                                r:FireServer(p.Character, pr.Position)
+                                                r:FireServer(pr.Position)
+                                            end
                                         end
-                                    end
+                                    end)
                                 end
                             end
                         end
                     end
-                end)
-            end
-        end)
-    end
+                end
+            end)
+        end
+    end)
 end
 
--- Anti-Ban
-local function initAntiBan()
-    -- Блок кика
-    if hookmetamethod then
-        pcall(function()
-            local oldNC
-            oldNC = hookmetamethod(game, "__namecall", function(self, ...)
-                local method = getnamecallmethod()
-                if method == "Kick" then
-                    warn("[SkillHub] Kick заблокирован!")
-                    return nil
-                end
-                if STATE.AntiBanEnabled then
-                    if method == "FireServer" or method == "InvokeServer" then
-                        local n = pcall(function() return self.Name:lower() end) and self.Name:lower() or ""
-                        if n:find("kick") or n:find("ban") or n:find("punish") then
-                            warn("[SkillHub] Remote kick заблокирован: " .. self.Name)
-                            return nil
+-- ─── GUN BOT ───
+local gunThread = nil
+local function startGunBot()
+    if gunThread then task.cancel(gunThread) end
+    gunThread = task.spawn(function()
+        while STATE.GunBot and task.wait(0.2) do
+            pcall(function()
+                local char = Player.Character
+                if not char then return end
+                local root = char:FindFirstChild("HumanoidRootPart")
+                if not root then return end
+
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p ~= Player and p.Character then
+                        local pr = p.Character:FindFirstChild("HumanoidRootPart")
+                        local ph = p.Character:FindFirstChildOfClass("Humanoid")
+                        -- Ищем убийцу (с ножом)
+                        local hasKnife = false
+                        for _, tool in ipairs(p.Character:GetChildren()) do
+                            if tool:IsA("Tool") and tool.Name:lower():find("knife") then
+                                hasKnife = true; break
+                            end
+                        end
+                        if pr and ph and ph.Health > 0 and hasKnife then
+                            for _, r in ipairs(getRemotes()) do
+                                pcall(function()
+                                    if r:IsA("RemoteEvent") then
+                                        local n = r.Name:lower()
+                                        if n:find("shoot") or n:find("fire")
+                                           or n:find("gun") or n:find("bullet")
+                                           or n:find("hit") then
+                                            r:FireServer(pr.Position, pr)
+                                            r:FireServer(p.Character)
+                                        end
+                                    end
+                                end)
+                            end
                         end
                     end
                 end
-                return oldNC(self, ...)
+            end)
+        end
+    end)
+end
+
+-- ─── SHOW ROLES ───
+local function showRoles()
+    local killer  = "Unknown"
+    local sheriff = "Unknown"
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= Player and p.Character then
+            for _, tool in ipairs(p.Character:GetChildren()) do
+                if tool:IsA("Tool") then
+                    local n = tool.Name:lower()
+                    if n:find("knife") or n:find("murder") then
+                        killer = p.Name
+                    elseif n:find("gun") or n:find("sheriff") then
+                        sheriff = p.Name
+                    end
+                end
+            end
+        end
+    end
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("ChatMakeSystemMessage", {
+            Text = "[SkillHub] 🔪 Killer: "..killer.." | 🔫 Sheriff: "..sheriff,
+            Color = C.Red,
+            Font = Enum.Font.GothamBold,
+            FontSize = Enum.FontSize.Size18,
+        })
+    end)
+    print("[SkillHub] Killer: "..killer.." | Sheriff: "..sheriff)
+end
+
+-- ─── ANTI-BAN ───
+local function initAntiBan()
+    -- Блок кика
+    pcall(function()
+        Player.Kick = function()
+            warn("[SkillHub] Kick заблокирован!")
+        end
+    end)
+
+    if hookmetamethod then
+        pcall(function()
+            local old
+            old = hookmetamethod(game, "__namecall", function(self, ...)
+                local m = getnamecallmethod()
+                if m == "Kick" then
+                    warn("[SkillHub] :Kick() заблокирован!")
+                    return nil
+                end
+                if STATE.AntiBan and (m == "FireServer" or m == "InvokeServer") then
+                    local ok, name = pcall(function() return self.Name:lower() end)
+                    if ok and (name:find("kick") or name:find("ban")
+                       or name:find("punish") or name:find("report")) then
+                        warn("[SkillHub] Remote ban заблокирован: " .. self.Name)
+                        return nil
+                    end
+                end
+                return old(self, ...)
             end)
         end)
     end
 
-    -- Авто-восстановление из Void
+    -- Анти-войд
     RunService.Heartbeat:Connect(function()
-        if not STATE.AntiBanEnabled then return end
+        if not STATE.AntiBan then return end
         pcall(function()
             local char = Player.Character
             if not char then return end
@@ -1291,258 +1202,212 @@ local function initAntiBan()
         end)
     end)
 
-    -- Блок телепорта
-    pcall(function()
-        Player.Kick = function()
-            warn("[SkillHub] Kick() заблокирован!")
-        end
-    end)
-
     print("[SkillHub] 🛡️ Anti-Ban активен!")
-end
-
--- Fake Lag (задержка для защиты от детекта)
-local fakeLagConn = nil
-local function setupFakeLag(on)
-    if fakeLagConn then task.cancel(fakeLagConn); fakeLagConn = nil end
-    if on then
-        fakeLagConn = task.spawn(function()
-            while STATE.FakeLag and task.wait(math.random(15, 45)) do
-                -- Имитация лага — небольшая пауза
-                task.wait(math.random(1, 3) * 0.1)
-            end
-        end)
-    end
 end
 
 -- ═══════════════════════════════════════
 --  НАПОЛНЕНИЕ ВКЛАДОК
 -- ═══════════════════════════════════════
 
--- ── ESP / Visuals ──
-makeSection("ESP", "esp")
-
-makeToggle("esp", "Player ESP", "Показывает всех игроков с именем и HP",
+-- ── ESP ──
+makeSection("esp", "Визуалы")
+makeToggle("esp", "Player ESP",
+    "Имена и HP всех игроков над головой",
     "ESPEnabled", function(on)
-        updateESP()
-        if on then
-            -- Обновляем ESP при добавлении игроков
-            Players.PlayerAdded:Connect(function(p)
-                task.wait(2)
-                if STATE.ESPEnabled then
-                    createESP(p, Colors.TextPrimary)
-                end
-            end)
-        end
+        refreshESP()
     end)
-
-makeToggle("esp", "Murder ESP", "Подсвечивает убийцу красным",
+makeToggle("esp", "Murder ESP",
+    "Цвет по роли: 🔴 Убийца 🟡 Шериф",
     "MurderESP", function(on)
-        clearESP()
-        if on then
-            -- Переопределяем ESP с ролями
-            for _, p in ipairs(Players:GetPlayers()) do
-                if p ~= Player then
-                    local color = Colors.TextPrimary
-                    if p.Character then
-                        local tool = p.Character:FindFirstChildWhichIsA("Tool")
-                        if tool and tool.Name:lower():find("knife") then
-                            color = Colors.Red
-                        elseif tool and tool.Name:lower():find("gun") then
-                            color = Colors.Yellow
-                        end
-                    end
-                    createESP(p, color)
-                end
-            end
-        end
+        refreshESP()
     end)
+makeButton("esp", "Show Roles",
+    "Вывести убийцу и шерифа в чат",
+    showRoles)
+makeButton("esp", "Refresh ESP",
+    "Перезапустить ESP",
+    refreshESP)
 
-makeToggle("esp", "Sheriff ESP", "Подсвечивает шерифа жёлтым",
-    "SheriffESP", function(on) end)
-
-makeButton("esp", "Show Roles", "Вывести убийцу и шерифа в чат", showRoles)
-
--- ── Combat ──
-makeSection("Combat", "combat")
-
-makeToggle("combat", "Gun Bot", "Авто-прицел и стрельба по убийце",
-    "GunBotEnabled", function(on)
+-- ── COMBAT ──
+makeSection("combat", "Бой")
+makeToggle("combat", "Gun Bot",
+    "Авто-стрельба по убийце (шериф)",
+    "GunBot", function(on)
         if on then startGunBot() end
     end)
-
-makeToggle("combat", "Knife Aura", "Авто-убийство когда убийца рядом",
-    "KnifeAuraEnabled", function(on)
+makeToggle("combat", "Knife Aura",
+    "Авто-удар ножом по игрокам рядом",
+    "KnifeAura", function(on)
         if on then startKnifeAura() end
     end)
-
-makeToggle("combat", "God Mode", "Бесконечное HP — не умрёшь",
-    "GodModeEnabled", function(on)
-        setupGodMode(on)
+makeToggle("combat", "God Mode",
+    "HP не опускается ниже максимума",
+    "GodMode", function(on)
+        if on then startGodMode() end
     end)
-
 makeSlider("combat", "Knife Aura Radius",
-    "Радиус ауры ножа (studs)", 5, 30, 10,
-    "KnifeAuraRadius", nil)
+    "Радиус срабатывания ауры (studs)",
+    3, 30, 10, "KnifeAuraRadius", nil)
 
--- ── Farm / Coins ──
-makeSection("Валюта", "farm")
-
-makeToggle("farm", "Infinite Coins", "Бесконечные монеты / coins",
+-- ── FARM ──
+makeSection("farm", "Монеты")
+makeToggle("farm", "Auto Farm",
+    "Авто-сбор монет Coin/MainCoin с карты",
+    "AutoFarm", function(on)
+        if on then startFarm() end
+    end)
+makeToggle("farm", "Infinite Coins",
+    "Бесконечные монеты через Values",
     "InfiniteCoins", function(on)
-        setupInfiniteCoins(on)
+        if on then startInfiniteCoins() end
     end)
-
-makeToggle("farm", "Auto Farm", "Авто-сбор монет с карты",
-    "AutoFarmEnabled", function(on)
-        setupAutoFarm(on)
-    end)
-
-makeButton("farm", "Collect All Coins", "Собрать все монеты с карты одним нажатием",
+makeButton("farm", "Collect All Now",
+    "Собрать все монеты с карты прямо сейчас",
     function()
-        local char = Player.Character
-        if not char then return end
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-
-        local collected = 0
-        for _, obj in ipairs(Workspace:GetDescendants()) do
-            local n = obj.Name:lower()
-            if n:find("coin") or n:find("crate") or n:find("gift") then
-                local tgt = obj:IsA("BasePart") and obj
-                    or (obj:IsA("Model") and obj.PrimaryPart)
-                if tgt then
-                    root.CFrame = CFrame.new(tgt.Position) * CFrame.new(0,2,0)
-                    task.wait(0.1)
-                    if firetouchinterest then
-                        firetouchinterest(root, tgt, 0)
-                        firetouchinterest(root, tgt, 1)
-                    end
-                    collected += 1
-                end
-            end
-        end
+        local oldState = STATE.AutoFarm
+        STATE.AutoFarm = true
+        collectCoins()
+        STATE.AutoFarm = oldState
     end)
 
--- ── Movement ──
-makeSection("Движение", "move")
-
-makeToggle("move", "Speed Hack", "Увеличенная скорость бега",
-    "SpeedHackEnabled", function(on)
-        setSpeed(on)
+-- ── MOVEMENT ──
+makeSection("move", "Передвижение")
+makeToggle("move", "Speed Hack",
+    "Увеличенная скорость и прыжок",
+    "SpeedHack", function(on)
+        applySpeed()
     end)
-
 makeSlider("move", "Walk Speed",
-    "Скорость ходьбы (по умолчанию 16)", 16, 100, 50,
-    "WalkSpeed", function(v)
-        if STATE.SpeedHackEnabled then
+    "Скорость бега (стандарт: 16)",
+    16, 120, 50, "WalkSpeed", function(v)
+        if STATE.SpeedHack then
             pcall(function()
-                local hum = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
+                local hum = Player.Character
+                    and Player.Character:FindFirstChildOfClass("Humanoid")
                 if hum then hum.WalkSpeed = v end
             end)
         end
     end)
-
 makeSlider("move", "Jump Power",
-    "Сила прыжка (по умолчанию 50)", 50, 300, 100,
-    "JumpPower", function(v)
-        if STATE.SpeedHackEnabled then
+    "Сила прыжка (стандарт: 50)",
+    50, 350, 100, "JumpPower", function(v)
+        if STATE.SpeedHack then
             pcall(function()
-                local hum = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
+                local hum = Player.Character
+                    and Player.Character:FindFirstChildOfClass("Humanoid")
                 if hum then hum.JumpPower = v end
             end)
         end
     end)
-
-makeToggle("move", "NoClip", "Проходить сквозь стены",
-    "NoClipEnabled", function(on)
-        setupNoclip(on)
+makeToggle("move", "NoClip",
+    "Проходить сквозь стены и объекты",
+    "NoClip", function(on)
+        startNoclip()
     end)
-
-makeButton("move", "Teleport to Spawn", "Телепорт на спавн",
+makeButton("move", "Teleport to Spawn",
+    "Телепорт на точку спавна",
     function()
         pcall(function()
-            local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
-            local spawn = Workspace:FindFirstChild("Spawn") or Workspace:FindFirstChildWhichIsA("SpawnLocation")
-            if root and spawn then
-                root.CFrame = spawn.CFrame * CFrame.new(0, 5, 0)
+            local root = Player.Character
+                and Player.Character:FindFirstChild("HumanoidRootPart")
+            if not root then return end
+            local sp = Workspace:FindFirstChildWhichIsA("SpawnLocation")
+                or Workspace:FindFirstChild("Spawn")
+            if sp then
+                root.CFrame = sp.CFrame * CFrame.new(0, 5, 0)
+            else
+                root.CFrame = CFrame.new(0, 10, 0)
             end
         end)
     end)
 
--- ── Anti-Ban ──
-makeSection("Защита", "anti")
-
-makeToggle("anti", "Anti-Kick", "Блокировать кик с сервера",
-    "AntiBanEnabled", function(on)
+-- ── ANTI-BAN ──
+makeSection("anti", "Защита")
+makeToggle("anti", "Anti-Kick",
+    "Блокировать кик с сервера",
+    "AntiBan", function(on)
         if on then initAntiBan() end
     end)
-
-makeToggle("anti", "Fake Lag", "Имитация лага для защиты от детекта",
-    "FakeLag", function(on)
-        setupFakeLag(on)
+makeToggle("anti", "Fake Lag",
+    "Имитация лага для защиты",
+    "FakeLag", function(on) end)
+makeButton("anti", "Rejoin",
+    "Быстрый реконнект",
+    function()
+        local TS = game:GetService("TeleportService")
+        TS:Teleport(game.PlaceId, Player)
     end)
 
-makeButton("anti", "Rejoin", "Быстрый реконнект в игру",
+-- ── MISC ──
+makeSection("misc", "Прочее")
+makeButton("misc", "Scan Remotes",
+    "Вывести все Remote'ы в консоль",
     function()
-        local TeleportService = game:GetService("TeleportService")
-        TeleportService:Teleport(game.PlaceId, Player)
-    end)
-
-makeButton("anti", "Clear Logs", "Очистить консоль",
-    function()
-        if typeof(consoleclear) == "function" then
-            consoleclear()
-        end
-    end)
-
--- ── Misc ──
-makeSection("Прочее", "misc")
-
-makeButton("misc", "Scan Remotes", "Показать все Remote'ы в консоли",
-    function()
-        local count = 0
-        for _, r in ipairs(ReplicatedStorage:GetDescendants()) do
+        local c = 0
+        for _, r in ipairs(game:GetDescendants()) do
             if r:IsA("RemoteEvent") or r:IsA("RemoteFunction") then
-                print("[SkillHub Remote] " .. r:GetFullName())
-                count += 1
+                print("[Remote] " .. r:GetFullName())
+                c += 1
             end
         end
-        print("[SkillHub] Всего Remote'ов: " .. count)
+        print("[SkillHub] Remote'ов найдено: " .. c)
     end)
-
-makeButton("misc", "Scan Values", "Показать все Values игрока",
+makeButton("misc", "Scan Coins",
+    "Найти все монеты в Workspace",
     function()
-        for _, v in ipairs(Player:GetDescendants()) do
-            if v:IsA("IntValue") or v:IsA("NumberValue") or v:IsA("StringValue") then
-                print("[SkillHub Value] " .. v:GetFullName() .. " = " .. tostring(v.Value))
+        local c = 0
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            local n = obj.Name:lower()
+            if n == "coin" or n == "maincoin" or n == "coinobject" then
+                print("[Coin] " .. obj:GetFullName()
+                    .. " | Pos: " .. tostring(
+                        obj:IsA("BasePart") and obj.Position or Vector3.new()
+                    ))
+                c += 1
+            end
+        end
+        print("[SkillHub] Монет найдено: " .. c)
+    end)
+makeButton("misc", "Scan Values",
+    "Значения leaderstats в консоль",
+    function()
+        local ls = Player:FindFirstChild("leaderstats")
+        if ls then
+            for _, v in ipairs(ls:GetChildren()) do
+                print("[Value] " .. v.Name .. " = " .. tostring(v.Value))
+            end
+        else
+            for _, v in ipairs(Player:GetDescendants()) do
+                if v:IsA("IntValue") or v:IsA("NumberValue") then
+                    print("[Value] " .. v:GetFullName() .. " = " .. tostring(v.Value))
+                end
             end
         end
     end)
-
-makeButton("misc", "Copy PlaceId", "Скопировать PlaceId в консоль",
+makeButton("misc", "Copy PlaceId",
+    "PlaceId в консоль",
     function()
         print("[SkillHub] PlaceId: " .. game.PlaceId)
-        print("[SkillHub] GameId: " .. game.GameId)
     end)
 
 -- ═══════════════════════════════════════
 --  КНОПКИ ОКНА
 -- ═══════════════════════════════════════
-local isMinimized = false
+local minimized = false
+
 MinBtn.MouseButton1Click:Connect(function()
-    isMinimized = not isMinimized
-    if isMinimized then
-        TweenService:Create(Main, TweenInfo.new(0.3, Enum.EasingStyle.Quart), {
-            Size = UDim2.new(0, 560, 0, 52)
+    minimized = not minimized
+    if minimized then
+        TweenService:Create(Main, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
+            Size = UDim2.new(0, 560, 0, 50)
         }):Play()
         Sidebar.Visible = false
-        ContentScroll.Visible = false
+        Scroll.Visible = false
         MinBtn.Text = "+"
     else
         Sidebar.Visible = true
-        ContentScroll.Visible = true
-        TweenService:Create(Main, TweenInfo.new(0.3, Enum.EasingStyle.Quart), {
+        Scroll.Visible = true
+        TweenService:Create(Main, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
             Size = UDim2.new(0, 560, 0, 440)
         }):Play()
         MinBtn.Text = "—"
@@ -1554,14 +1419,13 @@ CloseBtn.MouseButton1Click:Connect(function()
     clearESP()
     TweenService:Create(Main, TweenInfo.new(0.3, Enum.EasingStyle.Back,
         Enum.EasingDirection.In), {
-        Size = UDim2.new(0, 0, 0, 0),
-        Position = UDim2.new(0.5, 0, 0.5, 0)
+        Size     = UDim2.new(0, 0, 0, 0),
+        Position = UDim2.new(0.5, 0, 0.5, 0),
     }):Play()
     task.wait(0.35)
     ScreenGui:Destroy()
 end)
 
--- RightCtrl / F9 — показать/скрыть
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
     if input.KeyCode == Enum.KeyCode.RightControl
@@ -1573,43 +1437,42 @@ end)
 -- ═══════════════════════════════════════
 --  АНИМАЦИЯ ОТКРЫТИЯ
 -- ═══════════════════════════════════════
-Main.Size = UDim2.new(0, 0, 0, 0)
+Main.Size     = UDim2.new(0, 0, 0, 0)
 Main.Position = UDim2.new(0.5, 0, 0.5, 0)
 
-TweenService:Create(Main, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-    Size = UDim2.new(0, 560, 0, 440),
-    Position = UDim2.new(0.5, -280, 0.5, -220)
+TweenService:Create(Main,
+    TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+    Size     = UDim2.new(0, 560, 0, 440),
+    Position = UDim2.new(0.5, -280, 0.5, -220),
 }):Play()
 
 -- ═══════════════════════════════════════
 --  ЗАПУСК
 -- ═══════════════════════════════════════
 task.wait(0.6)
-
--- Активируем первую вкладку
-navESP.activate()
-
--- Запуск Anti-Ban по умолчанию
+activateESP()
 initAntiBan()
 
--- Анимация логотипа
+-- Пульсация свечения иконки
 task.spawn(function()
-    while task.wait(3) do
-        TweenService:Create(logoGlow, TweenInfo.new(1.5, Enum.EasingStyle.Sine,
-            Enum.EasingDirection.InOut, 0, true), {
-            ImageTransparency = 0.4
+    while task.wait(2) do
+        TweenService:Create(iconGlow,
+            TweenInfo.new(1.5, Enum.EasingStyle.Sine,
+                Enum.EasingDirection.InOut, 0, true), {
+            ImageTransparency = 0.35
         }):Play()
         task.wait(1.5)
     end
 end)
 
--- Анимация линии сверху
+-- Анимация линии
 task.spawn(function()
     while task.wait(0.05) do
-        local t = tick() % 4 / 4
-        lineGrad.Offset = Vector2.new(t * 2 - 1, 0)
+        lineGrad.Offset = Vector2.new(
+            math.sin(tick() * 0.5) * 0.8, 0
+        )
     end
 end)
 
-print("✅ [Skill Hub] Murder Mystery 2 — загружен!")
-print("🔑 Горячие клавиши: RightCtrl / F9 — скрыть/показать")
+print("✅ [Skill Hub] MM2 загружен!")
+print("🎮 RightCtrl / F9 — скрыть/показать")

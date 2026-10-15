@@ -1,0 +1,10 @@
+# The readable source of truth is NOT published any more: only the locked build,
+# the loader and the tools go to GitHub. Keep it that way.
+main.lua
+
+# Private passphrase that locks release/skillhub.release.lua (rotate with
+# `python3 tools/build_release.py --pass "<new key>"`).
+.release_key
+
+# Locally unsealed copies (regenerate with `tools/build_release.py --unseal`).
+release/skillhub.sealed.lua

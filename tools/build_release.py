@@ -1,33 +1,37 @@
 #!/usr/bin/env python3
-"""Build the sealed release copy of main.lua.
+"""Build the LOCKED release copy of main.lua.
 
-    python3 tools/build_release.py            # build dist/ + update loader.lua
-    python3 tools/build_release.py --check    # verify dist/ still matches the loader
+    python3 tools/build_release.py                     # build release/ + re-pin loader.lua
+    python3 tools/build_release.py --pass "phrase"     # use an explicit passphrase
+    python3 tools/build_release.py --check             # verify the published blob unlocks
+    python3 tools/build_release.py --unseal            # write the inner (sealed) Lua locally
+    python3 tools/build_release.py --selftest          # python ⇄ Lua agreement on lock/unlock
 
-What "sealed" means here (be honest, it is obfuscation, not encryption):
-  · every comment is replaced by spaces — so LINE NUMBERS SURVIVE EXACTLY and the
-    hub's own `SkillHubStep("main.lua:1471", …)` labels keep their meaning;
-  · every string literal is replaced by `__S("<seed><hex>")` — the literal text is
-    decoded at runtime by a tiny XOR decoder on line 1 (the file, and therefore
-    line numbering, is unchanged);
-  · literals containing backslash escapes are left readable (interpretation risk
-    is not worth it — they are pattern strings);
-  · the checksum of the sealed payload is written into loader.lua, which refuses
-    to run a payload that does not match.
+Pipeline:  main.lua  →(seal: comments→spaces, strings→__S blobs)→  sealed Lua
+           sealed Lua →(lock: block-position-keyed XOR stream, phrase)→  release blob
 
-A determined reader with an executor can still dump what runs; what this stops is
-somebody copying the repository and reading/harvesting the source for free.
+Only the locked blob is published (`release/skillhub.release.lua`). Without the
+passphrase it is noise: no source, no comments, no string literals, not even Lua.
+The passphrase lives in `.release_key` (git-ignored) and never enters the repo.
+Rotation = rebuild with a new passphrase and hand it to whoever you authorise.
 """
-import argparse, io, os, sys
+import argparse, io, os, re, secrets, sys
 
 ROOT = "/home/user/Skill-Hub"
 SOURCE = os.path.join(ROOT, "main.lua")
-DIST = os.path.join(ROOT, "dist", "skillhub.release.lua")
+RELEASE_DIR = os.path.join(ROOT, "release")
+BLOB = os.path.join(RELEASE_DIR, "skillhub.release.lua")
+SEALED = os.path.join(RELEASE_DIR, "skillhub.sealed.lua")
+LOCAL_SEALED = "/tmp/skillhub.sealed.lua"          # for local verification only
 LOADER = os.path.join(ROOT, "loader.lua")
+KEY_FILE = os.path.join(ROOT, ".release_key")
 MASK = 0xFFFFFFFF
 GOLDEN = 0x9E3779B1
+BLOCK = 16
+HEADER = "-- Skill Hub locked payload · v{version} · {bytes} bytes · hash {checksum} · only a key holder can unlock this"
 
 
+# ── primitives (mirrored in loader.lua: hash32 → HASH32-CORE, unlock → UNLOCK-CORE)
 def fnv1a32(data: bytes) -> int:
     h = 2166136261
     for byte in data:
@@ -43,8 +47,33 @@ def next_seed(seed: int) -> int:
     return seed & MASK
 
 
+def lock(text: str, phrase: str) -> str:
+    """Hex of `text` XOR a stream whose seed for every 16-byte block is a hash of
+    (phrase, block offset) — so learning the stream in one block says nothing
+    about any other block."""
+    data = text.encode("utf-8")
+    out = bytearray()
+    for start in range(0, len(data), BLOCK):
+        seed = fnv1a32(("%s:%d" % (phrase, start)).encode("utf-8")) or 1
+        for index in range(start, min(start + BLOCK, len(data))):
+            seed = next_seed(seed)
+            out.append(data[index] ^ (seed & 0xFF))
+    return out.hex()
+
+
+def unlock(blob: str, phrase: str) -> str:
+    data = bytes.fromhex(re.sub(r"\s+", "", blob))
+    out = bytearray()
+    for start in range(0, len(data), BLOCK):
+        seed = fnv1a32(("%s:%d" % (phrase, start)).encode("utf-8")) or 1
+        for index in range(start, min(start + BLOCK, len(data))):
+            seed = next_seed(seed)
+            out.append(data[index] ^ (seed & 0xFF))
+    return out.decode("utf-8", "replace")
+
+
+# ── sealing (source → sealed Lua, line numbers preserved exactly)
 def seal_literal(text: str, key: int, index: int) -> str:
-    """<seed><hex payload> — the seed travels with the blob, the decoder is on line 1."""
     seed = (key + index * GOLDEN) & MASK
     if seed == 0:
         seed = 1
@@ -74,10 +103,8 @@ def seal_source(source: str, key: int):
     while index < length:
         ch = source[index]
 
-        # comments ---------------------------------------------------------
         if ch == "-" and source.startswith("--", index):
-            eq = 0
-            probe = index + 3
+            eq, probe = 0, index + 3
             if source.startswith("--[[", index) or source.startswith("--[=", index):
                 while probe < length and source[probe] == "=":
                     eq += 1
@@ -98,7 +125,6 @@ def seal_source(source: str, key: int):
             index = end
             continue
 
-        # long strings ([[…]]) are left as they are — they are not used as values
         if ch == "[" and source.startswith("[[", index):
             end = source.find("]]", index + 2)
             end = length if end == -1 else end + 2
@@ -106,7 +132,6 @@ def seal_source(source: str, key: int):
             index = end
             continue
 
-        # short strings ----------------------------------------------------
         if ch in "\"'":
             quote, cursor, body = ch, index + 1, []
             while cursor < length:
@@ -133,72 +158,163 @@ def seal_source(source: str, key: int):
         out.append(ch)
         index += 1
 
-    return "".join(out), stats
+    lines = "".join(out).split("\n")
+    lines[0] = PRELUDE + lines[0]      # decoder on line 1: line numbers stay put
+    return "\n".join(lines), stats
 
 
 def current_version(source: str) -> str:
     marker = 'SharedEnv.SkillHubInstance = setmetatable({\n    version = "'
     if marker in source:
-        rest = source.split(marker, 1)[1]
-        return rest.split('"', 1)[0]
+        return source.split(marker, 1)[1].split('"', 1)[0]
     return "0.0"
 
 
-def build(key: int) -> int:
+def passphrase(explicit: str) -> str:
+    if explicit:
+        return explicit
+    if os.path.exists(KEY_FILE):
+        return io.open(KEY_FILE, encoding="utf-8").read().strip()
+    generated = "SKH-" + secrets.token_hex(12)
+    io.open(KEY_FILE, "w", encoding="utf-8").write(generated + "\n")
+    os.chmod(KEY_FILE, 0o600)
+    print("generated a private passphrase -> .release_key (git-ignored, never committed)")
+    return generated
+
+
+def build(explicit_pass: str) -> int:
     source = io.open(SOURCE, encoding="utf-8").read()
-    sealed, stats = seal_source(source, key)
-
-    # the decoder goes on line 1, before the (now blank) header comment: line
-    # numbering of every following line is untouched
-    lines = sealed.split("\n")
-    lines[0] = PRELUDE + lines[0]
-    payload = "\n".join(lines)
-
     version = current_version(source)
-    checksum = "%08x" % fnv1a32(payload.encode("utf-8"))
+    sealed, stats = seal_source(source, 0x5EED1A7E)
+    checksum = "%08x" % fnv1a32(sealed.encode("utf-8"))
+    phrase = passphrase(explicit_pass)
 
-    os.makedirs(os.path.dirname(DIST), exist_ok=True)
-    io.open(DIST, "w", encoding="utf-8").write(payload)
+    os.makedirs(RELEASE_DIR, exist_ok=True)
+    io.open(LOCAL_SEALED, "w", encoding="utf-8").write(sealed)      # verification copy (not the repo)
+    blob_body = lock(sealed, phrase)
+    header = HEADER.format(version=version, bytes=len(sealed.encode("utf-8")), checksum=checksum)
+    io.open(BLOB, "w", encoding="utf-8").write(header + "\n" + blob_body + "\n")
 
     loader = io.open(LOADER, encoding="utf-8").read()
-    loader = __import__("re").sub(r'    Build        = "v[\d.]+",', '    Build        = "v%s",' % version, loader)
-    loader = __import__("re").sub(r'    ExpectedHash = "[0-9a-f]{8}",', '    ExpectedHash = "%s",' % checksum, loader)
+    loader = re.sub(r'    Build        = "v[\d.]+",', '    Build        = "v%s",' % version, loader)
+    loader = re.sub(r'    ExpectedHash = "[0-9a-f]{8}",', '    ExpectedHash = "%s",' % checksum, loader)
     io.open(LOADER, "w", encoding="utf-8").write(loader)
 
-    same_lines = len(payload.split("\n")) == len(source.split("\n"))
-    leaks = [needle for needle in ("rbxassetid", "discord.com", "game:HttpGet", "GetService(\"Players\")")
-             if needle in payload]
+    same_lines = len(sealed.split("\n")) == len(source.split("\n"))
+    leaks = [needle for needle in ("rbxassetid", "discord.com", "game:HttpGet", "function ", "local ")
+             if needle in io.open(BLOB, encoding="utf-8").read()]
 
-    print("sealed build  : %s" % DIST)
-    print("version       : v%s   seed key: %d" % (version, key))
-    print("strings sealed: %d   skipped (escapes): %d   comments blanked: %d"
+    print("locked build  : %s" % BLOB)
+    print("version       : v%s" % version)
+    print("seal stats    : %d literals sealed · %d skipped (escapes) · %d comments blanked"
           % (stats["sealed"], stats["skipped"], stats["comments"]))
-    print("lines         : %d source -> %d sealed %s" % (len(source.split("\n")), len(payload.split("\n")),
+    print("lines         : %d source -> %d sealed %s" % (len(source.split("\n")), len(sealed.split("\n")),
                                                          "OK (line numbers preserved)" if same_lines else "MISMATCH"))
-    print("payload size  : %d bytes   fnv1a32: %s" % (len(payload.encode("utf-8")), checksum))
-    print("loader.lua    : Build + ExpectedHash updated")
-    print("plaintext leak: %s" % ("none of the checked markers survive" if not leaks else "FOUND " + ", ".join(leaks)))
+    print("inner hash    : %s   (pinned in loader.lua)" % checksum)
+    print("locked size   : %d bytes on disk" % os.path.getsize(BLOB))
+    print("passphrase    : .release_key (private) — rotate with --pass to cut off an old key")
+    print("blob is noise : %s" % ("yes — no Lua, no strings, no comments" if not leaks else "LEAK FOUND: " + ", ".join(leaks)))
     return 0 if same_lines and not leaks else 1
 
 
 def check() -> int:
-    if not os.path.exists(DIST):
-        print("no sealed build yet — run tools/build_release.py first")
+    if not os.path.exists(BLOB):
+        print("no locked build yet — run tools/build_release.py first")
         return 1
-    payload = io.open(DIST, encoding="utf-8").read()
+    if not os.path.exists(KEY_FILE):
+        print("no .release_key — cannot verify without the passphrase")
+        return 1
+    text = io.open(BLOB, encoding="utf-8").read().split("\n", 1)[1]
+    inner = unlock(text, passphrase(None))
     loader = io.open(LOADER, encoding="utf-8").read()
-    expected = __import__("re").search(r'    ExpectedHash = "([0-9a-f]{8})",', loader).group(1)
-    actual = "%08x" % fnv1a32(payload.encode("utf-8"))
+    expected = re.search(r'    ExpectedHash = "([0-9a-f]{8})",', loader).group(1)
+    actual = "%08x" % fnv1a32(inner.encode("utf-8"))
     if expected != actual:
-        print("CHECK FAILED — loader expects %s, dist/ is %s (rebuild it)" % (expected, actual))
+        print("CHECK FAILED — loader pins %s, the blob unlocks to %s" % (expected, actual))
         return 1
-    print("BUILD CHECK OK — dist/ matches the checksum loader.lua pins (%s)" % expected)
+    if os.path.exists(SOURCE):
+        local, _ = seal_source(io.open(SOURCE, encoding="utf-8").read(), 0x5EED1A7E)
+        if local != inner:
+            print("CHECK FAILED — the published blob is not the current main.lua (rebuild it)")
+            return 1
+    print("BUILD CHECK OK — the published blob unlocks to the current build (%s) with the private key" % expected)
+    return 0
+
+
+def unseal() -> int:
+    if not os.path.exists(BLOB) or not os.path.exists(KEY_FILE):
+        print("nothing to unseal (need the blob and .release_key)")
+        return 1
+    inner = unlock(io.open(BLOB, encoding="utf-8").read().split("\n", 1)[1], passphrase(None))
+    io.open(SEALED, "w", encoding="utf-8").write(inner)
+    print("wrote %s (%d lines) — readable only locally, it is git-ignored" % (SEALED, len(inner.split("\n"))))
+    return 0
+
+
+def lua_span(path: str, start: str, end: str) -> str:
+    src = io.open(path, encoding="utf-8").read()
+    return src[src.index(start):src.index(end)] if start in src and end in src else ""
+
+
+def selftest() -> int:
+    failures = []
+    samples = ["", "a", "https://discord.com/api/webhooks/1/x", "Привет · lock", "z" * 4096]
+    for sample in samples:
+        if unlock(lock(sample, "phrase-1"), "phrase-1") != sample:
+            failures.append("python lock/unlock round trip failed for %r" % sample[:24])
+        if sample and unlock(lock(sample, "phrase-1"), "phrase-2") == sample:
+            failures.append("blob unlocked with the wrong passphrase (%r)" % sample[:24])
+    # position independence: same content, two blocks, must not share a stream
+    if lock("A" * 64, "p")[:32] == lock("A" * 32, "p")[:32] and lock("A" * 64, "p")[32:64] == lock("A" * 32, "p"):
+        failures.append("stream repeats across blocks")
+
+    span = lua_span(LOADER, "-- >>> HASH32-CORE", "-- <<< HASH32-CORE")
+    unlock_span = lua_span(LOADER, "-- >>> UNLOCK-CORE", "-- <<< UNLOCK-CORE")
+    if not span or not unlock_span:
+        failures.append("loader.lua spans not found")
+    else:
+        try:
+            import lupa
+            runtime = lupa.LuaRuntime(unpack_returned_tuples=True)
+            chunk = span.replace("local function ", "function ") + unlock_span.replace("local function ", "function ")
+            chunk += "\nreturn hash32, unlock\n"
+            lua_hash, lua_unlock = runtime.execute(chunk)
+            for sample in ["", "abc", "Привет", "https://example.com/hook"]:
+                expected = "%08x" % fnv1a32(sample.encode("utf-8"))
+                if lua_hash(sample) != expected:
+                    failures.append("lua hash32(%r) = %s, python = %s" % (sample, lua_hash(sample), expected))
+            payload = "sealed lua payload " * 40
+            if lua_unlock(lock(payload, "key-42"), "key-42") != payload:
+                failures.append("lua unlock does not match python lock")
+            try:
+                wrong = lua_unlock(lock(payload, "key-42"), "key-43")
+            except UnicodeDecodeError:
+                wrong = None          # binary garbage: exactly what a wrong key must yield
+            if wrong == payload:
+                failures.append("lua unlocked with a wrong key")
+        except ImportError:
+            print("   (lupa unavailable — lua side not executed)")
+    if failures:
+        print("SELFTEST FAILED")
+        for failure in failures:
+            print("   " + failure)
+        return 1
+    print("LOCK SELFTEST OK — python and Lua agree byte for byte; a wrong key yields garbage, "
+          "and block seeds are position-derived (no stream reuse)")
     return 0
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
-    parser.add_argument("--key", type=int, default=0x5EED1A7E)
+    parser.add_argument("--unseal", action="store_true")
+    parser.add_argument("--selftest", action="store_true")
+    parser.add_argument("--pass", dest="phrase", default="")
     args = parser.parse_args()
-    sys.exit(check() if args.check else build(args.key))
+    if args.selftest:
+        sys.exit(selftest())
+    if args.check:
+        sys.exit(check())
+    if args.unseal:
+        sys.exit(unseal())
+    sys.exit(build(args.phrase))

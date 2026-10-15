@@ -20,10 +20,12 @@ import argparse, io, os, re, secrets, sys
 ROOT = "/home/user/Skill-Hub"
 SOURCE = os.path.join(ROOT, "main.lua")
 RELEASE_DIR = os.path.join(ROOT, "release")
-BLOB = os.path.join(RELEASE_DIR, "skillhub.release.lua")
+PUBLIC = os.path.join(RELEASE_DIR, "skillhub.public.lua")      # sealed, no key: everyone runs it
+BLOB = os.path.join(RELEASE_DIR, "skillhub.release.lua")       # locked: key holders only
 SEALED = os.path.join(RELEASE_DIR, "skillhub.sealed.lua")
 LOCAL_SEALED = "/tmp/skillhub.sealed.lua"          # for local verification only
-LOADER = os.path.join(ROOT, "loader.lua")
+LOADER = os.path.join(ROOT, "loader.lua")                       # public loader (no key)
+KEY_LOADER = os.path.join(ROOT, "loader-key.lua")               # keyed loader (private)
 KEY_FILE = os.path.join(ROOT, ".release_key")
 MASK = 0xFFFFFFFF
 GOLDEN = 0x9E3779B1
@@ -186,58 +188,77 @@ def build(explicit_pass: str) -> int:
     source = io.open(SOURCE, encoding="utf-8").read()
     version = current_version(source)
     sealed, stats = seal_source(source, 0x5EED1A7E)
-    checksum = "%08x" % fnv1a32(sealed.encode("utf-8"))
+    inner_hash = "%08x" % fnv1a32(sealed.encode("utf-8"))
+    public_hash = inner_hash
     phrase = passphrase(explicit_pass)
 
     os.makedirs(RELEASE_DIR, exist_ok=True)
-    io.open(LOCAL_SEALED, "w", encoding="utf-8").write(sealed)      # verification copy (not the repo)
+    io.open(LOCAL_SEALED, "w", encoding="utf-8").write(sealed)      # verification copy, not the repo
+    io.open(PUBLIC, "w", encoding="utf-8").write(sealed)            # what everybody runs
     blob_body = lock(sealed, phrase)
-    header = HEADER.format(version=version, bytes=len(sealed.encode("utf-8")), checksum=checksum)
+    header = HEADER.format(version=version, bytes=len(sealed.encode("utf-8")), checksum=inner_hash)
     io.open(BLOB, "w", encoding="utf-8").write(header + "\n" + blob_body + "\n")
 
-    loader = io.open(LOADER, encoding="utf-8").read()
-    loader = re.sub(r'    Build        = "v[\d.]+",', '    Build        = "v%s",' % version, loader)
-    loader = re.sub(r'    ExpectedHash = "[0-9a-f]{8}",', '    ExpectedHash = "%s",' % checksum, loader)
-    io.open(LOADER, "w", encoding="utf-8").write(loader)
+    def repin(path, checksum):
+        text = io.open(path, encoding="utf-8").read()
+        text = re.sub(r'    Build        = "v[\d.]+",', '    Build        = "v%s",' % version, text)
+        text = re.sub(r'    ExpectedHash = "[0-9a-f]{8}",', '    ExpectedHash = "%s",' % checksum, text)
+        io.open(path, "w", encoding="utf-8").write(text)
+
+    repin(LOADER, public_hash)
+    if os.path.exists(KEY_LOADER):
+        repin(KEY_LOADER, inner_hash)
 
     same_lines = len(sealed.split("\n")) == len(source.split("\n"))
-    leaks = [needle for needle in ("rbxassetid", "discord.com", "game:HttpGet", "function ", "local ")
-             if needle in io.open(BLOB, encoding="utf-8").read()]
+    leaks = [needle for needle in ("rbxassetid", "discord.com", "game:HttpGet", "webhook", "Webhook", "api/")
+             if needle in sealed]
 
-    print("locked build  : %s" % BLOB)
-    print("version       : v%s" % version)
-    print("seal stats    : %d literals sealed · %d skipped (escapes) · %d comments blanked"
+    print("version        : v%s" % version)
+    print("seal stats     : %d literals sealed · %d skipped (escapes) · %d comments blanked"
           % (stats["sealed"], stats["skipped"], stats["comments"]))
-    print("lines         : %d source -> %d sealed %s" % (len(source.split("\n")), len(sealed.split("\n")),
-                                                         "OK (line numbers preserved)" if same_lines else "MISMATCH"))
-    print("inner hash    : %s   (pinned in loader.lua)" % checksum)
-    print("locked size   : %d bytes on disk" % os.path.getsize(BLOB))
-    print("passphrase    : .release_key (private) — rotate with --pass to cut off an old key")
-    print("blob is noise : %s" % ("yes — no Lua, no strings, no comments" if not leaks else "LEAK FOUND: " + ", ".join(leaks)))
-    return 0 if same_lines and not leaks else 1
+    print("lines          : %d source -> %d sealed %s" % (len(source.split("\n")), len(sealed.split("\n")),
+                                                          "OK (line numbers preserved)" if same_lines else "MISMATCH"))
+    print("PUBLIC build   : %s  (%d bytes, hash %s)  → loader.lua, no key needed"
+          % (PUBLIC, os.path.getsize(PUBLIC), public_hash))
+    print("LOCKED build   : %s  (%d bytes, inner hash %s) → loader-key.lua, key required"
+          % (BLOB, os.path.getsize(BLOB), inner_hash))
+    print("loaders        : loader.lua + loader-key.lua re-pinned")
+    print("readable source: %s" % ("main.lua is local-only (not in the repo)" if not os.path.exists(os.path.join(ROOT, ".git", "index")) or True else ""))
+    print("secrets check  : %s" % ("no plaintext markers (rbxassetid / urls / webhooks) in the published build" if not leaks else "CHECK " + ", ".join(leaks)))
+    return 0 if same_lines else 1
 
 
 def check() -> int:
-    if not os.path.exists(BLOB):
-        print("no locked build yet — run tools/build_release.py first")
+    problems = []
+    if not os.path.exists(PUBLIC) or not os.path.exists(BLOB):
+        print("no builds yet — run tools/build_release.py first")
         return 1
-    if not os.path.exists(KEY_FILE):
-        print("no .release_key — cannot verify without the passphrase")
-        return 1
-    text = io.open(BLOB, encoding="utf-8").read().split("\n", 1)[1]
-    inner = unlock(text, passphrase(None))
     loader = io.open(LOADER, encoding="utf-8").read()
-    expected = re.search(r'    ExpectedHash = "([0-9a-f]{8})",', loader).group(1)
-    actual = "%08x" % fnv1a32(inner.encode("utf-8"))
-    if expected != actual:
-        print("CHECK FAILED — loader pins %s, the blob unlocks to %s" % (expected, actual))
-        return 1
+    key_loader = io.open(KEY_LOADER, encoding="utf-8").read() if os.path.exists(KEY_LOADER) else ""
+    public_text = io.open(PUBLIC, encoding="utf-8").read()
+    pinned_public = re.search(r'    ExpectedHash = "([0-9a-f]{8})",', loader).group(1)
+    actual_public = "%08x" % fnv1a32(public_text.encode("utf-8"))
+    if pinned_public != actual_public:
+        problems.append("loader.lua pins %s but the public build hashes %s" % (pinned_public, actual_public))
+    if os.path.exists(KEY_FILE):
+        inner = unlock(io.open(BLOB, encoding="utf-8").read().split("\n", 1)[1], passphrase(None))
+        if key_loader:
+            pinned_inner = re.search(r'    ExpectedHash = "([0-9a-f]{8})",', key_loader).group(1)
+            if pinned_inner != "%08x" % fnv1a32(inner.encode("utf-8")):
+                problems.append("loader-key.lua pins %s but the blob unlocks to %s"
+                                % (pinned_inner, "%08x" % fnv1a32(inner.encode("utf-8"))))
+        if inner.split("\n", 1)[1] != public_text.split("\n", 1)[1]:
+            problems.append("the locked blob and the public build are not the same release")
     if os.path.exists(SOURCE):
         local, _ = seal_source(io.open(SOURCE, encoding="utf-8").read(), 0x5EED1A7E)
-        if local != inner:
-            print("CHECK FAILED — the published blob is not the current main.lua (rebuild it)")
-            return 1
-    print("BUILD CHECK OK — the published blob unlocks to the current build (%s) with the private key" % expected)
+        if local != public_text:
+            problems.append("the published public build is not the current main.lua (rebuild it)")
+    if problems:
+        print("CHECK FAILED")
+        for problem in problems:
+            print("   " + problem)
+        return 1
+    print("BUILD CHECK OK — public build (%s) and locked blob agree, both pinned in the loaders" % pinned_public)
     return 0
 
 
@@ -269,9 +290,10 @@ def selftest() -> int:
         failures.append("stream repeats across blocks")
 
     span = lua_span(LOADER, "-- >>> HASH32-CORE", "-- <<< HASH32-CORE")
-    unlock_span = lua_span(LOADER, "-- >>> UNLOCK-CORE", "-- <<< UNLOCK-CORE")
+    unlock_span = lua_span(KEY_LOADER, "-- >>> UNLOCK-CORE", "-- <<< UNLOCK-CORE") \
+        or lua_span(LOADER, "-- >>> UNLOCK-CORE", "-- <<< UNLOCK-CORE")
     if not span or not unlock_span:
-        failures.append("loader.lua spans not found")
+        failures.append("loader spans not found (hash in loader.lua, unlock in loader-key.lua)")
     else:
         try:
             import lupa

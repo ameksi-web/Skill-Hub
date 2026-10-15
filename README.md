@@ -4,43 +4,52 @@ Two fully separated products live in this repository:
 
 | File | What it is | Where it runs |
 |------|------------|---------------|
-| `release/skillhub.public.lua` | **public build** — the hub everyone runs: comments blanked, every string literal encrypted, no readable source in the repository | Downloaded by `loader.lua` |
-| `loader.lua` | **public entry point** — no key: downloads the public build, verifies the pinned checksum, refuses modified builds | **the link you share** |
-| `release/skillhub.release.lua` | **keyed build** — not Lua at all: a hex blob XOR-ed against a per-16-byte-block stream seeded from a private key; without the key it unlocks to noise | Downloaded by `loader-key.lua` |
-| `loader-key.lua` | **keyed entry point** — same as the public loader, but the build only unlocks for a key holder | Hand out to approved people only |
+| `release/skillhub.release.lua` | **the build the world gets** — not Lua at all: a hex blob XOR-ed against a per-16-byte-block stream seeded from the current key. Without the key it unlocks to noise | Downloaded by `loader.lua` |
+| `loader.lua` | **the only entry point** — takes the key (argument → `skillhub.key` → clipboard), unlocks, verifies the pinned checksum, refuses wrong keys and modified builds | **the link you hand out** |
 | `tools/` | `build_release.py` (seal + lock + checksum), `seal_secret.py` (per-machine endpoint sealing) | Run before each release |
 | `SkillAnimator/init.lua` | **Skill Animator Studio** — Moon Animator 2 style keyframe/rig editor | Roblox **Studio plugin** (no pre-made animations) |
 | `main.lua` | the readable **source of truth** — deliberately **NOT published** (`.gitignore`, kept private/local) | Only you |
 
 ---
 
-## 1. Blox Fruits Hub — public build
+## 1. Blox Fruits Hub — closed build (key system)
 
-**Give this to everybody** (no key, no arguments, nothing to install):
+**One link for everybody, one key to enter:**
 
 ```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/loader.lua"))("<key>")
+```
+
+Current key: **`UPDATE 2026`** — replaced with every update (`tools/build_release.py --pass "<new key>"`).
+
+Users who do not want to paste the key into the line can pick any of these:
+
+```lua
+-- once, saved in the executor workspace:
+writefile("skillhub.key", "UPDATE 2026")
+
+-- or just copy the key to the clipboard and run the plain loader:
 loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/loader.lua"))()
 ```
 
-The hub's welcome toast credits the build (`Skill Hub v3.12 Ultra · by ameksi-web` — change `Config.Author` / `Config.ShowAuthor` to taste).
+What the loader does: reads the key → downloads the locked blob → unlocks it → checks the plaintext really is a Skill Hub build → verifies the pinned FNV-1a-32 checksum (a modified blob is refused, not executed) → prints build + hash + key hash → unloads any previous instance → runs the hub. A wrong key prints *WRONG KEY — nothing was executed*.
 
-**The readable source is still private.** What the repository holds is the sealed public build (`release/skillhub.public.lua`): comments blanked, every string literal encrypted, line numbers preserved so diagnostics keep working. Copying the file gives nobody the source.
+**The readable source is private.** `main.lua` is not in this repository (GitHub returns 404 for it) — the published artefact is only the locked blob, and the sealed Lua inside it has its comments blanked and every string literal encrypted. Nobody who has the repository can read the script.
 
-**Want to hand access to specific people only?** Use the keyed path instead:
+**Rotation is the revoke button** — publishing an update with a new key cuts off everybody who had the old one:
 
-```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/loader-key.lua"))("<your private key>")
+```bash
+python3 tools/build_release.py --pass "UPDATE 2027"    # re-lock the build with the new key
+git add -A release loader.lua && git commit -m "update + new key" && git push
 ```
-
-That one downloads `release/skillhub.release.lua`, which is **not Lua at all** — a hex blob whose stream seed changes every 16 bytes (`hash32(key .. ":" .. offset)`). Without a key it decrypts to noise; rotating the key (`tools/build_release.py --pass "<new>"`) revokes everybody who had the old one.
 
 **Release commands**
 
 ```bash
-python3 tools/build_release.py            # rebuild public + keyed builds, re-pin both loaders
-python3 tools/build_release.py --check    # verify both published builds against the current source
+python3 tools/build_release.py            # re-lock the build, re-pin loader.lua, print stats
+python3 tools/build_release.py --check    # verify the published blob still unlocks to the current source
 python3 tools/build_release.py --selftest # python ⇄ Lua agreement on hash, unlock and lock
-python3 tools/build_release.py --unseal   # local readable copy of the keyed build (git-ignored)
+python3 tools/build_release.py --unseal   # local readable copy (git-ignored, never published)
 ```
 
 ### Tabs
@@ -74,14 +83,15 @@ python3 tools/build_release.py --unseal   # local readable copy of the keyed bui
 * **Auto Player List** — live in-UI roster that refreshes every second: PvP status lamp, level, fruit, style, HP, distance, plus one-click `TGT` / `KILL` / `TP` / `CAM` buttons per player.
 * **Fly Status panel** — live velocity, altitude and who currently owns movement (manual / autopilot / tween).
 
-### v3.12 — public release (show it to everyone) + author credit
+### v3.12.1 — closed build with a human key (`UPDATE 2026`)
 
-* **`loader.lua` is public again**: no key, no arguments — one line to paste, and the build it downloads is the sealed public build. That is the link to post in a video, a Discord or a script hub.
+* **The distribution is closed again, with a key system instead of a secret key**: `loader.lua` asks for the key, the current one is announced with the update (now `UPDATE 2026`). Users can pass it as an argument, keep it in `skillhub.key`, or simply copy it to the clipboard — the loader finds it either way.
+* **One link, one key, no readable source**: the repository publishes a single locked blob (`release/skillhub.release.lua`); the sealed Lua inside it has comments blanked and every literal encrypted, and `main.lua` is not published at all.
 * **Author credit in the interface**: the welcome toast now reads `Skill Hub v3.12 Ultra · by ameksi-web` (`Config.Author`, disable with `Config.ShowAuthor = false`), so every copy of your build carries your name.
-* **Both access models ship side by side.** Public = `loader.lua` + `release/skillhub.public.lua` (anyone runs it, nobody reads it). Restricted = `loader-key.lua` + locked `release/skillhub.release.lua` (only a key holder can unlock, rotation revokes access).
+* **Key hygiene, honestly:** a short human key such as `UPDATE 2026` is *guessable* — it gates casual sharing, not a determined attacker. For a build only your inner circle can open, use a longer key (`UPDATE 2026 · 7f3a91`) and rotate it every update; that costs one command.
 * **One source of truth, one build step.** `tools/build_release.py` seals the current `main.lua` into both artefacts, re-pins both checksums, prints the stats, and refuses to publish anything with a leftover plaintext marker (`rbxassetid`, urls, webhooks).
-* **Honest limits:** a public build is public — anybody may run it and may re-share the file itself; what they cannot get from it is the source (it is sealed and `main.lua` is not published), and the hub still fingerprints the machine it runs on. If you ever want the distribution closed again, hand out `loader-key.lua` and rotate the key.
-* **Verified:** `BUILD CHECK OK` (public build and locked blob agree, both pinned in the loaders), `LOCK SELFTEST OK`, `SEAL SELFTEST OK`, and the published public build runs through the mocked-Roblox harness — `LOAD OK`, zero errors after clicking every tab and the self-test.
+* **Honest limits:** whoever holds the key can read what runs on their own machine (that is inherent to client-side scripts) — which is why access is a key you can rotate rather than a promise, and why the hub also fingerprints the machine it runs on.
+* **Verified:** `BUILD CHECK OK`, `LOCK SELFTEST OK`, `SEAL SELFTEST OK`, a direct end-to-end unlock of the published blob with the key (411 377 bytes, hash `bc3eefe5`, matching the loader pin; a wrong key is refused), and the same build runs through the mocked-Roblox harness — `LOAD OK`, zero errors after clicking every tab and the self-test.
 
 ### v3.11 — only you can read it: the source is private, the build is key-locked
 

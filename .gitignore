@@ -15,3 +15,7 @@ dist/
 # python bytecode
 tools/__pycache__/
 __pycache__/
+
+# Public (key-less) build: built locally for verification, deliberately NOT published
+# while the distribution is key-only.
+release/skillhub.public.lua

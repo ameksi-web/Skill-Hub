@@ -1,5 +1,5 @@
 --[[
-    Skill Hub v3.5 Ultra — Blox Fruits Edition (Update 24+)
+    Skill Hub v3.6 Ultra — Blox Fruits Edition (Update 24+)
     Interface: "Porcelain" design system — soft-dark graphite surfaces, hairline
                borders, 20px radii, muted editorial accents. No neon, no glow.
     Features:
@@ -693,6 +693,8 @@ local Config = {
     SafeHookMode        = true,
     HookEngine          = false,   -- metamethod hooks are opt-in (cannot be removed until rejoin)
     UseVirtualInput     = true,    -- synthetic key events + virtual mouse clicks
+    DebugTrace          = true,    -- print the action trace when the engine reports an error
+    IncrementalUIBuild  = true,    -- spread GUI construction across frames (no creation spikes)
     LogStepErrors       = true,    -- print [Skill Hub] step error @ line … when our own code fails
     HookHitCount        = 0,
     FreezeMobAnimations = false,
@@ -812,6 +814,47 @@ if SharedEnv.SkillHubNoEsp == true then
     Config.ESPTracers = false
     Config.SeaEventTracker = false
     Config.MirageFinder = false
+end
+
+-- ─── ACTION TRACE  ──────────────────────────────────────────────────────────
+-- A tiny ring buffer of the last few things THIS script did. When the engine
+-- reports a CoreGui / Locales error, we print the actions that coincided with it,
+-- so the console finally tells us the truth instead of us guessing:
+--     [Skill Hub] engine reported a CoreGui error while our last actions were:
+--         • ui: created toggle "Player ESP" (t=12.41)
+--         • tab switch -> ESP & Visuals (t=12.44)
+local ActionTrace = { items = {} }
+local TRACE_MAX = 8
+
+local function trace(action)
+    if Config.DebugTrace == false then return end
+    table.insert(ActionTrace.items, string.format("%s (t=%.2f)", tostring(action), os.clock()))
+    while #ActionTrace.items > TRACE_MAX do table.remove(ActionTrace.items, 1) end
+end
+
+do
+    local ok, LogService = pcall(function() return game:GetService("LogService") end)
+    if ok and LogService then
+        local lastDump = 0
+        pcall(function()
+            LogService.MessageOut:Connect(function(message, msgType)
+                if type(message) ~= "string" then return end
+                if not (string.find(message, "CoreGui", 1, true) or string.find(message, "Locales", 1, true)) then return end
+                if not string.find(message, "nil value", 1, true) then return end
+                if msgType ~= Enum.MessageType.MessageError then return end
+                local now = os.clock()
+                if now - lastDump < 5 then return end
+                lastDump = now
+                print("[Skill Hub] engine reported a CoreGui/Locales error while our last actions were:")
+                if #ActionTrace.items == 0 then
+                    print("    • (nothing — the hub had not performed any tracked action yet)")
+                end
+                for _, item in ipairs(ActionTrace.items) do
+                    print("    • " .. item)
+                end
+            end)
+        end)
+    end
 end
 
 -- ─── SYNTHETIC INPUT SANDBOX ────────────────────────────────────────────────
@@ -1597,6 +1640,10 @@ task.spawn(function()
             if os.clock() < RespawnQuietUntil then return end
             local isFarming = Config.AutoFarmLevel or Config.AutoFarmNearest or Config.AutoFarmBoss or Config.AutoFarmAllBosses
             if (isFarming and Config.FastAttack) or Config.AutoAttackAlways then
+                if (os.clock() - (lastAttackTrace or 0)) > 2 then
+                    lastAttackTrace = os.clock()
+                    trace("fast-attack burst")
+                end
                 triggerFastAttack()
             end
         end)
@@ -3280,6 +3327,7 @@ task.spawn(function()
 
             -- pool stamp: tags touched this tick survive, all others are swept
             espStamp = os.clock()
+            trace("esp tick")
 
             if not Config.ESPTracers then
                 for _, line in pairs(tracerCache) do pcall(function() line.Visible = false end) end
@@ -3751,7 +3799,7 @@ hairline(VersionChip, Theme.StrokeSoft, 1, 0.4)
 new("TextLabel", {
     BackgroundTransparency = 1,
     Font = UIFontMono,
-    Text = "v3.5",
+    Text = "v3.6",
     TextColor3 = Theme.TextMuted,
     TextSize = 9,
     Size = UDim2.new(1, 0, 1, 0),
@@ -4351,7 +4399,7 @@ local WatermarkText = new("TextLabel", {
     Font = UIFontMono,
     Position = UDim2.new(0, 32, 0, 0),
     Size = UDim2.new(1, -40, 1, 0),
-    Text = "SKILL HUB 3.5 · SEA 1",
+    Text = "SKILL HUB 3.6 · SEA 1",
     TextColor3 = Theme.TextSecondary,
     TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -4396,7 +4444,7 @@ task.spawn(function()
             local status = getServerStatus()
 
             WatermarkBar.Visible = Config.ShowWatermarkHUD
-            WatermarkText.Text = string.format("SKILL HUB 3.5 · SEA %d [%s] · LV %d · %d FPS · %d MS",
+            WatermarkText.Text = string.format("SKILL HUB 3.6 · SEA %d [%s] · LV %d · %d FPS · %d MS",
                 CURRENT_SEA, string.upper(tostring(SEA_DETECT_SOURCE)), getPlayerLevel(), fps, status.ping)
 
             StatusBar.Visible = Config.ServerStatusHUD and Config.ShowWatermarkHUD
@@ -4582,6 +4630,7 @@ local function createTab(iconAsset, name, accentOverride)
         lbl.TextColor3 = Theme.TextPrimary
         lbl.Font = UIFontBold
 
+        trace("tab switch -> " .. tostring(name))
         ActiveTabTitle.Text = name
         ActiveTabSub.Text = string.format("Blox Fruits · Update 24+ · Sea %d", CURRENT_SEA)
         ActiveTabIconImg.Image = iconAsset
@@ -4644,8 +4693,17 @@ local function createTab(iconAsset, name, accentOverride)
     end
 
     -- ── TOGGLE ──────────────────────────────────────────────────────────────
+    -- Spreading construction over frames keeps the client perfectly smooth while
+    -- the hub is being built (one 150-instance spike is what the engine hated).
+    local function uiPace(order)
+        if Config.IncrementalUIBuild ~= false and order % 3 == 0 then
+            task.wait()
+        end
+    end
+
     function tabObj:AddToggle(title, desc, defaultValue, callback, itemIcon)
         self.order = self.order + 1
+        uiPace(self.order)
         local card = new("Frame", {
             LayoutOrder = self.order,
             Size = UDim2.new(1, 0, 0, 58),
@@ -4747,6 +4805,7 @@ local function createTab(iconAsset, name, accentOverride)
     -- ── BUTTON ──────────────────────────────────────────────────────────────
     function tabObj:AddButton(title, desc, btnText, callback, itemIcon)
         self.order = self.order + 1
+        uiPace(self.order)
         local card = new("Frame", {
             LayoutOrder = self.order,
             Size = UDim2.new(1, 0, 0, 58),
@@ -4818,6 +4877,7 @@ local function createTab(iconAsset, name, accentOverride)
     -- ── SLIDER ──────────────────────────────────────────────────────────────
     function tabObj:AddSlider(title, desc, minVal, maxVal, defaultVal, callback, itemIcon)
         self.order = self.order + 1
+        uiPace(self.order)
         local card = new("Frame", {
             LayoutOrder = self.order,
             Size = UDim2.new(1, 0, 0, 72),
@@ -4945,6 +5005,7 @@ local function createTab(iconAsset, name, accentOverride)
     -- ── DROPDOWN ────────────────────────────────────────────────────────────
     function tabObj:AddDropdown(title, desc, options, defaultOption, callback, itemIcon)
         self.order = self.order + 1
+        uiPace(self.order)
         local collapsed = 58
         local listHeight = math.min(#options * 27 + 10, 170)
         local expandedHeight = collapsed + listHeight + 8
@@ -5098,6 +5159,7 @@ local function createTab(iconAsset, name, accentOverride)
     -- ── SEGMENTED CONTROL ───────────────────────────────────────────────────
     function tabObj:AddSegmented(title, desc, options, defaultOption, callback, itemIcon)
         self.order = self.order + 1
+        uiPace(self.order)
         local card = new("Frame", {
             LayoutOrder = self.order,
             Size = UDim2.new(1, 0, 0, 62),
@@ -5197,6 +5259,7 @@ local function createTab(iconAsset, name, accentOverride)
     -- ── LIVE / STATIC READOUT PANELS ────────────────────────────────────────
     function tabObj:AddLabel(title, desc, height, itemIcon)
         self.order = self.order + 1
+        uiPace(self.order)
         local card = new("Frame", {
             LayoutOrder = self.order,
             Size = UDim2.new(1, 0, 0, height or 104),
@@ -5329,6 +5392,7 @@ local function createTab(iconAsset, name, accentOverride)
     -- ── TEXT INPUT ──────────────────────────────────────────────────────────
     function tabObj:AddInput(title, desc, placeholder, defaultValue, callback, itemIcon)
         self.order = self.order + 1
+        uiPace(self.order)
         local card = new("Frame", {
             LayoutOrder = self.order,
             Size = UDim2.new(1, 0, 0, 58),
@@ -5407,6 +5471,7 @@ local function createTab(iconAsset, name, accentOverride)
     -- ── AUTO PLAYER LIST ────────────────────────────────────────────────────
     function tabObj:AddPlayerList(title, desc, height, itemIcon)
         self.order = self.order + 1
+        uiPace(self.order)
         local card = new("Frame", {
             LayoutOrder = self.order,
             Size = UDim2.new(1, 0, 0, height or 280),
@@ -6218,13 +6283,8 @@ TabMisc:AddButton("Copy Diagnostics to Clipboard", "Copies the report above (exe
     local ok = pcall(function() setclipboard(diagnosticsText()) end)
     notify("Diagnostics", ok and "Copied to clipboard" or "setclipboard is not available in this executor", 3, ok and CustomIcons.HubCrest or CustomIcons.Stop)
 end, CustomIcons.HubCrest)
-TabMisc:AddToggle("Synthetic Input (keys + virtual clicks)", "Sends VirtualInputManager key events and VirtualUser mouse clicks for skill casting / M1 fallback. Auto-disables itself and prints a notice if your executor only partially implements them.", Config.UseVirtualInput, function(v)
-    Config.UseVirtualInput = v
-    notify("Synthetic Input", v and "Enabled" or "Disabled (skills still fire through remote packets)", 3, CustomIcons.Lightning)
-end, CustomIcons.Lightning)
-TabMisc:AddToggle("Log Own-Code Errors (line numbers)", "Prints [Skill Hub] step error @ main.lua:line whenever THIS script hits an error, so console blame is never ambiguous", Config.LogStepErrors, function(v)
-    Config.LogStepErrors = v
-end, CustomIcons.Search)
+TabMisc:AddToggle("Debug Action Trace", "When the engine reports a CoreGui/Locales error, print the last actions this hub performed just before it — so we can pin the trigger exactly", Config.DebugTrace, function(v) Config.DebugTrace = v end, CustomIcons.Search)
+TabMisc:AddToggle("Incremental UI Build", "Build the interface across frames instead of one big GUI-creation spike (recommended)", Config.IncrementalUIBuild, function(v) Config.IncrementalUIBuild = v end, CustomIcons.Layers)
 TabMisc:AddToggle("Synthetic Input (keys + virtual clicks)", "VirtualInputManager key events + VirtualUser mouse clicks for skills / M1 fallback. Auto-disables and prints a notice if the executor only partially implements them.", Config.UseVirtualInput, function(v)
     Config.UseVirtualInput = v
     notify("Synthetic Input", v and "Enabled" or "Disabled (skills still fire through the game's remote packets)", 3, CustomIcons.Lightning)
@@ -6332,6 +6392,7 @@ end)
 -- Roblox rebuilds its own UI and CoreScript errors surface.
 markRespawnQuiet = function(seconds)
     RespawnQuietUntil = math.max(RespawnQuietUntil, os.clock() + (seconds or 2.5))
+    trace("respawn quiet window armed")
 end
 
 local function watchDeath(char)
@@ -6375,20 +6436,20 @@ local function UnloadSkillHub()
 end
 
 SharedEnv.SkillHubInstance = {
-    version = "3.5",
-    banner = "Skill Hub v3.5 Ultra",
+    version = "3.6",
+    banner = "Skill Hub v3.6 Ultra",
     config = Config,
     hookActive = function() return HookRegistry.namecallActive end,
     unload = UnloadSkillHub,
 }
 
-print(string.format("[Skill Hub v3.5] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · coreGui=none",
+print(string.format("[Skill Hub v3.6] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · coreGui=none",
     ExecutorName, CURRENT_SEA, tostring(SEA_DETECT_SOURCE),
     tostring(Config.HookEngine),
     HookRegistry.namecallActive and "ACTIVE" or "off"))
 
 notify(
-    "Skill Hub v3.5 Ultra",
+    "Skill Hub v3.6 Ultra",
     string.format("Blox Fruits Update 24+ • Sea %d (%s) • PvP & Players tab added • RightCtrl = toggle, RightShift = AimLock, RightAlt = Fly", CURRENT_SEA, tostring(SEA_DETECT_SOURCE)),
     5,
     CustomIcons.HubCrest

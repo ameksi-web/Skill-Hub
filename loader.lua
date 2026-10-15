@@ -25,8 +25,8 @@ local SharedEnv = (getgenv and getgenv()) or _G or {}
 
 -- ── configuration (these lines are rewritten by tools/build_release.py) ─────
 local Loader = {
-    Build        = "v3.10",
-    ExpectedHash = "cce65ca5",
+    Build        = "v3.11",
+    ExpectedHash = "b204186e",
     Payload      = "https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/release/skillhub.release.lua",
     KeyFile      = "skillhub.key",
     Key          = "",      -- leave empty: pass the key to the loader instead

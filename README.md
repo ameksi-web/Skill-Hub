@@ -118,7 +118,7 @@ It captures `HttpGet` as a plain function, downloads the **sealed** build, verif
 
 ```bash
 python3 tools/build_release.py          # rebuild the locked payload + re-pin loader.lua
-python3 tools/build_release.py --check  # verify dist/ still matches the pinned checksum
+python3 tools/build_release.py --check  # verify the published blob still unlocks to the pinned checksum
 python3 tools/seal_secret.py --selftest # prove python ⇄ Lua agree on the sealing
 python3 tools/seal_secret.py --tag "<fingerprint from Misc>" --seal "https://discord.com/api/webhooks/…"
 ```

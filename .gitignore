@@ -8,3 +8,10 @@ main.lua
 
 # Locally unsealed copies (regenerate with `tools/build_release.py --unseal`).
 release/skillhub.sealed.lua
+
+# superseded by release/ (old obfuscated-but-runnable build)
+dist/
+
+# python bytecode
+tools/__pycache__/
+__pycache__/

@@ -24,6 +24,13 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/
 * **ESP & Visuals** — Player ESP with PvP + full loadout, rarity-coloured Fruit ESP, chest/island/Mirage/Kitsune/boss ESP, tracers.
 * **Misc & Settings** — **Undetected Bypass Fly**, Walk on Water, Infinite Geppo, Infinite Energy, No Dash Cooldown, Auto Collect Drops, Sea Event / Mirage tracker, Server Status HUD, anti-cheat disabler, rejoin/hop, FPS boost.
 
+### Interface — "Porcelain" design system (2026)
+* Soft-dark graphite surfaces in five intentional elevation steps, 1px hairline borders and 20px window radii — depth comes from surface layering and a soft drop shadow, **not** from neon or glow.
+* Muted editorial accent family per tab (iris, clay, mauve, sand, sage, rose, steel) instead of saturated RGB.
+* Redesigned components: pill switches with state labels, hairline sliders with floating value pills, soft-filled action buttons with hover/press states, dropdown lists with check dots, **segmented controls**, mono readout panels with a pulsing LIVE dot, inset text fields with focus rings.
+* New chrome: floating window with title-bar drag, search field, ghost window controls, rail navigation with animated active pill, player identity card with Roblox headshot avatar, header status chips (sea/source, kill state, fly state, ping+FPS) and a bottom strip with hotkeys and a live clock.
+* Toasts slide in with a draining progress hairline; the auto player list uses avatars, status lamps and inline actions.
+
 ### Fixes in this version
 * **Sea display** — PlaceId tables **plus** live `Workspace` island/mob/NPC scan and a level heuristic, so custom or unknown PlaceIds no longer default to Sea 1. Manual override + live "Sea Report" panel included.
 * **Fighting Style equip** — resolves Melee/Sword/Gun/Fruit tools by `ToolTip` **and** by known style names, attributes and keyword heuristics, then equips via `Humanoid:EquipTool()` with a `tool.Parent = character` fallback. The switcher includes Black Leg, Electro, Fishman Karate, Dragon Breath, Superhuman, Death Step, Sharkman Karate, Electric Claw, Dragon Talon, Godhuman and Sanguine Art, and force-equips the Melee tool after switching.

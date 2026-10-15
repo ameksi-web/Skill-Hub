@@ -251,8 +251,14 @@ local Config = {
     ESPIslands          = false,
     ESPBosses           = false,
 
-    -- Moon Animator & Skill Caster State
-    SovereignHakiAura   = false,
+    -- Combat, Fast Attack & Anti-Cheat Bypass
+    AutoAttackAlways    = false,
+    FastAttackDelay     = 0.02,
+    AttackRange         = 65,
+    AttackPlayers       = false,
+    HitboxExpander      = true,
+    BypassAntiCheat     = true,
+    AntiStun            = true,
     AutoSkillComboZ     = false,
     AutoSkillComboX     = false,
     AutoSkillComboC     = false,
@@ -269,7 +275,134 @@ local Config = {
 }
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  CORE BLOX FRUITS REMOTES, ANIMATOR & VFX HELPERS
+--  BLOX FRUITS ANTI-CHEAT DISABLER, SIMRADIUS & ANTI-STUN ENGINE
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local BLOCKED_SECURITY_REMOTES = {
+    "security", "teleportdetect", "exploit", "cheat", "ban",
+    "kick", "flag", "check", "ac_", "anticheat", "crash", "log",
+}
+
+local SAFE_GAMEPLAY_REMOTES = {
+    ["commf_"]             = true,
+    ["comme"]              = true,
+    ["re/registerattack"]  = true,
+    ["re/registerhit"]     = true,
+    ["rigcontrollerevent"] = true,
+    ["validator"]          = true,
+    ["redeem"]             = true,
+}
+
+local function isSuspiciousRemote(remoteObj)
+    local nameLower = tostring(remoteObj.Name):lower()
+    if SAFE_GAMEPLAY_REMOTES[nameLower] then
+        return false
+    end
+    for _, kw in ipairs(BLOCKED_SECURITY_REMOTES) do
+        if nameLower:find(kw, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function initBloxFruitsAntiCheatBypass()
+    -- 1. Override direct LocalPlayer.Kick
+    pcall(function()
+        if hookfunction and LocalPlayer.Kick then
+            hookfunction(LocalPlayer.Kick, function(...)
+                return nil
+            end)
+        end
+    end)
+
+    -- 2. Hook __namecall to block :Kick() and Blox Fruits security/telemetry remotes
+    pcall(function()
+        if hookmetamethod and getnamecallmethod then
+            local oldNamecall
+            oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+                local method = getnamecallmethod()
+                if method == "Kick" or method == "kick" then
+                    return nil
+                end
+                if Config.BypassAntiCheat and (method == "FireServer" or method == "InvokeServer") then
+                    if typeof(self) == "Instance" and (self:IsA("RemoteEvent") or self:IsA("RemoteFunction")) then
+                        if isSuspiciousRemote(self) then
+                            return nil
+                        end
+                    end
+                end
+                return oldNamecall(self, ...)
+            end)
+        end
+    end)
+
+    -- 3. Neutralize client-side character velocity/teleport check connections
+    pcall(function()
+        if type(getconnections) == "function" then
+            local pScripts = LocalPlayer:FindFirstChild("PlayerScripts")
+            if pScripts then
+                for _, desc in ipairs(pScripts:GetDescendants()) do
+                    if desc:IsA("LocalScript") then
+                        local n = desc.Name:lower()
+                        if n:find("anti") or n:find("security") or n:find("check") or n:find("detect") then
+                            pcall(function() desc.Disabled = true end)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+initBloxFruitsAntiCheatBypass()
+
+-- Continuous SimulationRadius, Anti-Stun, Anti-Ragdoll & Velocity Stabilizer
+RunService.Heartbeat:Connect(function()
+    if not Config.BypassAntiCheat and not Config.AntiStun then return end
+    pcall(function()
+        -- Maximize SimulationRadius so BringMobs owns enemy physics
+        if sethiddenproperty then
+            pcall(function()
+                sethiddenproperty(LocalPlayer, "SimulationRadius", math.huge)
+                sethiddenproperty(LocalPlayer, "MaxSimulationRadius", math.huge)
+            end)
+        end
+
+        local char = LocalPlayer.Character
+        if not char then return end
+
+        -- Remove Blox Fruits Stun & Busy locks
+        if Config.AntiStun then
+            local stun = char:FindFirstChild("Stun")
+            if stun and (stun:IsA("IntValue") or stun:IsA("NumberValue")) and stun.Value ~= 0 then
+                stun.Value = 0
+            end
+            local busy = char:FindFirstChild("Busy")
+            if busy and busy:IsA("BoolValue") and busy.Value == true then
+                busy.Value = false
+            end
+        end
+
+        -- Prevent Ragdoll / FallingDown states & rubberband velocity spikes during farm
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+            hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+        end
+
+        if Config.AutoFarmLevel or Config.AutoFarmNearest or Config.AutoFarmBoss or Config.AutoFarmAllBosses then
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                hrp.AssemblyAngularVelocity = Vector3.zero
+            end
+        end
+    end)
+end)
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  CORE BLOX FRUITS REMOTES & TRIPLE-LAYER FAST ATTACK ENGINE
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local function getCommF()
@@ -380,34 +513,155 @@ local function equipWeaponByType(weaponType)
     end
 end
 
-local function triggerFastAttack()
-    pcall(function()
-        VirtualUser:CaptureController()
-        VirtualUser:Button1Down(Vector2.new(1280, 672))
-    end)
-    pcall(function()
-        local net = ReplicatedStorage:FindFirstChild("Modules")
-            and ReplicatedStorage.Modules:FindFirstChild("Net")
-        if net then
-            local regAtk = net:FindFirstChild("RE/RegisterAttack")
-            local regHit = net:FindFirstChild("RE/RegisterHit")
-            if regAtk then regAtk:FireServer(0) end
-            if regHit then
-                local enemies = Workspace:FindFirstChild("Enemies")
-                if enemies then
-                    for _, mob in ipairs(enemies:GetChildren()) do
-                        local hrp = mob:FindFirstChild("HumanoidRootPart")
-                        local hum = mob:FindFirstChildOfClass("Humanoid")
-                        if hrp and hum and hum.Health > 0 then
-                            regHit:FireServer(hrp)
-                            break
-                        end
+-- Gather all valid enemy targets in range for Multi-Target Fast Attack
+local function getBladeHitTargets(radius)
+    local root = getRoot()
+    if not root then return nil, {}, {} end
+
+    local maxDist = radius or Config.AttackRange or 65
+    local primaryPart = nil
+    local bladeHits = {}
+    local rawParts = {}
+
+    local enemiesFolder = Workspace:FindFirstChild("Enemies")
+    if enemiesFolder then
+        for _, mob in ipairs(enemiesFolder:GetChildren()) do
+            local hum = mob:FindFirstChildOfClass("Humanoid")
+            local hrp = mob:FindFirstChild("HumanoidRootPart")
+            local head = mob:FindFirstChild("Head") or hrp
+            if hum and hum.Health > 0 and hrp and head then
+                local dist = (hrp.Position - root.Position).Magnitude
+                if dist <= maxDist then
+                    if not primaryPart then
+                        primaryPart = head
+                    end
+                    table.insert(bladeHits, {mob, head})
+                    table.insert(rawParts, head)
+                end
+            end
+        end
+    end
+
+    if Config.AttackPlayers then
+        local charsFolder = Workspace:FindFirstChild("Characters")
+        local list = charsFolder and charsFolder:GetChildren() or Players:GetPlayers()
+        for _, entry in ipairs(list) do
+            local char = entry:IsA("Player") and entry.Character or entry
+            if char and char ~= LocalPlayer.Character then
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                local hrp = char:FindFirstChild("HumanoidRootPart")
+                local head = char:FindFirstChild("Head") or hrp
+                if hum and hum.Health > 0 and hrp and head then
+                    if (hrp.Position - root.Position).Magnitude <= maxDist then
+                        if not primaryPart then primaryPart = head end
+                        table.insert(bladeHits, {char, head})
+                        table.insert(rawParts, head)
                     end
                 end
             end
         end
+    end
+
+    return primaryPart, bladeHits, rawParts
+end
+
+-- Resolve CombatFramework activeController if executor supports getupvalues
+local cachedCombatLib = nil
+local function getActiveCombatController()
+    local ok, controller = pcall(function()
+        if not cachedCombatLib then
+            local pScripts = LocalPlayer:FindFirstChild("PlayerScripts")
+            local cfScript = pScripts and pScripts:FindFirstChild("CombatFramework")
+            if cfScript then
+                cachedCombatLib = debug.getupvalue(require(cfScript), 2)
+            end
+        end
+        return cachedCombatLib and cachedCombatLib.activeController
+    end)
+    if ok then return controller end
+    return nil
+end
+
+local function triggerFastAttack()
+    local char = getCharacter()
+    if not char then return end
+
+    local primaryPart, bladeHits, rawParts = getBladeHitTargets(Config.AttackRange)
+
+    -- Layer 1: Update 20-24+ Modules.Net Multi-Target Packet (RE/RegisterAttack + RE/RegisterHit)
+    if primaryPart and #bladeHits > 0 then
+        pcall(function()
+            local modules = ReplicatedStorage:FindFirstChild("Modules")
+            local net = modules and modules:FindFirstChild("Net")
+            if net then
+                local regAtk = net:FindFirstChild("RE/RegisterAttack")
+                local regHit = net:FindFirstChild("RE/RegisterHit")
+                if regAtk then
+                    regAtk:FireServer(0)
+                end
+                if regHit then
+                    regHit:FireServer(primaryPart, bladeHits)
+                end
+            end
+        end)
+    end
+
+    -- Layer 2: CombatFramework & RigControllerEvent Direct Hit
+    pcall(function()
+        local ac = getActiveCombatController()
+        if ac and ac.equipped then
+            ac.timeToNextAttack = 0
+            ac.attacking = false
+            ac.blocking = false
+            ac.focusStart = 0
+            ac.increment = 3
+            ac.hitboxMagnitude = Config.AttackRange or 65
+
+            if #rawParts > 0 then
+                local rem = ReplicatedStorage:FindFirstChild("RigControllerEvent")
+                local validator = ReplicatedStorage:FindFirstChild("Remotes")
+                    and ReplicatedStorage.Remotes:FindFirstChild("Validator")
+                if validator and ac.blades and ac.blades[1] then
+                    pcall(function()
+                        ac:attack()
+                    end)
+                end
+                if rem then
+                    local tool = char:FindFirstChildOfClass("Tool")
+                    if tool then
+                        rem:FireServer("WeaponChange", tostring(tool.Name))
+                    end
+                    rem:FireServer("hit", rawParts, 3, "")
+                end
+            end
+        end
+    end)
+
+    -- Layer 3: Equipped Tool:Activate() + VirtualUser Click
+    pcall(function()
+        local equippedTool = char:FindFirstChildOfClass("Tool")
+        if equippedTool then
+            equippedTool:Activate()
+        end
+        VirtualUser:CaptureController()
+        VirtualUser:Button1Down(Vector2.zero)
+        VirtualUser:Button1Up(Vector2.zero)
     end)
 end
+
+-- Dedicated High-Speed Fast Attack Thread (runs during Farm OR when AutoAttackAlways is ON)
+task.spawn(function()
+    while true do
+        local delayTime = math.clamp(Config.FastAttackDelay or 0.02, 0.01, 0.25)
+        task.wait(delayTime)
+        pcall(function()
+            local isFarming = Config.AutoFarmLevel or Config.AutoFarmNearest or Config.AutoFarmBoss or Config.AutoFarmAllBosses
+            if (isFarming and Config.FastAttack) or Config.AutoAttackAlways then
+                triggerFastAttack()
+            end
+        end)
+    end
+end)
 
 local function ensureBuso()
     if not Config.AutoBuso then return end
@@ -425,12 +679,19 @@ local function bringNearbyMobs(targetName, targetPos)
         if not targetName or mob.Name == targetName then
             local hrp = mob:FindFirstChild("HumanoidRootPart")
             local hum = mob:FindFirstChildOfClass("Humanoid")
-            if hrp and hum and hum.Health > 0 and (hrp.Position - targetPos).Magnitude <= 300 then
+            if hrp and hum and hum.Health > 0 and (hrp.Position - targetPos).Magnitude <= 350 then
                 pcall(function()
                     hrp.CFrame = CFrame.new(targetPos)
                     hrp.CanCollide = false
+                    hrp.AssemblyLinearVelocity = Vector3.zero
+                    if Config.HitboxExpander then
+                        hrp.Size = Vector3.new(55, 55, 55)
+                        hrp.Transparency = 1
+                    end
                     hum.WalkSpeed = 0
                     hum.JumpPower = 0
+                    local anim = hum:FindFirstChildOfClass("Animator")
+                    if anim then anim:Destroy() end
                 end)
             end
         end
@@ -1679,13 +1940,26 @@ local TabESP      = createTab(CustomIcons.ESP,      "ESP & Visuals",  Color3.fro
 local TabMisc     = createTab(CustomIcons.Settings, "Misc & Settings",Color3.fromRGB(148, 163, 184))
 
 -- ─── TAB 1: AUTO FARM ───
-TabFarm:AddSection("Weapon & Attack Configuration")
+TabFarm:AddSection("Weapon & Triple-Layer Fast Attack")
 TabFarm:AddDropdown("Weapon Category", "Select weapon type to auto-equip during farming", {"Melee", "Sword", "Blox Fruit", "Gun"}, Config.SelectedWeaponType, function(val)
     Config.SelectedWeaponType = val
 end, CustomIcons.AutoFarm)
-TabFarm:AddToggle("Fast Attack", "Zero-cooldown attack register & VirtualUser clicker", Config.FastAttack, function(v) Config.FastAttack = v end, CustomIcons.Lightning)
+TabFarm:AddToggle("Fast Attack (Farm)", "Triple-layer multi-target RE/RegisterHit + CombatFramework + Tool:Activate", Config.FastAttack, function(v) Config.FastAttack = v end, CustomIcons.Lightning)
+TabFarm:AddToggle("Auto Attack Always (Kill Aura)", "Automatically attack all enemies in range even when Auto Farm is OFF", Config.AutoAttackAlways, function(v) Config.AutoAttackAlways = v end, CustomIcons.Lightning)
+TabFarm:AddDropdown("Fast Attack Speed", "Choose attack packet interval", {"Super Fast (10ms)", "Fast (25ms)", "Safe (60ms)"}, "Fast (25ms)", function(mode)
+    if mode:find("10ms") then
+        Config.FastAttackDelay = 0.01
+    elseif mode:find("25ms") then
+        Config.FastAttackDelay = 0.025
+    else
+        Config.FastAttackDelay = 0.06
+    end
+end, CustomIcons.Lightning)
+TabFarm:AddSlider("Attack Reach (Studs)", "Multi-target blade hit radius (up to 80 studs)", 25, 80, Config.AttackRange, function(v) Config.AttackRange = v end, CustomIcons.AutoFarm)
+TabFarm:AddToggle("Attack Players in Range", "Include enemy players in Fast Attack multi-target hit list", Config.AttackPlayers, function(v) Config.AttackPlayers = v end, CustomIcons.Boss)
 TabFarm:AddToggle("Auto Buso Haki", "Automatically activate Aura (Buso Haki) in combat", Config.AutoBuso, function(v) Config.AutoBuso = v end, CustomIcons.Shield)
-TabFarm:AddToggle("Bring Mobs (Magnet)", "Stack quest enemies closely under your farm hover point", Config.BringMobs, function(v) Config.BringMobs = v end, CustomIcons.Layers)
+TabFarm:AddToggle("Bring Mobs (Magnet + SimRadius)", "Pull quest enemies together and lock their physics", Config.BringMobs, function(v) Config.BringMobs = v end, CustomIcons.Layers)
+TabFarm:AddToggle("Hitbox Expander (55 Studs)", "Expand enemy HumanoidRootPart hitbox for 100% hit registration", Config.HitboxExpander, function(v) Config.HitboxExpander = v end, CustomIcons.Layers)
 TabFarm:AddSlider("Hover Distance", "Studs above target enemy while farming", 5, 45, Config.FarmDistance, function(v) Config.FarmDistance = v end, CustomIcons.Teleport)
 
 TabFarm:AddSection("Level & Mob Farming")
@@ -1795,6 +2069,27 @@ TabESP:AddToggle("Mirage / Kitsune / Island ESP", "Track Mirage Island, Kitsune 
 TabESP:AddToggle("Boss ESP", "Display active bosses with live health and distance", Config.ESPBosses, function(v) Config.ESPBosses = v; if not v then clearESP() end end, CustomIcons.Boss)
 
 -- ─── TAB 7: MISC & SETTINGS ───
+TabMisc:AddSection("Blox Fruits Anti-Cheat Disabler")
+TabMisc:AddToggle(
+    "Disable Blox Fruits Anti-Cheat",
+    "Block :Kick(), Security/TeleportDetect remotes, velocity checks & set infinite SimRadius",
+    Config.BypassAntiCheat,
+    function(v)
+        Config.BypassAntiCheat = v
+        if v then initBloxFruitsAntiCheatBypass() end
+    end,
+    CustomIcons.Shield
+)
+TabMisc:AddToggle(
+    "Anti-Stun & No Busy Lock",
+    "Continuously zero Character.Stun & Character.Busy so skills and M1s never interrupt",
+    Config.AntiStun,
+    function(v)
+        Config.AntiStun = v
+    end,
+    CustomIcons.Lightning
+)
+
 TabMisc:AddSection("Team & Character")
 TabMisc:AddButton("Join Pirates Team", "Switch allegiance to Pirates via CommF_", "Pirates", function() invokeCommF("SetTeam", "Pirates") end, CustomIcons.AutoFarm)
 TabMisc:AddButton("Join Marines Team", "Switch allegiance to Marines via CommF_", "Marines", function() invokeCommF("SetTeam", "Marines") end, CustomIcons.Shield)

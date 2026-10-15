@@ -4,7 +4,7 @@ Two fully separated products live in this repository:
 
 | File | What it is | Where it runs |
 |------|------------|---------------|
-| `main.lua` | **Skill Hub v3.8.1 Ultra** — Blox Fruits (Update 30) executer hub | Injected by an executor (Synapse/Delta/Xeno/…) |
+| `main.lua` | **Skill Hub v3.9 Ultra** — Blox Fruits (Update 30) executer hub | Injected by an executor (Synapse/Delta/Xeno/…) |
 | `SkillAnimator/init.lua` | **Skill Animator Studio** — Moon Animator 2 style keyframe/rig editor | Roblox **Studio plugin** (no pre-made animations) |
 
 ---
@@ -45,6 +45,34 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/
 * **Hitbox Expander v2** — player hitbox now scales the whole model (not one blob part) and restores every part exactly; live visualiser; independent **mob hitbox expander** with configurable size/range that works with Bring Mobs off and auto-restores.
 * **Auto Player List** — live in-UI roster that refreshes every second: PvP status lamp, level, fruit, style, HP, distance, plus one-click `TGT` / `KILL` / `TP` / `CAM` buttons per player.
 * **Fly Status panel** — live velocity, altitude and who currently owns movement (manual / autopilot / tween).
+
+### v3.9 — fly you can actually stop, hitboxes up to 200 studs, deadlier auto-kill
+
+**Fly ("I am flying and cannot stop")** — three separate causes, all fixed:
+
+* the **autopilot snatch-back**: with Auto Farm / PvP Hunter running, the fly re-took control the moment you released the keys. The travel request is now paused while you are parked **and** for `Fly hold` seconds (default 1.2 s, Misc slider) after your last key press;
+* **LeftCtrl = Park** (new): stops the character dead in the air, clears the autopilot target and holds that exact position until you press a movement key (or LeftCtrl) again. Same thing as the new `Misc → Park Fly` button;
+* **hard hover brake**: releasing WASD/Space now brakes with a much stronger curve and snaps the residual velocity to zero instead of gliding on;
+* a **Tween that was already running** used to keep dragging the character after the fly was switched on — enabling the fly stops it;
+* **Infinite Geppo and Dash no longer add their own velocity while flying** (that was the "I keep drifting upward" feel);
+* switching the fly off now clears the autopilot target, the park state and both velocities.
+
+**Hitbox Expander**
+
+* both sliders go to **200 studs** (mobs 10–200, players 6–200), the mob range slider to 3000;
+* **whole-model scaling**: the root part grows to the configured size and every limb scales with it (up to ×4), so big/Buddha-sized models are hit by the game's own raycasts instead of one invisible blob. `Scale the whole model` toggles it off;
+* mob parts now store **and restore** `Massless` as well (it used to stay true after switching the expander off);
+* new **Expand every PvP player hitbox** mode (aura targets included, restored exactly when they leave).
+
+**Auto Kill Players**
+
+* attack bursts every **0.08 s** by default (`Attack Burst Interval` slider, 0.05–0.5 s), skills every `Skill Combo Interval` (0.15–1 s) and only when the target is actually in reach;
+* the hunter now **glues itself to a moving target**: it re-issues the travel request while out of reach, so a running player cannot leave the fight;
+* **Target Priority** dropdown — Nearest · Lowest HP · Weakest;
+* **Auto AimLock while Auto Kill** keeps the camera on the victim (shared aim code with AimLock);
+* auto-equips a weapon when your hand is empty (attacks do nothing bare-handed);
+* `Auto Kill Selected falls back to nearest` is now an explicit toggle;
+* hover height slider (0–40 studs) on top of the existing hover distance.
 
 ### v3.8.1 — the line from the console, and why some tabs looked dead
 

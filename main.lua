@@ -1,5 +1,5 @@
 --[[
-    Skill Hub v3.8.1 Ultra — Blox Fruits Edition (Update 30)
+    Skill Hub v3.9 Ultra — Blox Fruits Edition (Update 30)
     Architecture: the engine layer and the interface each run inside their own
                   factory function (see "ENGINES FACTORY" / "INTERFACE FACTORY").
                   Lua allows only 200 *active* local variables per function and
@@ -732,6 +732,14 @@ local Config = {
     PvPSkills           = true,
     KillAuraAllPvP      = true,
     KillAuraRange       = 95,
+    PvPAttackInterval   = 0.08,    -- seconds between PvP attack bursts (lower = more hits)
+    PvPSkillInterval    = 0.4,     -- seconds between Z/X/C/V skill combos
+    PvPAutoAim          = true,    -- keep the camera on the target while auto-killing
+    PvPHoverHeight      = 6,       -- extra studs above the target while hunting
+    PvPTargetMode       = "Nearest",  -- Nearest | Lowest HP | Weakest
+    PvPFallbackNearest  = true,    -- Auto Kill Selected continues on the nearest player if the locked one leaves
+    ExpandAllPvPHitbox  = false,   -- inflate every attackable player, not just the locked one
+    HitboxWholeModel    = true,    -- scale every limb, not only HumanoidRootPart
     BuddhaAwareCombat   = true,
 
     -- Hitbox Expander v2
@@ -758,6 +766,9 @@ local Config = {
     -- Undetected Fly v2
     FlyEnabled          = false,
     FlySpeed            = 60,
+    FlyHoldSeconds      = 1.2,     -- autopilot stays off this long after you release the keys
+    FlyHoverIdle        = true,    -- brake to a dead stop when no key is held
+    FlyParked           = false,   -- LeftCtrl = hold this exact position until you press a key
     FlyBypassMode       = true,
     FlyAntiVoid         = true,
     FlyZeroWalkSpeed    = true,
@@ -2095,9 +2106,10 @@ local function getCharacterCombatParts(char)
     return { char = char, hum = hum, hrp = hrp, head = head }
 end
 
-local function castCombatSkills()
+local function castCombatSkills(inRange)
+    if inRange == false then return end
     local now = os.clock()
-    if now - (PvPState.lastSkill or 0) < 0.4 then return end
+    if now - (PvPState.lastSkill or 0) < math.clamp(Config.PvPSkillInterval or 0.4, 0.15, 1) then return end
     PvPState.lastSkill = now
     for _, key in ipairs({ Enum.KeyCode.Z, Enum.KeyCode.X, Enum.KeyCode.C, Enum.KeyCode.V }) do
         SkillHubStep("main.lua:1696", function()
@@ -2174,7 +2186,7 @@ end
 local function tweenToPlayer(plr, distance)
     local payload = buildAttackPayload(plr and plr.Character)
     if not payload then return false end
-    local base = distance or Config.PvPTweenDistance or 12
+    local base = (distance or Config.PvPTweenDistance or 12) + (Config.PvPHoverHeight or 0)
     if payload.giant and payload.size then
         base = base + math.clamp(payload.size.Y * 0.35, 6, 26)
     end
@@ -2208,8 +2220,8 @@ local function setPlayerHitbox(plr, expand)
 
     if expand then
         local store = storeHitboxState(key, char)
-        local target = math.clamp(Config.PlayerHitboxSize or 14, 4, 60)
-        local factor = math.min(target / math.max(hrp.Size.X, 0.5), 3)
+        local target = math.clamp(Config.PlayerHitboxSize or 14, 4, 200)
+        local factor = math.min(target / math.max(hrp.Size.X, 0.5), Config.HitboxWholeModel ~= false and 4 or 1)
         SkillHubStep("main.lua:1806", function()
             for _, part in ipairs(store.order) do
                 if part.Parent then
@@ -2255,16 +2267,24 @@ local function isFriend(plr)
 end
 
 -- Nearest player that is actually damageable (PvP ON / outside safe zone)
-local function pickAutoKillTarget()
+local function pickAutoKillTarget(mode)
     local myRoot = getRoot()
     if not myRoot then return nil end
-    local best, bestDist = nil, math.huge
+    mode = mode or Config.PvPTargetMode or "Nearest"
+    local best, bestDist, bestScore = nil, math.huge, math.huge
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer then
             local info = getCharacterCombatParts(plr.Character)
             if info and canAttackPlayer(plr) and not isFriend(plr) then
                 local dist = (info.hrp.Position - myRoot.Position).Magnitude
-                if dist < bestDist then bestDist, best = dist, plr end
+                local score = dist
+                if mode == "Lowest HP" then
+                    local hum = plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
+                    score = (hum and hum.Health) or math.huge
+                elseif mode == "Weakest" then
+                    score = (tonumber(getPlayerLevel(plr)) or 9999) * 1000 + dist
+                end
+                if score < bestScore then bestScore, bestDist, best = score, dist, plr end
             end
         end
     end
@@ -2299,13 +2319,15 @@ end
 
 -- Main PvP tick: target selection, kill automation, hitbox control
 task.spawn(function()
-    while task.wait(0.09) do
+    while task.wait(0.06) do
         SkillHubStep("main.lua:1896", function()
             local target = nil
+            local keepHitbox = {}
 
             if Config.AutoKillSelected then
                 target = getPlayerByName(Config.SelectedPlayer)
-                if not target then target = pickAutoKillTarget() end
+                -- continuing on "anyone nearby" is opt-in now
+                if not target and Config.PvPFallbackNearest ~= false then target = pickAutoKillTarget() end
             end
             if not target and Config.AutoKillPvP then
                 target = pickAutoKillTarget()
@@ -2324,11 +2346,30 @@ task.spawn(function()
                     if shouldFight then
                         local now = os.clock()
                         local myRoot = getRoot()
-                        -- stay glued to the target (tweens only when far away)
-                        if not myRoot or (info.hrp.Position - myRoot.Position).Magnitude > (Config.PvPTweenDistance or 12) then
+                        local dist = myRoot and (info.hrp.Position - myRoot.Position).Magnitude or math.huge
+                        local reach = (Config.AttackRange or 65) + 6
+
+                        -- Always fight with something in hand: attacks do nothing bare-handed.
+                        if now - (PvPState.lastEquip or 0) > 1 then
+                            local myChar = getCharacter()
+                            if myChar and not myChar:FindFirstChildOfClass("Tool") then
+                                PvPState.lastEquip = now
+                                SkillHubStep("pvp:equip weapon", function() equipWeaponByType(Config.SelectedWeaponType) end)
+                            end
+                        end
+
+                        -- Stay glued to the target: chase while far away and keep
+                        -- refreshing the travel request so a running player cannot
+                        -- simply walk out of the fight.
+                        if dist > (Config.PvPTweenDistance or 12) then
+                            tweenToPlayer(target)
+                            PvPState.lastFollow = now
+                        elseif dist > reach and now - (PvPState.lastFollow or 0) > 0.35 then
+                            PvPState.lastFollow = now
                             tweenToPlayer(target)
                         end
-                        if now - (PvPState.lastAttack or 0) >= 0.11 then
+
+                        if now - (PvPState.lastAttack or 0) >= math.clamp(Config.PvPAttackInterval or 0.08, 0.05, 0.5) then
                             PvPState.lastAttack = now
                             attackCharacter(target.Character)
 
@@ -2348,20 +2389,42 @@ task.spawn(function()
                                 end
                             end
 
-                            if Config.PvPSkills ~= false then castCombatSkills() end
+                            if Config.PvPSkills ~= false then castCombatSkills(dist <= reach + 15) end
                         end
                     end
                     if Config.SpectatePlayer then setSpectate(target) end
-                    if Config.PlayerHitbox then setPlayerHitbox(target, true) end
+                    if Config.PlayerHitbox then
+                        setPlayerHitbox(target, true)
+                        keepHitbox[target.Name] = true
+                    end
+                    if Config.PvPAutoAim ~= false and not Config.AimLock then
+                        SkillHubStep("pvp:auto aim", function() aimCameraAt(target) end)
+                    end
                 end
             elseif Config.SpectatePlayer then
                 setSpectate(nil)
             end
 
-            -- restore hitboxes of players no longer targeted
+            -- optional: inflate every attackable player (aura targets included)
+            if Config.PlayerHitbox and Config.ExpandAllPvPHitbox then
+                local myRoot = getRoot()
+                local myPos = myRoot and myRoot.Position
+                local auraRange = math.max(Config.KillAuraRange or 95, 120)
+                for _, other in ipairs(Players:GetPlayers()) do
+                    if other ~= LocalPlayer and canAttackPlayer(other) and not isFriend(other) then
+                        local oInfo = getCharacterCombatParts(other.Character)
+                        if oInfo and (not myPos or (oInfo.hrp.Position - myPos).Magnitude <= auraRange) then
+                            setPlayerHitbox(other, true)
+                            keepHitbox[other.Name] = true
+                        end
+                    end
+                end
+            end
+
+            -- restore the hitbox of everyone we are no longer inflating
             if next(PvPState.hitboxOriginals) then
                 for name in pairs(PvPState.hitboxOriginals) do
-                    if not (target and target.Name == name) or not Config.PlayerHitbox then
+                    if not keepHitbox[name] or not Config.PlayerHitbox then
                         local plr = getPlayerByName(name)
                         if plr then setPlayerHitbox(plr, false) else PvPState.hitboxOriginals[name] = nil end
                     end
@@ -2371,27 +2434,31 @@ task.spawn(function()
     end
 end)
 
+-- Shared camera aim: used by AimLock and by the PvP hunter (Auto AimLock while
+-- auto-killing), so both always agree on what "aimed at the target" means.
+local function aimCameraAt(target)
+    local cam = Workspace.CurrentCamera
+    local info = getCharacterCombatParts(target and target.Character)
+    local myRoot = getRoot()
+    if not cam or not info or not myRoot then return false end
+    local fov = Config.AimLockFOV or 300
+    if fov > 0 and (info.hrp.Position - myRoot.Position).Magnitude > fov then return false end
+
+    local aimPos = info.head.Position
+    if Config.BuddhaAwareCombat ~= false and isGiantForm(target.Character) then
+        local bbox, size = getCharBoundingBox(target.Character)
+        if bbox and size then aimPos = bbox.Position + Vector3.new(0, math.clamp(size.Y * 0.22, 2, 16), 0) end
+    end
+    local goal = CFrame.lookAt(cam.CFrame.Position, aimPos)
+    local alpha = math.clamp(Config.AimLockSmoothness or 0.3, 0.05, 1)
+    cam.CFrame = cam.CFrame:Lerp(goal, alpha)
+    return true
+end
+
 -- Skill Aimbot / AimLock camera controller
 RunService.RenderStepped:Connect(function(dt)
     if not Config.AimLock then return end
-    pcall(function()
-        local cam = Workspace.CurrentCamera
-        local target = PvPState.target
-        local info = getCharacterCombatParts(target and target.Character)
-        local myRoot = getRoot()
-        if not cam or not info or not myRoot then return end
-        local fov = Config.AimLockFOV or 300
-        if fov > 0 and (info.hrp.Position - myRoot.Position).Magnitude > fov then return end
-
-        local aimPos = info.head.Position
-        if Config.BuddhaAwareCombat ~= false and isGiantForm(target.Character) then
-            local bbox, size = getCharBoundingBox(target.Character)
-            if bbox and size then aimPos = bbox.Position + Vector3.new(0, math.clamp(size.Y * 0.22, 2, 16), 0) end
-        end
-        local goal = CFrame.lookAt(cam.CFrame.Position, aimPos)
-        local alpha = math.clamp(Config.AimLockSmoothness or 0.3, 0.05, 1)
-        cam.CFrame = cam.CFrame:Lerp(goal, alpha)
-    end)
+    pcall(function() aimCameraAt(PvPState.target) end)
 end)
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -2411,7 +2478,7 @@ task.spawn(function()
             local enemies = Workspace:FindFirstChild("Enemies")
             if not enemies then return end
             local root = getRoot()
-            local size = math.clamp(Config.HitboxMobsSize or 55, 6, 90)
+            local size = math.clamp(Config.HitboxMobsSize or 55, 6, 200)
             local range = Config.HitboxMobsRange or 420
 
             for _, mob in ipairs(enemies:GetChildren()) do
@@ -2422,21 +2489,32 @@ task.spawn(function()
                     if Config.HitboxMobs and inRange then
                         local store = MobHitboxStore[mob]
                         if not store then
-                            store = { parts = {}, order = {} }
+                            store = { parts = {}, order = {}, baseSize = math.max(hrp.Size.X, 0.5) }
                             for _, d in ipairs(mob:GetDescendants()) do
                                 if d:IsA("BasePart") then
-                                    store.parts[d] = { size = d.Size, transparency = d.Transparency, collide = d.CanCollide }
+                                    store.parts[d] = { size = d.Size, transparency = d.Transparency, collide = d.CanCollide, massless = d.Massless }
                                     table.insert(store.order, d)
                                 end
                             end
                             MobHitboxStore[mob] = store
                             mobStoreCount = mobStoreCount + 1
                         end
+                        -- The root part grows to the configured size (up to 200 studs);
+                        -- every other part scales with it so the whole body is hittable
+                        -- instead of one invisible blob (Buddha-sized mobs hit properly).
+                        local factor = 1
+                        if Config.HitboxWholeModel ~= false then
+                            factor = math.clamp(size / math.max(store.baseSize or hrp.Size.X, 0.5), 1, 4)
+                        end
                         hrp.Size = Vector3.new(size, size, size)
                         hrp.CanCollide = false
                         hrp.Massless = true
                         for _, part in ipairs(store.order) do
                             if part ~= hrp and part.Parent then
+                                if factor > 1 then
+                                    local origPart = store.parts[part]
+                                    if origPart then part.Size = origPart.size * factor end
+                                end
                                 part.CanCollide = false
                                 part.Massless = true
                                 if Config.ShowHitboxVisual then part.Transparency = math.max(part.Transparency, 0.75) end
@@ -2450,6 +2528,7 @@ task.spawn(function()
                                 part.Size = orig.size
                                 part.Transparency = orig.transparency
                                 part.CanCollide = orig.collide
+                                part.Massless = orig.massless
                             end
                         end
                         MobHitboxStore[mob] = nil
@@ -2463,6 +2542,7 @@ task.spawn(function()
                             part.Size = orig.size
                             part.Transparency = orig.transparency
                             part.CanCollide = orig.collide
+                            part.Massless = orig.massless
                         end
                     end
                     MobHitboxStore[mob] = nil
@@ -2668,6 +2748,7 @@ end
 local Fly = {
     conn           = nil,
     active         = false,
+    parked         = false,
     bodyVel        = nil,
     bodyGyro       = nil,
     vel            = nil,
@@ -2749,7 +2830,10 @@ local function flyDisable()
         Fly.conn = nil
     end
     Fly.active = false
+    Fly.parked = false
+    Fly.manualHold = 0
     MovementLink.isFlyActive = function() return false end
+    MovementLink.clearFlyTarget()
     flyBrake(getRoot())
     flyDestroyBodies()
     Fly.vel = nil
@@ -2785,11 +2869,16 @@ local function flyStep(dt)
     if manual then
         Fly.manualHold = os.clock()
         Fly.autopilotSpeed = nil
+        Fly.parked = false            -- touching the keys always releases the park
     end
 
-    -- Auto Farm / Boss Hunter / PvP Hunter travel request (autopilot) when idle
+    -- Auto Farm / Boss Hunter / PvP Hunter travel request (autopilot) when idle.
+    -- The autopilot is now blocked while parked AND for Config.FlyHoldSeconds
+    -- after the last key press, which is the real "I cannot stop flying" fix:
+    -- before this, the farm re-took control the moment the keys were released.
     local autoPilotActive = false
-    if not manual and Fly.autopilot and (os.clock() - Fly.autopilotAt) < 1.5 then
+    local manualRecently = (os.clock() - (Fly.manualHold or 0)) < math.clamp(Config.FlyHoldSeconds or 1.2, 0, 5)
+    if not manual and not Fly.parked and not manualRecently and Fly.autopilot and (os.clock() - Fly.autopilotAt) < 1.5 then
         local delta = Fly.autopilot - root.Position
         if delta.Magnitude > 6 then
             dir = delta.Unit
@@ -2805,6 +2894,7 @@ local function flyStep(dt)
     end
 
     local moving = manual or autoPilotActive
+    local hovering = (not moving) and (Fly.parked or Config.FlyHoverIdle ~= false)
     local targetVel = moving and (dir * speed) or Vector3.zero
 
     -- smooth acceleration, clamped so no velocity spike can ever be flagged
@@ -2813,9 +2903,18 @@ local function flyStep(dt)
         local maxDelta = math.min(math.max(speed * 0.09, 5), 60)
         local delta = targetVel - baseVel
         if delta.Magnitude > maxDelta then targetVel = baseVel + delta.Unit * maxDelta end
-        local alpha = moving and math.clamp(dt * 14, 0.25, 0.9) or math.clamp(dt * 12, 0.2, 0.7)
+        -- releasing the keys must stop the character dead in the air, not glide on
+        local alpha
+        if moving then
+            alpha = math.clamp(dt * 14, 0.25, 0.9)
+        elseif hovering then
+            alpha = math.clamp(dt * 34, 0.45, 1)
+        else
+            alpha = math.clamp(dt * 12, 0.2, 0.7)
+        end
         Fly.vel = baseVel:Lerp(targetVel, alpha)
-        if Fly.vel.Magnitude < 0.8 then Fly.vel = Vector3.zero end
+        local snap = hovering and 4 or 0.8
+        if Fly.vel.Magnitude < snap then Fly.vel = Vector3.zero end
 
         -- stealth motion: pure velocity property, nothing new inside the character
         root.AssemblyLinearVelocity = Fly.vel
@@ -2854,9 +2953,30 @@ local function flyStep(dt)
     end
 end
 
+-- Park: hold this exact position until the player touches the movement keys again
+-- (or LeftCtrl). This is what makes the fly stoppable while Auto Farm is running.
+local function flyPark(park)
+    Fly.parked = park and true or false
+    Fly.autopilot = nil
+    Fly.autopilotSpeed = nil
+    Fly.vel = Vector3.zero
+    if Fly.parked then
+        flyBrake(getRoot())
+        MovementLink.clearFlyTarget()
+        Hooks.notify("Fly parked", "Holding position. Press any movement key or LeftCtrl to release.", 3.5, CustomIcons.Stop)
+    else
+        Hooks.notify("Fly", "Park released - movement keys and autopilot are live again", 2.5, CustomIcons.Fly)
+    end
+end
+
 local function flyEnable()
     if Fly.active then return end
     Fly.active = true
+    Fly.parked = false
+    Fly.manualHold = 0
+    -- A Tween that was started before the fly was switched on would keep dragging
+    -- the character around - stop it, the fly owns movement now.
+    SkillHubStep("fly:enable", function() stopTween() end)
     MovementLink.isFlyActive = function() return Fly.active end
     MovementLink.setFlyTarget = flySetTarget
     MovementLink.clearFlyTarget = flyClearTarget
@@ -2910,6 +3030,7 @@ task.spawn(function()
         if input.KeyCode ~= Enum.KeyCode.Space and input.KeyCode ~= Enum.KeyCode.ButtonA then return end
         local hum, root = getHumanoid(), getRoot()
         if not hum or not root then return end
+        if MovementLink.isFlyActive() then return end   -- the fly owns movement
         if hum:GetState() ~= Enum.HumanoidStateType.Freefall then return end
         local now = os.clock()
         if now - lastGeppo < 0.1 then return end
@@ -2954,6 +3075,7 @@ task.spawn(function()
             if not Config.NoDashCooldown then return end
             local hum, root = getHumanoid(), getRoot()
             if not hum or not root then return end
+            if MovementLink.isFlyActive() then return end   -- no dash velocity while flying
             if hum.MoveDirection.Magnitude < 0.1 then return end
             if hum:GetState() == Enum.HumanoidStateType.Freefall then return end
             local now = os.clock()
@@ -3833,6 +3955,7 @@ Hooks.espTag = createESPBillboard
         equipWeaponByType = equipWeaponByType,
         findFruitHandles = findFruitHandles,
         flyDisable = flyDisable,
+        flyPark = flyPark,
         formatNumber = formatNumber,
         getCharBoundingBox = getCharBoundingBox,
         getCharacter = getCharacter,
@@ -3901,7 +4024,7 @@ local findFruitHandles, flyDisable, formatNumber, getCharBoundingBox, getCharact
 local getPlayerBeli, getPlayerByName, getPlayerFragments, getPlayerLevel, getPlayerLoadout, getPvPStatus = Engines.getPlayerBeli, Engines.getPlayerByName, Engines.getPlayerFragments, Engines.getPlayerLevel, Engines.getPlayerLoadout, Engines.getPvPStatus
 local getRoot, getServerStatus, initBloxFruitsAntiCheatBypass, invokeCommF, isBuddhaUser, isGiantForm = Engines.getRoot, Engines.getServerStatus, Engines.initBloxFruitsAntiCheatBypass, Engines.invokeCommF, Engines.isBuddhaUser, Engines.isGiantForm
 local magnetPart, removeFloorPad, scanSeaEvents, setFlyState, setPlayerHitbox, setSpectate = Engines.magnetPart, Engines.removeFloorPad, Engines.scanSeaEvents, Engines.setFlyState, Engines.setPlayerHitbox, Engines.setSpectate
-local stopTween, tweenTo, tweenToPlayer = Engines.stopTween, Engines.tweenTo, Engines.tweenToPlayer
+local stopTween, tweenTo, tweenToPlayer, flyPark = Engines.stopTween, Engines.tweenTo, Engines.tweenToPlayer, Engines.flyPark
 
 -- ───────────────────────────────────────────────────────────────────────────
 --  INTERFACE FACTORY
@@ -4293,7 +4416,7 @@ hairline(VersionChip, Theme.StrokeSoft, 1, 0.4)
 new("TextLabel", {
     BackgroundTransparency = 1,
     Font = UIFontMono,
-    Text = "v3.8.1",
+    Text = "v3.9",
     TextColor3 = Theme.TextMuted,
     TextSize = 9,
     Size = UDim2.new(1, 0, 1, 0),
@@ -4735,7 +4858,7 @@ local StatusStrip = new("Frame", {
 local HotkeyHint = new("TextLabel", {
     BackgroundTransparency = 1,
     Font = UIFont,
-    Text = "RightCtrl — toggle · RightShift — aimlock · RightAlt — fly",
+    Text = "RightCtrl — toggle · RightShift — aimlock · RightAlt — fly · LeftCtrl — stop",
     TextColor3 = Theme.TextFaint,
     TextSize = 9,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -4893,7 +5016,7 @@ local WatermarkText = new("TextLabel", {
     Font = UIFontMono,
     Position = UDim2.new(0, 32, 0, 0),
     Size = UDim2.new(1, -40, 1, 0),
-    Text = "SKILL HUB 3.8.1 · SEA 1",
+    Text = "SKILL HUB 3.9 · SEA 1",
     TextColor3 = Theme.TextSecondary,
     TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -4938,7 +5061,7 @@ task.spawn(function()
             local status = getServerStatus()
 
             WatermarkBar.Visible = Config.ShowWatermarkHUD
-            WatermarkText.Text = string.format("SKILL HUB 3.8.1 · SEA %d [%s] · LV %d · %d FPS · %d MS",
+            WatermarkText.Text = string.format("SKILL HUB 3.9 · SEA %d [%s] · LV %d · %d FPS · %d MS",
                 CURRENT_SEA, string.upper(tostring(SEA_DETECT_SOURCE)), getPlayerLevel(), fps, status.ping)
 
             StatusBar.Visible = Config.ServerStatusHUD and Config.ShowWatermarkHUD
@@ -6490,6 +6613,7 @@ TabPvP:AddSection("Hotkeys")
 TabPvP:AddLivePanel("PvP Hotkeys", "quick controls available anywhere in the game", 30, function()
     return "RightShift  →  toggle Skill Aimbot / AimLock\n" ..
            "RightAlt    →  toggle Undetected Bypass Fly\n" ..
+           "LeftCtrl    →  park the fly (stop dead in the air, press again to release)\n" ..
            "RightCtrl / F9  →  show / hide the Skill Hub window\n" ..
            "Space (mid-air)  →  Infinite Geppo jump (when enabled)"
 end, 96, CustomIcons.Aim)
@@ -6551,7 +6675,13 @@ TabPvP:AddToggle("Auto Kill PvP-Enabled Players", "Automatically hunts every dam
 end, CustomIcons.PvP)
 TabPvP:AddToggle("Ignore Friends", "Skips Roblox friends while auto-killing", Config.IgnoreFriendsPvP, function(v) Config.IgnoreFriendsPvP = v end, CustomIcons.Shield)
 TabPvP:AddSlider("Hover Distance", "Studs above the target while hunting (giants automatically get extra distance)", 4, 30, Config.PvPTweenDistance, function(v) Config.PvPTweenDistance = v end, CustomIcons.Teleport)
-TabPvP:AddSlider("Kill Aura Radius", "Attack every PvP player inside this radius of you", 30, 260, Config.KillAuraRange, function(v) Config.KillAuraRange = v end, CustomIcons.Lightning)
+TabPvP:AddSlider("Kill Aura Radius", "Attack every PvP player inside this radius of you", 30, 400, Config.KillAuraRange, function(v) Config.KillAuraRange = v end, CustomIcons.Lightning)
+TabPvP:AddSlider("Attack Burst Interval", "Seconds between attack bursts of the hunter (5 = 0.05s, the fastest the game accepts)", 5, 50, math.floor((Config.PvPAttackInterval or 0.08) * 100), function(v) Config.PvPAttackInterval = v / 100 end, CustomIcons.Lightning)
+TabPvP:AddSlider("Skill Combo Interval", "Seconds between Z/X/C/V skill combos while hunting", 15, 100, math.floor((Config.PvPSkillInterval or 0.4) * 100), function(v) Config.PvPSkillInterval = v / 100 end, CustomIcons.Layers)
+TabPvP:AddSlider("Hunter Hover Height", "Extra studs above the target while hunting (giants get their own bonus)", 0, 40, Config.PvPHoverHeight, function(v) Config.PvPHoverHeight = v end, CustomIcons.Teleport)
+TabPvP:AddDropdown("Target Priority", "How the hunter picks its next victim", {"Nearest", "Lowest HP", "Weakest"}, Config.PvPTargetMode, function(v) Config.PvPTargetMode = v end, CustomIcons.Players)
+TabPvP:AddToggle("Auto AimLock while Auto Kill", "Keeps the camera locked on the target during the hunt — no need to press RightShift", Config.PvPAutoAim, function(v) Config.PvPAutoAim = v end, CustomIcons.Aim)
+TabPvP:AddToggle("Auto Kill Selected falls back to nearest", "If the locked player leaves the server, keep hunting the nearest attackable player", Config.PvPFallbackNearest, function(v) Config.PvPFallbackNearest = v end, CustomIcons.Search)
 TabPvP:AddToggle("Auto Cast Skills on Target (Z/X/C/V)", "Fires mastery skills during the PvP combo", Config.PvPSkills, function(v) Config.PvPSkills = v end, CustomIcons.Layers)
 
 TabPvP:AddSection("Skill Aimbot / AimLock")
@@ -6570,7 +6700,8 @@ TabPvP:AddToggle("Player Hitbox Expander", "Inflates the target's HumanoidRootPa
         end
     end
 end, CustomIcons.Layers)
-TabPvP:AddSlider("Hitbox Size (Studs)", "Expanded HumanoidRootPart size — the whole model scales with it (great vs Buddha)", 6, 60, Config.PlayerHitboxSize, function(v) Config.PlayerHitboxSize = v end, CustomIcons.Layers)
+TabPvP:AddSlider("Hitbox Size (Studs)", "Expanded HumanoidRootPart size, up to 200 studs — the whole model scales with it (great vs Buddha)", 6, 200, Config.PlayerHitboxSize, function(v) Config.PlayerHitboxSize = v end, CustomIcons.Layers)
+TabPvP:AddToggle("Expand every PvP player hitbox", "Inflates every attackable player in the aura radius, not only the locked target", Config.ExpandAllPvPHitbox, function(v) Config.ExpandAllPvPHitbox = v end, CustomIcons.ESP)
 TabPvP:AddToggle("Attack Range includes players", "Fast Attack / Kill Aura also hits players in range", Config.AttackPlayers, function(v) Config.AttackPlayers = v end, CustomIcons.AutoFarm)
 
 TabPvP:AddSection("Hitbox Expander v2 & Buddha / Giant Combat")
@@ -6584,8 +6715,9 @@ TabPvP:AddToggle("Mob Hitbox Expander", "Inflates every living mob in range (wor
     Config.HitboxMobs = v
     notify("Mob Hitbox", v and "Mob hitboxes inflated" or "Mob hitboxes restored", 2.5, CustomIcons.Layers)
 end, CustomIcons.Layers)
-TabPvP:AddSlider("Mob Hitbox Size", "HumanoidRootPart size applied to mobs", 10, 90, Config.HitboxMobsSize, function(v) Config.HitboxMobsSize = v end, CustomIcons.Layers)
-TabPvP:AddSlider("Mob Hitbox Range", "Only mobs within this distance get inflated", 60, 1500, Config.HitboxMobsRange, function(v) Config.HitboxMobsRange = v end, CustomIcons.Teleport)
+TabPvP:AddSlider("Mob Hitbox Size", "HumanoidRootPart size applied to mobs — up to 200 studs (bosses included)", 10, 200, Config.HitboxMobsSize, function(v) Config.HitboxMobsSize = v end, CustomIcons.Layers)
+TabPvP:AddSlider("Mob Hitbox Range", "Only mobs within this distance get inflated", 60, 3000, Config.HitboxMobsRange, function(v) Config.HitboxMobsRange = v end, CustomIcons.Teleport)
+TabPvP:AddToggle("Scale the whole model", "Grows every limb with the hitbox (100% hit registration on big/Buddha models) instead of one large invisible part", Config.HitboxWholeModel, function(v) Config.HitboxWholeModel = v end, CustomIcons.Layers)
 TabPvP:AddLivePanel("Buddha / Giant Scanner", "live model size + hitbox state per player", 1.5, function()
     local lines = {}
     local myRoot = getRoot()
@@ -6793,6 +6925,11 @@ TabMisc:AddToggle("Enable Fly", "Velocity-driven smooth flight (BodyVelocity + B
     setFlyState(v)
 end, CustomIcons.Fly)
 TabMisc:AddSlider("Fly Speed", "Studs per second while flying (also the autopilot speed)", 20, 320, Config.FlySpeed, function(v) Config.FlySpeed = v end, CustomIcons.Fly)
+TabMisc:AddToggle("Brake to a stop when no key is held", "Releasing WASD/Space stops the character dead in the air instead of gliding on (recommended)", Config.FlyHoverIdle, function(v) Config.FlyHoverIdle = v end, CustomIcons.Stop)
+TabMisc:AddSlider("Autopilot pause after you let go", "Seconds the Auto Farm / PvP autopilot stays off after your last key press — raise it if the fly keeps pulling you away", 0, 500, math.floor((Config.FlyHoldSeconds or 1.2) * 100), function(v) Config.FlyHoldSeconds = v / 100 end, CustomIcons.Loop)
+TabMisc:AddButton("Park Fly (stop in the air)", "Holds your exact position until you press a movement key again — LeftCtrl does the same", "Park", function()
+    if Config.FlyEnabled then flyPark(not Fly.parked) else notify("Fly", "Fly is off — enable it first", 2.5, CustomIcons.Stop) end
+end, CustomIcons.Stop)
 TabMisc:AddToggle("Bypass Mode (anti-flag)", "Smooth acceleration, velocity spike clamp, Humanoid stays grounded on the pad, no PlatformStand", Config.FlyBypassMode, function(v) Config.FlyBypassMode = v end, CustomIcons.Shield)
 TabMisc:AddToggle("Freeze WalkSpeed while flying", "Stops the character controller from adding its own walking velocity (recommended)", Config.FlyZeroWalkSpeed, function(v) Config.FlyZeroWalkSpeed = v end, CustomIcons.Lightning)
 TabMisc:AddToggle("Auto Farm / PvP Autopilot", "Lets Auto Farm, the Boss Hunter and the PvP hunter fly you to their target instead of tweening", true, function(v)
@@ -6983,6 +7120,9 @@ UserInputService.InputBegan:Connect(function(input, gpe)
     elseif input.KeyCode == Enum.KeyCode.RightAlt then
         Config.FlyEnabled = not Config.FlyEnabled
         setFlyState(Config.FlyEnabled)
+    elseif input.KeyCode == Enum.KeyCode.LeftControl then
+        -- fly stop / park (also releases it) - the "cannot stop flying" escape hatch
+        if Config.FlyEnabled then flyPark(not Fly.parked) end
     end
 end)
 
@@ -7063,8 +7203,8 @@ end
 tabCensus("tab census")
 
 SharedEnv.SkillHubInstance = {
-    version = "3.8.1",
-    banner = "Skill Hub v3.8.1 Ultra",
+    version = "3.9",
+    banner = "Skill Hub v3.9 Ultra",
     config = Config,
     hookActive = function() return HookRegistry.namecallActive end,
     unload = UnloadSkillHub,
@@ -7073,14 +7213,14 @@ SharedEnv.SkillHubInstance = {
     tabSelfTest = function() return tabSelfTest("tab self-test (manual)") end,
 }
 
-print(string.format("[Skill Hub v3.8.1] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · syntheticInput=%s · coreGui=none",
+print(string.format("[Skill Hub v3.9] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · syntheticInput=%s · coreGui=none",
     ExecutorName, CURRENT_SEA, tostring(SEA_DETECT_SOURCE),
     tostring(Config.HookEngine),
     HookRegistry.namecallActive and "ACTIVE" or "off",
     Config.UseVirtualInput and "on" or "OFF"))
 
 notify(
-    "Skill Hub v3.8.1 Ultra",
+    "Skill Hub v3.9 Ultra",
     string.format("Blox Fruits Update 30 • Sea %d (%s) • PvP & Players tab added • RightCtrl = toggle, RightShift = AimLock, RightAlt = Fly", CURRENT_SEA, tostring(SEA_DETECT_SOURCE)),
     5,
     CustomIcons.HubCrest

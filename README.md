@@ -4,27 +4,47 @@ Two fully separated products live in this repository:
 
 | File | What it is | Where it runs |
 |------|------------|---------------|
-| `main.lua` | **Skill Hub v3.10 Ultra** — Blox Fruits (Update 30) executer hub | Injected by an executor (Synapse/Delta/Xeno/…) |
-| `loader.lua` | **protected entry point** — checksum-pinned, key-lockable loader that fetches the sealed build | Share this link instead of the raw script |
-| `dist/skillhub.release.lua` | **sealed build** — comments blanked, every string literal encrypted, no greppable source | Served to the loader |
-| `tools/` | `build_release.py` (seal + checksum), `seal_secret.py` (per-machine endpoint sealing) | Run before each release |
+| `release/skillhub.release.lua` | **locked build** — not Lua at all: a hex blob XOR-ed against a per-16-byte-block stream seeded from the private key. Without the key it unlocks to noise | Downloaded by the loader |
+| `loader.lua` | **the only entry point** — takes the key, unlocks the blob, verifies the pinned checksum, refuses modified builds | The link you hand out |
+| `tools/` | `build_release.py` (seal + lock + checksum), `seal_secret.py` (per-machine endpoint sealing) | Run before each release |
 | `SkillAnimator/init.lua` | **Skill Animator Studio** — Moon Animator 2 style keyframe/rig editor | Roblox **Studio plugin** (no pre-made animations) |
+| `main.lua` | the readable **source of truth** — deliberately **NOT published** (`.gitignore`, kept private/local) | Only you |
 
 ---
 
-## 1. Blox Fruits Hub — `main.lua`
+## 1. Blox Fruits Hub — locked build
 
-**Share this link** (protected loader: checksum-pinned, key-lockable, fetches the sealed build):
+**The source is not in this repository any more.** What is published is a *locked*
+blob that only decrypts with the private key, and the loader that takes that key:
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/loader.lua"))("<your private key>")
+```
+
+Never paste the key again (the executor stores it once):
+
+```lua
+writefile("skillhub.key", "<your private key>")
+```
+
+Then the short form works forever:
 
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/loader.lua"))()
 ```
 
-Source-of-truth script (readable, used by every release gate — the loader builds on top of it):
+Handing out the build = handing out the key to someone you authorise. **Rotating** it
+cuts off everybody who had the old one:
 
-```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/main.lua"))()
+```bash
+python3 tools/build_release.py --pass "<new key>"     # rebuild the blob with a new key
+git add -A release loader.lua && git commit -m "rotate key" && git push
 ```
+
+Honest note: the key holder — including a friend you give it to — *can* read what runs
+on their machine; that is inherent to client-side scripts. What the lock guarantees is
+that somebody who only has the repository (or an old screenshot of a URL) gets noise,
+and that you can revoke access by rotating.
 
 ### Tabs
 * **Auto Farm** — level/nearest mob/boss farming, chests, Bring Mobs, Hitbox Expander, Triple-Layer Fast Attack.
@@ -57,6 +77,16 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/
 * **Auto Player List** — live in-UI roster that refreshes every second: PvP status lamp, level, fruit, style, HP, distance, plus one-click `TGT` / `KILL` / `TP` / `CAM` buttons per player.
 * **Fly Status panel** — live velocity, altitude and who currently owns movement (manual / autopilot / tween).
 
+### v3.11 — only you can read it: the source is private, the build is key-locked
+
+* **`main.lua` is no longer published.** It is untracked from the repository and listed in `.gitignore`; it stays the readable source of truth on your machine (and in this workspace) only.
+* **What the repository holds now is noise without the key.** `release/skillhub.release.lua` is a hex blob: the sealed Lua (comments blanked, every literal encrypted) XOR-ed against a stream whose seed is `hash32(key .. ":" .. blockoffset)` and changes every 16 bytes. No Lua syntax, no strings, no comments, no source — `grep` on the repository finds nothing, and copying the file gives nothing.
+* **Position-derived block seeds** mean recovering the stream in one block (Lua source has long runs of blanks where comments used to be — the classic known-plaintext attack) tells an attacker nothing about any other block, and the key itself is a 96-bit passphrase that never enters the repository (`.release_key`, git-ignored, `chmod 600`).
+* **The loader is the only door.** It takes the key (loadstring argument → `skillhub.key` file → `Loader.Key`), unlocks the blob, sanity-checks that the plaintext really is our build, verifies the pinned FNV-1a-32 checksum (a modified blob is refused, not executed), prints build + hash + key hash, unloads any previous instance and runs it. A wrong key prints *WRONG KEY — nothing was executed* instead of a compile error.
+* **Rotation is the revoke button:** `python3 tools/build_release.py --pass "<new key>"` re-locks the build; whoever had the old key is out. Rebuilding is also what publishes a new version — `loader.lua` (build + checksum) is re-pinned automatically.
+* **Verification:** `python3 tools/build_release.py --selftest` proves Python and Lua agree byte-for-byte on hash *and* unlock (wrong key ⇒ garbage), `--check` proves the published blob still unlocks to the current source, `--unseal` writes a local copy for reading, and the unlocked build runs through the mocked-Roblox harness (`LOAD OK`, zero tab errors) — so the lock cannot silently break the script.
+* **Honest limits:** anyone holding the key — including a friend you authorise — can read what runs on their machine (client-side scripts always can be dumped); that is why access is a key you can rotate rather than a promise. Git history of older commits still contains the previously published files until history is rewritten; remove the repository or make it private if you want that gone too.
+
 ### v3.10 — GUARD: anti-theft, anti-tamper, request privacy
 
 **The honest part first.** A script that runs on somebody else's client can always be dumped by that client — no client-side trick changes that. What *can* be done is make a stolen copy **useless**, **traceable** and **refused**. That is what this release does, in three layers: the hub's own guard, a protected loader, and a sealed release build.
@@ -80,14 +110,14 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/
 
 It captures `HttpGet` as a plain function, downloads the **sealed** build, verifies its FNV-1a-32 checksum against the value written by `tools/build_release.py` (a modified payload is **refused**, not executed), prints build + hash + machine tag, optionally enforces a key list (`RequireKey = true`, `Keys = { "<hash>" }`), unloads any previous instance, runs the payload and drops the payload reference again.
 
-**3. `dist/skillhub.release.lua` — the sealed build**
+**3. `release/skillhub.release.lua` — the locked build**
 
 `python3 tools/build_release.py` replaces every comment with spaces (**line numbers are preserved exactly**, so all `SkillHubStep("main.lua:1471", …)` labels keep their meaning), encrypts every string literal into `__S("<seed><hex>")` decoded at runtime by a 4-line XOR decoder on line 1, and writes the payload checksum into `loader.lua`. Verification for the last build: 2 179 literals sealed, 593 comments blanked, 7 704 → 7 704 lines, `LOAD OK` in the mocked-Roblox harness with zero tab errors, and no `rbxassetid` / `discord.com` / `game:HttpGet` plaintext left in the file.
 
 **Commands**
 
 ```bash
-python3 tools/build_release.py          # rebuild the sealed payload + re-pin loader.lua
+python3 tools/build_release.py          # rebuild the locked payload + re-pin loader.lua
 python3 tools/build_release.py --check  # verify dist/ still matches the pinned checksum
 python3 tools/seal_secret.py --selftest # prove python ⇄ Lua agree on the sealing
 python3 tools/seal_secret.py --tag "<fingerprint from Misc>" --seal "https://discord.com/api/webhooks/…"

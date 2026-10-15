@@ -1,5 +1,5 @@
 --[[
-    Skill Hub v3.3 Ultra — Blox Fruits Edition (Update 24+)
+    Skill Hub v3.4 Ultra — Blox Fruits Edition (Update 24+)
     Interface: "Porcelain" design system — soft-dark graphite surfaces, hairline
                borders, 20px radii, muted editorial accents. No neon, no glow.
     Features:
@@ -20,8 +20,12 @@ local Workspace           = game:GetService("Workspace")
 local TweenService        = game:GetService("TweenService")
 local UserInputService    = game:GetService("UserInputService")
 local RunService          = game:GetService("RunService")
-local VirtualUser         = game:GetService("VirtualUser")
-local VirtualInputManager = game:GetService("VirtualInputManager")
+-- Hidden services are probed instead of assumed: on some executors
+-- game:GetService("VirtualUser"/"VirtualInputManager") throws, which used to
+-- abort the entire script on line 3.
+local VirtualUser, VirtualInputManager
+pcall(function() VirtualUser = game:GetService("VirtualUser") end)
+pcall(function() VirtualInputManager = game:GetService("VirtualInputManager") end)
 local TeleportService     = game:GetService("TeleportService")
 local Lighting            = game:GetService("Lighting")
 local StatsService        = game:GetService("Stats")
@@ -35,6 +39,24 @@ local SharedEnv = (getgenv and getgenv()) or _G or {}
 -- ─── EXECUTOR IDENTITY & CAPABILITY PROBE ──────────────────────────────────
 -- Used by the diagnostics panel so you can see exactly which functions your
 -- executor (Xeno, Delta, Synapse, …) actually provides.
+-- ─── INSTRUMENTATION: tagged, line-numbered error reporting ─────────────────
+-- Every recoverable step calls through SkillHubStep. It behaves *exactly* like
+-- pcall (same return values) but prints which line of THIS script failed:
+--      [Skill Hub] step error @ main.lua:1421 -> <message>
+-- If the console shows no such line, no code in this file raised an error.
+local StepErrorCounts, StepErrorPrintCap = {}, 2
+local function SkillHubStep(name, fn, ...)
+    local result = table.pack(pcall(fn, ...))
+    if not result[1] and Config.LogStepErrors ~= false then
+        local seen = (StepErrorCounts[name] or 0)
+        if seen < StepErrorPrintCap then
+            StepErrorCounts[name] = seen + 1
+            print(string.format("[Skill Hub] step error @ %s -> %s", tostring(name), tostring(result[2])))
+        end
+    end
+    return table.unpack(result, 1, result.n)
+end
+
 local ExecutorName, ExecutorVersion = "unknown", "unknown"
 do
     local ok, name = pcall(function() return identifyexecutor and identifyexecutor() end)
@@ -50,7 +72,7 @@ local function capabilityTable()
         local value
         local ok = pcall(function() value = _ENV[name] end)
         if ok and value ~= nil then return true end
-        pcall(function()
+        SkillHubStep("main.lua:57", function()
             local env = getgenv and getgenv()
             if type(env) == "table" then value = env[name] end
             if value == nil and type(_G) == "table" then value = _G[name] end
@@ -81,6 +103,10 @@ local function diagnosticsText()
         string.format("hook engine   : %s   installed: %s   intercepted: %d",
             Config.HookEngine and "enabled" or "OFF", HookRegistry.namecallActive and "yes" or "no", HookRegistry.hits or 0),
         string.format("coreGui usage : none (this hub never touches CoreGui)"),
+        string.format("synthetic in  : VirtualUser=%s  VirtualInputManager=%s  enabled=%s",
+            SyntheticInput.userReady and "ok" or "disabled",
+            SyntheticInput.vimReady and "ok" or "disabled",
+            tostring(Config.UseVirtualInput)),
         "",
     }
     local ok_list, bad_list = {}, {}
@@ -666,6 +692,8 @@ local Config = {
     HitboxMobs          = true,
     SafeHookMode        = true,
     HookEngine          = false,   -- metamethod hooks are opt-in (cannot be removed until rejoin)
+    UseVirtualInput     = true,    -- synthetic key events + virtual mouse clicks
+    LogStepErrors       = true,    -- print [Skill Hub] step error @ line … when our own code fails
     HookHitCount        = 0,
     FreezeMobAnimations = false,
     HitboxMobsSize      = 55,
@@ -732,6 +760,81 @@ if SharedEnv.SkillHubNoHooks == true then
     Config.SafeHookMode = false
     Config.BypassAntiCheat = false
     print("[Skill Hub] SkillHubNoHooks is set — no __namecall hook will be installed")
+end
+
+-- ─── SYNTHETIC INPUT SANDBOX ────────────────────────────────────────────────
+-- VirtualUser:CaptureController()/Button1Down()/Button1Up() are NOT part of the
+-- public Roblox API — they only exist while the executor patches them in, and on
+-- several free executors (Xeno, Delta, …) only part of them is implemented. The
+-- Fast Attack "Layer 3" used to call them up to 40x per second; when such a call
+-- fails inside the engine, Roblox formats the notification through its own
+-- CoreGui locale module — which is exactly the
+--      CoreGui.RobloxGui.Modules.Common.Locales.en-us ... attempt to call a nil value
+-- line. They are now capability-gated, pcall'd, throttled and self-disabling.
+local SyntheticInput = {
+    userReady    = VirtualUser ~= nil,
+    vimReady     = VirtualInputManager ~= nil,
+    userFails    = 0,
+    vimFails     = 0,
+    lastClick    = 0,
+    lastKey      = 0,
+    warnedUser   = false,
+    warnedVim    = false,
+}
+
+local function virtualClick(force)
+    if Config.UseVirtualInput == false then return false end
+    if not SyntheticInput.userReady then return false end
+
+    local now = os.clock()
+    if not force and (now - SyntheticInput.lastClick) < 0.12 then return false end
+    SyntheticInput.lastClick = now
+
+    local ok = pcall(function()
+        VirtualUser:CaptureController()
+        VirtualUser:Button1Down(Vector2.zero)
+        task.delay(0.03, function()
+            SkillHubStep("virtualClickUp@VirtualUser", function() VirtualUser:Button1Up(Vector2.zero) end)
+        end)
+    end)
+    if not ok then
+        SyntheticInput.userFails = SyntheticInput.userFails + 1
+        if SyntheticInput.userFails >= 3 and not SyntheticInput.warnedUser then
+            SyntheticInput.warnedUser = true
+            SyntheticInput.userReady = false
+            print("[Skill Hub] VirtualUser is only partially implemented by this executor — virtual-click layer disabled (M1s still fire through Tool:Activate and the remote packets).")
+        end
+        return false
+    end
+    return true
+end
+
+local function pressKey(keyCode, holdTime)
+    if Config.UseVirtualInput == false then return false end
+    if not SyntheticInput.vimReady then return false end
+
+    local now = os.clock()
+    if (now - SyntheticInput.lastKey) < 0.05 then return false end
+    SyntheticInput.lastKey = now
+
+    local ok = pcall(function()
+        VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
+    end)
+    task.delay(holdTime or 0.05, function()
+        SkillHubStep("releaseKey@VirtualInputManager", function()
+            VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+        end)
+    end)
+    if not ok then
+        SyntheticInput.vimFails = SyntheticInput.vimFails + 1
+        if SyntheticInput.vimFails >= 3 and not SyntheticInput.warnedVim then
+            SyntheticInput.warnedVim = true
+            SyntheticInput.vimReady = false
+            print("[Skill Hub] VirtualInputManager is unavailable on this executor — synthetic key events disabled (skills still fire through the game's own remote packets).")
+        end
+        return false
+    end
+    return true
 end
 
 -- Forward-declared hooks (the UI/engine blocks below fill these in later, so every
@@ -864,7 +967,7 @@ RunService.Heartbeat:Connect(function()
         -- once every 2 seconds (it persists) instead of 60 times per second.
         if sethiddenproperty and (tick() - lastSimRadiusWrite) > 2 then
             lastSimRadiusWrite = tick()
-            pcall(function()
+            SkillHubStep("main.lua:970", function()
                 sethiddenproperty(LocalPlayer, "SimulationRadius", 9e9)
                 sethiddenproperty(LocalPlayer, "MaxSimulationRadius", 9e9)
             end)
@@ -1365,7 +1468,7 @@ local function fireAttackPackets(primaryPart, bladeHits, rawParts, reachHint)
 
     -- Layer 1: Update 20-24+ Modules.Net Multi-Target Packet (RE/RegisterAttack + RE/RegisterHit)
     if #bladeHits > 0 then
-        pcall(function()
+        SkillHubStep("main.lua:1471", function()
             local modules = ReplicatedStorage:FindFirstChild("Modules")
             local net = modules and modules:FindFirstChild("Net")
             if net then
@@ -1397,7 +1500,7 @@ local function fireAttackPackets(primaryPart, bladeHits, rawParts, reachHint)
                 local validator = ReplicatedStorage:FindFirstChild("Remotes")
                     and ReplicatedStorage.Remotes:FindFirstChild("Validator")
                 if validator and ac.blades and ac.blades[1] then
-                    pcall(function()
+                    SkillHubStep("main.lua:1503", function()
                         ac:attack()
                     end)
                 end
@@ -1418,9 +1521,7 @@ local function fireAttackPackets(primaryPart, bladeHits, rawParts, reachHint)
         if equippedTool then
             equippedTool:Activate()
         end
-        VirtualUser:CaptureController()
-        VirtualUser:Button1Down(Vector2.zero)
-        VirtualUser:Button1Up(Vector2.zero)
+        virtualClick(false)
     end)
 end
 
@@ -1436,7 +1537,7 @@ task.spawn(function()
     while true do
         local delayTime = math.clamp(Config.FastAttackDelay or 0.02, 0.01, 0.25)
         task.wait(delayTime)
-        pcall(function()
+        SkillHubStep("main.lua:1540", function()
             local isFarming = Config.AutoFarmLevel or Config.AutoFarmNearest or Config.AutoFarmBoss or Config.AutoFarmAllBosses
             if (isFarming and Config.FastAttack) or Config.AutoAttackAlways then
                 triggerFastAttack()
@@ -1462,7 +1563,7 @@ local function bringNearbyMobs(targetName, targetPos)
             local hrp = mob:FindFirstChild("HumanoidRootPart")
             local hum = mob:FindFirstChildOfClass("Humanoid")
             if hrp and hum and hum.Health > 0 and (hrp.Position - targetPos).Magnitude <= 350 then
-                pcall(function()
+                SkillHubStep("main.lua:1566", function()
                     hrp.CFrame = CFrame.new(targetPos)
                     hrp.CanCollide = false
                     hrp.AssemblyLinearVelocity = Vector3.zero
@@ -1592,10 +1693,9 @@ local function castCombatSkills()
     if now - (PvPState.lastSkill or 0) < 0.4 then return end
     PvPState.lastSkill = now
     for _, key in ipairs({ Enum.KeyCode.Z, Enum.KeyCode.X, Enum.KeyCode.C, Enum.KeyCode.V }) do
-        pcall(function()
-            VirtualInputManager:SendKeyEvent(true, key, false, game)
+        SkillHubStep("main.lua:1696", function()
+            pressKey(key, 0.05)
             task.wait(0.05)
-            VirtualInputManager:SendKeyEvent(false, key, false, game)
         end)
     end
 end
@@ -1703,7 +1803,7 @@ local function setPlayerHitbox(plr, expand)
         local store = storeHitboxState(key, char)
         local target = math.clamp(Config.PlayerHitboxSize or 14, 4, 60)
         local factor = math.min(target / math.max(hrp.Size.X, 0.5), 3)
-        pcall(function()
+        SkillHubStep("main.lua:1806", function()
             for _, part in ipairs(store.order) do
                 if part.Parent then
                     local orig = store.parts[part]
@@ -1725,7 +1825,7 @@ local function setPlayerHitbox(plr, expand)
     else
         local store = PvPState.hitboxOriginals[key]
         if store then
-            pcall(function()
+            SkillHubStep("main.lua:1828", function()
                 for _, part in ipairs(store.order) do
                     if part.Parent then
                         local orig = store.parts[part]
@@ -1780,7 +1880,7 @@ local function setSpectate(plr)
         cam.CameraType = Enum.CameraType.Custom
         cam.CameraSubject = hum
     elseif SpectateState.active then
-        pcall(function()
+        SkillHubStep("main.lua:1883", function()
             if SpectateState.originalSubject and SpectateState.originalSubject.Parent then
                 cam.CameraSubject = SpectateState.originalSubject
             end
@@ -1793,7 +1893,7 @@ end
 -- Main PvP tick: target selection, kill automation, hitbox control
 task.spawn(function()
     while task.wait(0.09) do
-        pcall(function()
+        SkillHubStep("main.lua:1896", function()
             local target = nil
 
             if Config.AutoKillSelected then
@@ -1900,7 +2000,7 @@ local mobStoreCount = 0
 
 task.spawn(function()
     while task.wait(0.35) do
-        pcall(function()
+        SkillHubStep("main.lua:2003", function()
             local enemies = Workspace:FindFirstChild("Enemies")
             if not enemies then return end
             local root = getRoot()
@@ -2229,7 +2329,7 @@ local function flyBrake(root)
         Fly.bodyVel.Velocity = Vector3.zero
     end
     if root then
-        pcall(function()
+        SkillHubStep("main.lua:2332", function()
             root.AssemblyLinearVelocity = Vector3.zero
             root.AssemblyAngularVelocity = Vector3.zero
         end)
@@ -2251,7 +2351,7 @@ local function flyDisable()
 
     local hum = getHumanoid()
     if hum and Fly.savedWalk then
-        pcall(function()
+        SkillHubStep("main.lua:2354", function()
             if hum.WalkSpeed == 0 then hum.WalkSpeed = Fly.savedWalk end
         end)
     end
@@ -2380,7 +2480,7 @@ end
 -- Walk on Water / pad lifecycle loop
 task.spawn(function()
     while task.wait(0.12) do
-        pcall(function()
+        SkillHubStep("main.lua:2483", function()
             local hum, root = getHumanoid(), getRoot()
             local used = false
             if Config.WalkOnWater and hum and root then
@@ -2407,10 +2507,9 @@ task.spawn(function()
         local now = os.clock()
         if now - lastGeppo < 0.1 then return end
         lastGeppo = now
-        pcall(function()
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+        SkillHubStep("main.lua:2510", function()
+            pressKey(Enum.KeyCode.Space, 0.05)
             task.wait(0.05)
-            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
             root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 68, root.AssemblyLinearVelocity.Z)
         end)
     end)
@@ -2420,7 +2519,7 @@ end)
 task.spawn(function()
     while task.wait(0.4) do
         if Config.InfiniteEnergy then
-            pcall(function()
+            SkillHubStep("main.lua:2522", function()
                 local data = LocalPlayer:FindFirstChild("Data")
                 if data then
                     for _, n in ipairs({ "Energy", "MaxEnergy", "AuraEnergy" }) do
@@ -2444,7 +2543,7 @@ end)
 task.spawn(function()
     local lastDash = 0
     while task.wait(0.05) do
-        pcall(function()
+        SkillHubStep("main.lua:2546", function()
             if not Config.NoDashCooldown then return end
             local hum, root = getHumanoid(), getRoot()
             if not hum or not root then return end
@@ -2455,7 +2554,7 @@ task.spawn(function()
             lastDash = now
             local kick = hum.MoveDirection * 46
             root.AssemblyLinearVelocity = Vector3.new(kick.X, root.AssemblyLinearVelocity.Y, kick.Z)
-            pcall(function()
+            SkillHubStep("main.lua:2557", function()
                 local rem = ReplicatedStorage:FindFirstChild("Remotes")
                 local commE = rem and rem:FindFirstChild("CommE")
                 if commE then commE:FireServer("Dash") end
@@ -2472,11 +2571,11 @@ local function magnetPart(handle, tweenFallback)
     local root = getRoot()
     if not handle or not root then return end
     if firetouchinterest then
-        pcall(function()
+        SkillHubStep("main.lua:2574", function()
             firetouchinterest(root, handle, 0)
             firetouchinterest(root, handle, 1)
         end)
-        pcall(function()
+        SkillHubStep("main.lua:2578", function()
             firetouchinterest(handle, root, 0)
             firetouchinterest(handle, root, 1)
         end)
@@ -2508,7 +2607,7 @@ end
 task.spawn(function()
     while task.wait(0.05) do
         if Config.FruitMagnet then
-            pcall(function()
+            SkillHubStep("main.lua:2610", function()
                 for _, entry in ipairs(findFruitHandles()) do
                     magnetPart(entry.handle, false)
                 end
@@ -2521,7 +2620,7 @@ end)
 task.spawn(function()
     while task.wait(0.3) do
         if Config.AutoCollectDrops then
-            pcall(function()
+            SkillHubStep("main.lua:2623", function()
                 local root = getRoot()
                 if not root then return end
                 for _, obj in ipairs(Workspace:GetChildren()) do
@@ -2630,7 +2729,7 @@ end
 
 task.spawn(function()
     while task.wait(3.5) do
-        pcall(function()
+        SkillHubStep("main.lua:2732", function()
             if not Config.SeaEventTracker and not Config.MirageFinder then return end
             local events = scanSeaEvents()
             SeaEventState.events = events
@@ -2684,7 +2783,7 @@ end
 task.spawn(function()
     for _ = 1, 40 do
         task.wait(1.5)
-        pcall(function()
+        SkillHubStep("main.lua:2786", function()
             local before = CURRENT_SEA
             refreshSea()
             if CURRENT_SEA ~= before then
@@ -2702,7 +2801,7 @@ end)
 
 task.spawn(function()
     while task.wait(0.12) do
-        pcall(function()
+        SkillHubStep("main.lua:2804", function()
             local char = getCharacter()
             local root = getRoot()
             local hum  = getHumanoid()
@@ -2815,7 +2914,7 @@ end)
 -- Auto Skill Cast & Sovereign Aura Loop
 task.spawn(function()
     while task.wait(0.35) do
-        pcall(function()
+        SkillHubStep("main.lua:2917", function()
             local keys = {
                 {Enabled = Config.AutoSkillComboZ, Key = Enum.KeyCode.Z},
                 {Enabled = Config.AutoSkillComboX, Key = Enum.KeyCode.X},
@@ -2824,9 +2923,8 @@ task.spawn(function()
             }
             for _, k in ipairs(keys) do
                 if k.Enabled then
-                    VirtualInputManager:SendKeyEvent(true, k.Key, false, game)
+                    pressKey(k.Key, 0.08)
                     task.wait(0.08)
-                    VirtualInputManager:SendKeyEvent(false, k.Key, false, game)
                 end
             end
 
@@ -2859,7 +2957,7 @@ end)
 -- Auto Stats Loop
 task.spawn(function()
     while task.wait(0.4) do
-        pcall(function()
+        SkillHubStep("main.lua:2960", function()
             local batch = Config.StatPointsBatch
             if Config.AutoStatMelee   then invokeCommF("AddPoint", "Melee", batch) end
             if Config.AutoStatDefense then invokeCommF("AddPoint", "Defense", batch) end
@@ -2873,7 +2971,7 @@ end)
 -- Fruit Sniper & Raid Loop
 task.spawn(function()
     while task.wait(1.2) do
-        pcall(function()
+        SkillHubStep("main.lua:2974", function()
             if Config.AutoSniperStock then
                 invokeCommF("GetFruits")
                 invokeCommF("PurchaseRawFruit", Config.SelectedFruit, false)
@@ -2933,7 +3031,7 @@ end)
 
 task.spawn(function()
     while task.wait(0.25) do
-        pcall(function()
+        SkillHubStep("main.lua:3034", function()
             if Config.AutoFarmChests then
                 local root = getRoot()
                 if root then
@@ -2976,8 +3074,12 @@ end)
 
 LocalPlayer.Idled:Connect(function()
     if Config.AntiAFK then
-        VirtualUser:CaptureController()
-        VirtualUser:ClickButton2(Vector2.zero)
+        if VirtualUser and Config.UseVirtualInput ~= false then
+            SkillHubStep("antiAfkClick@VirtualUser", function()
+                VirtualUser:CaptureController()
+                VirtualUser:ClickButton2(Vector2.zero)
+            end)
+        end
     end
 end)
 
@@ -3068,7 +3170,7 @@ end
 
 task.spawn(function()
     while task.wait(0.9) do
-        pcall(function()
+        SkillHubStep("main.lua:3173", function()
             clearESP()
             local myRoot = getRoot()
             local cam = Workspace.CurrentCamera
@@ -3542,7 +3644,7 @@ hairline(VersionChip, Theme.StrokeSoft, 1, 0.4)
 new("TextLabel", {
     BackgroundTransparency = 1,
     Font = UIFontMono,
-    Text = "v3.3",
+    Text = "v3.4",
     TextColor3 = Theme.TextMuted,
     TextSize = 9,
     Size = UDim2.new(1, 0, 1, 0),
@@ -3834,7 +3936,7 @@ local FooterBeliLbl = miniStat(IdCard, 102, 76, "BELI", "$ 0", Theme.Success)
 task.spawn(function()
     while task.wait(1) do
         if not ScreenGui.Parent then break end
-        pcall(function()
+        SkillHubStep("main.lua:3939", function()
             FooterLvLbl.Text = string.format("%s · %s", tostring(getPlayerLevel()), formatNumber(getPlayerFragments()))
             FooterBeliLbl.Text = "$ " .. formatNumber(getPlayerBeli())
             BrandSub.Text = string.format("Blox Fruits · Sea %d · %s", CURRENT_SEA, tostring(SEA_DETECT_SOURCE))
@@ -4007,7 +4109,7 @@ local LiveClock = new("TextLabel", {
 task.spawn(function()
     while task.wait(1) do
         if not ScreenGui.Parent then break end
-        pcall(function()
+        SkillHubStep("main.lua:4112", function()
             local t = os.date("*t")
             LiveClock.Text = string.format("%02d:%02d:%02d", t.hour, t.min, t.sec)
         end)
@@ -4142,7 +4244,7 @@ local WatermarkText = new("TextLabel", {
     Font = UIFontMono,
     Position = UDim2.new(0, 32, 0, 0),
     Size = UDim2.new(1, -40, 1, 0),
-    Text = "SKILL HUB 3.3 · SEA 1",
+    Text = "SKILL HUB 3.4 · SEA 1",
     TextColor3 = Theme.TextSecondary,
     TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -4179,7 +4281,7 @@ task.spawn(function()
     RunService.RenderStepped:Connect(function() frames = frames + 1 end)
     while task.wait(1) do
         if not ScreenGui.Parent then break end
-        pcall(function()
+        SkillHubStep("main.lua:4284", function()
             local now = tick()
             local fps = math.floor(frames / math.max(now - lastTick, 0.01))
             frames = 0
@@ -4187,7 +4289,7 @@ task.spawn(function()
             local status = getServerStatus()
 
             WatermarkBar.Visible = Config.ShowWatermarkHUD
-            WatermarkText.Text = string.format("SKILL HUB 3.3 · SEA %d [%s] · LV %d · %d FPS · %d MS",
+            WatermarkText.Text = string.format("SKILL HUB 3.4 · SEA %d [%s] · LV %d · %d FPS · %d MS",
                 CURRENT_SEA, string.upper(tostring(SEA_DETECT_SOURCE)), getPlayerLevel(), fps, status.ping)
 
             StatusBar.Visible = Config.ServerStatusHUD and Config.ShowWatermarkHUD
@@ -5056,7 +5158,7 @@ local function createTab(iconAsset, name, accentOverride)
         task.spawn(function()
             while task.wait(1.1) do
                 if not card.Parent then break end
-                pcall(function()
+                SkillHubStep("main.lua:5161", function()
                     TweenService:Create(liveDot, TweenInfo.new(0.5), {
                         BackgroundTransparency = liveDot.BackgroundTransparency > 0.2 and 0 or 0.55,
                     }):Play()
@@ -6009,6 +6111,13 @@ TabMisc:AddButton("Copy Diagnostics to Clipboard", "Copies the report above (exe
     local ok = pcall(function() setclipboard(diagnosticsText()) end)
     notify("Diagnostics", ok and "Copied to clipboard" or "setclipboard is not available in this executor", 3, ok and CustomIcons.HubCrest or CustomIcons.Stop)
 end, CustomIcons.HubCrest)
+TabMisc:AddToggle("Synthetic Input (keys + virtual clicks)", "Sends VirtualInputManager key events and VirtualUser mouse clicks for skill casting / M1 fallback. Auto-disables itself and prints a notice if your executor only partially implements them.", Config.UseVirtualInput, function(v)
+    Config.UseVirtualInput = v
+    notify("Synthetic Input", v and "Enabled" or "Disabled (skills still fire through remote packets)", 3, CustomIcons.Lightning)
+end, CustomIcons.Lightning)
+TabMisc:AddToggle("Log Own-Code Errors (line numbers)", "Prints [Skill Hub] step error @ main.lua:line whenever THIS script hits an error, so console blame is never ambiguous", Config.LogStepErrors, function(v)
+    Config.LogStepErrors = v
+end, CustomIcons.Search)
 TabMisc:AddToggle("Freeze Mob Animations", "Stops mob animation tracks instead of destroying their Animator (avoids animation load spam)", Config.FreezeMobAnimations, function(v) Config.FreezeMobAnimations = v end, CustomIcons.Layers)
 TabMisc:AddLivePanel("Hook & Anti-Cheat Status", "live diagnostics for the __namecall hook", 1.5, function()
     return string.format(
@@ -6131,20 +6240,20 @@ local function UnloadSkillHub()
 end
 
 SharedEnv.SkillHubInstance = {
-    version = "3.3",
-    banner = "Skill Hub v3.3 Ultra",
+    version = "3.4",
+    banner = "Skill Hub v3.4 Ultra",
     config = Config,
     hookActive = function() return HookRegistry.namecallActive end,
     unload = UnloadSkillHub,
 }
 
-print(string.format("[Skill Hub v3.3] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · coreGui=none",
+print(string.format("[Skill Hub v3.4] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · coreGui=none",
     ExecutorName, CURRENT_SEA, tostring(SEA_DETECT_SOURCE),
     tostring(Config.HookEngine),
     HookRegistry.namecallActive and "ACTIVE" or "off"))
 
 notify(
-    "Skill Hub v3.3 Ultra",
+    "Skill Hub v3.4 Ultra",
     string.format("Blox Fruits Update 24+ • Sea %d (%s) • PvP & Players tab added • RightCtrl = toggle, RightShift = AimLock, RightAlt = Fly", CURRENT_SEA, tostring(SEA_DETECT_SOURCE)),
     5,
     CustomIcons.HubCrest

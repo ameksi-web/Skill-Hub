@@ -50,24 +50,36 @@ local CustomIcons = {
 }
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  LOAD MODULAR SKILL ANIMATOR FOLDER (SkillAnimator/*)
+--  LOAD MODULAR MOON ANIMATOR STUDIO (SkillAnimator/init.lua)
 -- ═══════════════════════════════════════════════════════════════════════════
 
-local function tryLoadModule(path)
+local MOON_ANIMATOR_RAW_URL = "https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/SkillAnimator/init.lua"
+local MoonAnimatorInstance = nil
+
+local function launchMoonAnimatorStudio()
+    if MoonAnimatorInstance and type(MoonAnimatorInstance.MountUI) == "function" then
+        MoonAnimatorInstance:MountUI()
+        return true
+    end
     if type(loadfile) == "function" then
-        local ok, res = pcall(function()
-            local chunk = loadfile(path)
+        local ok, mod = pcall(function()
+            local chunk = loadfile("SkillAnimator/init.lua")
             return chunk and chunk()
         end)
-        if ok and res then return res end
+        if ok and mod then
+            MoonAnimatorInstance = mod
+            return true
+        end
     end
-    return nil
+    local okHttp, modHttp = pcall(function()
+        return loadstring(game:HttpGet(MOON_ANIMATOR_RAW_URL))()
+    end)
+    if okHttp and modHttp then
+        MoonAnimatorInstance = modHttp
+        return true
+    end
+    return false
 end
-
-local SkillAnimatorModule = tryLoadModule("SkillAnimator/init.lua")
-local SkillPresetsModule  = tryLoadModule("SkillAnimator/AnimationPresets.lua")
-local SkillVFXModule      = tryLoadModule("SkillAnimator/VFXEngine.lua")
-local SkillComboModule    = tryLoadModule("SkillAnimator/ComboSequencer.lua")
 
 -- ═══════════════════════════════════════════════════════════════════════════
 --  UP-TO-DATE BLOX FRUITS DATA (UPDATE 24+ / DRAGON REWORK / TIKI OUTPOST)
@@ -219,18 +231,6 @@ local QUEST_DATABASE = {
     },
 }
 
-local SKILL_ANIMATION_PRESETS = (SkillPresetsModule and SkillPresetsModule.Animations) or {
-    {Name = "Godhuman — Soaring Beast Flurry",       AnimId = "rbxassetid://522635514", Speed = 1.45, VFX = "GoldenShockwave"},
-    {Name = "Sanguine Art — Bloodbane Drain",        AnimId = "rbxassetid://616163682", Speed = 1.35, VFX = "CrimsonSlash"},
-    {Name = "Dragon Talon — Talon Ignition",         AnimId = "rbxassetid://616158929", Speed = 1.25, VFX = "DragonEmber"},
-    {Name = "Electric Claw — Thunderclap Slash",     AnimId = "rbxassetid://656117878", Speed = 1.65, VFX = "CyanLightning"},
-    {Name = "Kitsune — Fox Fire Disruption",         AnimId = "rbxassetid://707853694", Speed = 1.50, VFX = "KitsuneAzureFlame"},
-    {Name = "Dragon (East/West) — Imperial Cataclysm",AnimId = "rbxassetid://616168032", Speed = 1.15, VFX = "ConquerorHakiBurst"},
-    {Name = "Awakened Dough — Piercing Clothesline", AnimId = "rbxassetid://656118852", Speed = 1.40, VFX = "GoldenShockwave"},
-    {Name = "Cursed Dual Katana — Revolving Ravager",AnimId = "rbxassetid://522638767", Speed = 1.55, VFX = "CrimsonSlash"},
-    {Name = "Awakened Race V4 — Sovereign Float",    AnimId = "rbxassetid://616006778", Speed = 0.85, VFX = "ConquerorHakiBurst"},
-}
-
 local ACTIVE_CODES = {
     "KITT_RESET", "Sub2CaptainMaui", "kittgaming", "Sub2Fer999",
     "Enyu_is_Pro", "Magicbus", "JCWK", "Starcodeheo", "Bluxxy",
@@ -284,11 +284,7 @@ local Config = {
     ESPIslands          = false,
     ESPBosses           = false,
 
-    -- Skill Animator State
-    SelectedSkillPreset = SKILL_ANIMATION_PRESETS[1].Name,
-    AnimSpeedMultiplier = 1.35,
-    LoopSkillAnim       = false,
-    SkillVFXOnCast      = true,
+    -- Moon Animator & Skill Caster State
     SovereignHakiAura   = false,
     AutoSkillComboZ     = false,
     AutoSkillComboX     = false,
@@ -358,12 +354,7 @@ local function formatNumber(n)
     return s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
 end
 
--- Inline 3D Skill VFX Burst + Fallback to SkillAnimator/VFXEngine.lua
 local function triggerSkillVFX(presetName)
-    if SkillVFXModule and SkillVFXModule.PlayPreset then
-        pcall(function() SkillVFXModule.PlayPreset(presetName) end)
-        return
-    end
     local root = getRoot()
     if not root then return end
     local palette = {
@@ -393,52 +384,9 @@ local function triggerSkillVFX(presetName)
     Debris:AddItem(orb, 0.6)
 end
 
--- Animation Playback Controller
-local currentAnimTrack = nil
-
 local function stopSkillAnimation()
-    if SkillAnimatorModule and SkillAnimatorModule.StopCurrent then
-        pcall(function() SkillAnimatorModule:StopCurrent() end)
-    end
-    if currentAnimTrack then
-        pcall(function()
-            currentAnimTrack:Stop(0.15)
-            currentAnimTrack:Destroy()
-        end)
-        currentAnimTrack = nil
-    end
-end
-
-local function playSkillAnimationPreset(presetName)
-    stopSkillAnimation()
-    local chosen = SKILL_ANIMATION_PRESETS[1]
-    for _, p in ipairs(SKILL_ANIMATION_PRESETS) do
-        if p.Name == presetName then
-            chosen = p
-            break
-        end
-    end
-
-    local hum = getHumanoid()
-    if not hum then return end
-    local animator = hum:FindFirstChildOfClass("Animator") or Instance.new("Animator", hum)
-
-    local animObj = Instance.new("Animation")
-    animObj.AnimationId = chosen.AnimId
-
-    local ok, track = pcall(function()
-        return animator:LoadAnimation(animObj)
-    end)
-
-    if ok and track then
-        track.Priority = Enum.AnimationPriority.Action4
-        track.Looped = Config.LoopSkillAnim
-        track:Play(0.12, 1.0, Config.AnimSpeedMultiplier or chosen.Speed)
-        currentAnimTrack = track
-    end
-
-    if Config.SkillVFXOnCast and chosen.VFX then
-        triggerSkillVFX(chosen.VFX)
+    if MoonAnimatorInstance and type(MoonAnimatorInstance.ResetEntireRig) == "function" then
+        pcall(function() MoonAnimatorInstance:ResetEntireRig() end)
     end
 end
 
@@ -1837,69 +1785,66 @@ TabFarm:AddToggle("Auto Farm All Sea Bosses", "Cycle through all spawned bosses 
     if not v then stopTween() end
 end, CustomIcons.Boss)
 
--- ─── TAB 2: SKILL ANIMATOR (INTEGRATED + SEPARATE STUDIO LAUNCHER) ───
-TabAnimator:AddSection("Skill Animator Studio (SkillAnimator/ Folder)")
+-- ─── TAB 2: MOON ANIMATOR STUDIO (NO PRE-MADE ANIMATIONS) ───
+TabAnimator:AddSection("Moon Animator 2 Studio (SkillAnimator/init.lua)")
 TabAnimator:AddButton(
-    "Open Skill Animator Studio Window",
-    "Launch dedicated Keyframe Timeline Scrubber & VFX Studio from SkillAnimator/init.lua",
-    "Launch UI",
+    "Open Moon Animator Studio",
+    "Launch multi-track Motor6D Keyframe Editor + 3D Viewport Rotate/Move Gizmos",
+    "Open Studio",
     function()
-        if SkillAnimatorModule and SkillAnimatorModule.MountUI then
-            SkillAnimatorModule:MountUI()
-            notify("Skill Animator Studio", "Opened standalone Skill Animator Studio window!", 3, CustomIcons.Animator)
-        else
-            notify("Skill Animator Studio", "Using integrated Skill Animator controls below", 3, CustomIcons.Animator)
-        end
+        local ok = launchMoonAnimatorStudio()
+        notify(
+            "Moon Animator Studio",
+            ok and "Moon Animator Keyframe Editor mounted! Select any limb track to pose." or "Failed to mount Moon Animator.",
+            3.5,
+            CustomIcons.Animator
+        )
     end,
     CustomIcons.Animator
 )
-
-local presetNames = {}
-for _, p in ipairs(SKILL_ANIMATION_PRESETS) do
-    table.insert(presetNames, p.Name)
-end
-
-TabAnimator:AddDropdown(
-    "Skill Animation Preset",
-    "Choose Blox Fruits Fighting Style / Mythical Fruit animation",
-    presetNames,
-    Config.SelectedSkillPreset,
-    function(val)
-        Config.SelectedSkillPreset = val
-    end,
-    CustomIcons.Play
-)
-TabAnimator:AddSlider(
-    "Animation Playback Speed",
-    "Speed multiplier (10% to 350%)",
-    10, 350, 135,
-    function(v)
-        Config.AnimSpeedMultiplier = v / 100
-        if currentAnimTrack then
-            pcall(function() currentAnimTrack:AdjustSpeed(Config.AnimSpeedMultiplier) end)
+TabAnimator:AddButton(
+    "Rescan Character Motor6D Rig",
+    "Refresh all body & weapon Motor6D joints in Moon Animator track list",
+    "Rescan Rig",
+    function()
+        if MoonAnimatorInstance and MoonAnimatorInstance.ScanCharacterRig then
+            MoonAnimatorInstance:ScanCharacterRig()
+            MoonAnimatorInstance:MountUI()
+            notify("Rig Rescanned", "Updated all Motor6D joints in Moon Animator!", 2.5, CustomIcons.Loop)
+        else
+            launchMoonAnimatorStudio()
         end
     end,
-    CustomIcons.Lightning
+    CustomIcons.Loop
 )
-TabAnimator:AddToggle("Loop Skill Animation", "Continuously repeat active skill animation track", Config.LoopSkillAnim, function(v)
-    Config.LoopSkillAnim = v
-    if currentAnimTrack then currentAnimTrack.Looped = v end
-end, CustomIcons.Loop)
-TabAnimator:AddToggle("3D Skill VFX on Cast", "Spawn procedural neon shockwaves & lightning on animation cast", Config.SkillVFXOnCast, function(v)
-    Config.SkillVFXOnCast = v
-end, CustomIcons.Wand)
-TabAnimator:AddButton("Cast Selected Skill Animation", "Play selected skill animation track + 3D VFX burst", "Cast Now", function()
-    playSkillAnimationPreset(Config.SelectedSkillPreset)
-    notify("Skill Animator", "Casting: " .. Config.SelectedSkillPreset, 2.5, CustomIcons.Play)
-end, CustomIcons.Play)
-TabAnimator:AddButton("Stop Active Animation", "Stop and clean up current animation track", "Stop", function()
-    stopSkillAnimation()
-end, CustomIcons.Stop)
+TabAnimator:AddButton(
+    "Export Keyframes to Clipboard",
+    "Copy your custom keyframe animation as a standalone Luau script",
+    "Export Lua",
+    function()
+        if MoonAnimatorInstance and MoonAnimatorInstance.ExportToLuaScript then
+            MoonAnimatorInstance:ExportToLuaScript()
+            notify("Exported to Clipboard", "Copied custom Luau keyframe animation table!", 3, CustomIcons.HubCrest)
+        else
+            notify("Moon Animator", "Open Moon Animator Studio first to record keyframes!", 2.5, CustomIcons.Animator)
+        end
+    end,
+    CustomIcons.HubCrest
+)
+TabAnimator:AddButton(
+    "Reset Character Rig Pose",
+    "Restore all Motor6D joints to default C0 and re-enable Roblox Animate",
+    "Reset Rig",
+    function()
+        stopSkillAnimation()
+        notify("Rig Reset", "Restored default character Motor6D poses", 2.5, CustomIcons.Stop)
+    end,
+    CustomIcons.Stop
+)
 
 TabAnimator:AddSection("3D VFX & Sovereign Haki Aura")
 TabAnimator:AddToggle("Sovereign Haki Aura", "Persistent rising neon aura particles around your character", Config.SovereignHakiAura, function(v)
     Config.SovereignHakiAura = v
-    if SkillVFXModule then SkillVFXModule.PersistentAuraEnabled = v end
 end, CustomIcons.Wand)
 TabAnimator:AddButton("Trigger Conqueror's Haki Dome", "Crimson & dark lightning expansion shockwave", "Burst VFX", function()
     triggerSkillVFX("ConquerorHakiBurst")

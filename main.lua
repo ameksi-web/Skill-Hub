@@ -3,7 +3,6 @@
     Features:
       • Custom Vector Icon System (Lucide/Feather rbxassetid + Glowing Vector Badges)
       • Hybrid Fluent UI Library + Native Glassmorphic ScreenGui
-      • Modular Skill Animator Integration (SkillAnimator/ folder + Studio Window)
       • Up-to-Date Blox Fruits Data (Kitsune, Dragon West/East, T-Rex, Mammoth, Gas, Yeti, Blade, Rocket, Ghost, Pain, Tiki Outpost)
     Repository: https://github.com/ameksi-web/Skill-Hub
 ]]
@@ -48,38 +47,6 @@ local CustomIcons = {
     Search      = "rbxassetid://10734943674", -- Filter Search
     RadialGlow  = "rbxassetid://5028857084",  -- Soft Neon Backlight
 }
-
--- ═══════════════════════════════════════════════════════════════════════════
---  LOAD MODULAR MOON ANIMATOR STUDIO (SkillAnimator/init.lua)
--- ═══════════════════════════════════════════════════════════════════════════
-
-local MOON_ANIMATOR_RAW_URL = "https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/SkillAnimator/init.lua"
-local MoonAnimatorInstance = nil
-
-local function launchMoonAnimatorStudio()
-    if MoonAnimatorInstance and type(MoonAnimatorInstance.MountUI) == "function" then
-        MoonAnimatorInstance:MountUI()
-        return true
-    end
-    if type(loadfile) == "function" then
-        local ok, mod = pcall(function()
-            local chunk = loadfile("SkillAnimator/init.lua")
-            return chunk and chunk()
-        end)
-        if ok and mod then
-            MoonAnimatorInstance = mod
-            return true
-        end
-    end
-    local okHttp, modHttp = pcall(function()
-        return loadstring(game:HttpGet(MOON_ANIMATOR_RAW_URL))()
-    end)
-    if okHttp and modHttp then
-        MoonAnimatorInstance = modHttp
-        return true
-    end
-    return false
-end
 
 -- ═══════════════════════════════════════════════════════════════════════════
 --  UP-TO-DATE BLOX FRUITS DATA (UPDATE 24+ / DRAGON REWORK / TIKI OUTPOST)
@@ -352,42 +319,6 @@ end
 local function formatNumber(n)
     local s = tostring(math.floor(n or 0))
     return s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
-end
-
-local function triggerSkillVFX(presetName)
-    local root = getRoot()
-    if not root then return end
-    local palette = {
-        ConquerorHakiBurst = Color3.fromRGB(220, 38, 38),
-        KitsuneAzureFlame  = Color3.fromRGB(34, 211, 238),
-        CrimsonSlash       = Color3.fromRGB(239, 68, 68),
-        GoldenShockwave    = Color3.fromRGB(250, 204, 21),
-        CyanLightning      = Color3.fromRGB(56, 189, 248),
-        DragonEmber        = Color3.fromRGB(249, 115, 22),
-    }
-    local color = palette[presetName] or Color3.fromRGB(56, 189, 248)
-    local orb = Instance.new("Part")
-    orb.Name = "SkillHub_VFXOrb"
-    orb.Anchored = true
-    orb.CanCollide = false
-    orb.Shape = Enum.PartType.Ball
-    orb.Material = Enum.Material.Neon
-    orb.Color = color
-    orb.Size = Vector3.new(2, 2, 2)
-    orb.CFrame = root.CFrame
-    orb.Transparency = 0.15
-    orb.Parent = Workspace
-    TweenService:Create(orb, TweenInfo.new(0.55, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-        Size = Vector3.new(36, 36, 36),
-        Transparency = 1,
-    }):Play()
-    Debris:AddItem(orb, 0.6)
-end
-
-local function stopSkillAnimation()
-    if MoonAnimatorInstance and type(MoonAnimatorInstance.ResetEntireRig) == "function" then
-        pcall(function() MoonAnimatorInstance:ResetEntireRig() end)
-    end
 end
 
 -- Smooth Tweening
@@ -1737,11 +1668,10 @@ local function createTab(iconAsset, name, accentOverride)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  TABS & SECTIONS (WITH CUSTOM VECTOR ICONS & SKILL ANIMATOR TAB)
+--  TABS & SECTIONS (WITH CUSTOM VECTOR ICONS)
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local TabFarm     = createTab(CustomIcons.AutoFarm, "Auto Farm",      Color3.fromRGB(56, 189, 248))
-local TabAnimator = createTab(CustomIcons.Animator, "Skill Animator", Color3.fromRGB(168, 85, 247))
 local TabStats    = createTab(CustomIcons.Stats,    "Stats & Combat", Color3.fromRGB(99, 102, 241))
 local TabFruits   = createTab(CustomIcons.Fruits,   "Fruits & Raids", Color3.fromRGB(250, 204, 21))
 local TabTeleport = createTab(CustomIcons.Teleport, "Teleport & Seas",Color3.fromRGB(34, 197, 94))
@@ -1785,81 +1715,7 @@ TabFarm:AddToggle("Auto Farm All Sea Bosses", "Cycle through all spawned bosses 
     if not v then stopTween() end
 end, CustomIcons.Boss)
 
--- ─── TAB 2: MOON ANIMATOR STUDIO (NO PRE-MADE ANIMATIONS) ───
-TabAnimator:AddSection("Moon Animator 2 Studio (SkillAnimator/init.lua)")
-TabAnimator:AddButton(
-    "Open Moon Animator Studio",
-    "Launch multi-track Motor6D Keyframe Editor + 3D Viewport Rotate/Move Gizmos",
-    "Open Studio",
-    function()
-        local ok = launchMoonAnimatorStudio()
-        notify(
-            "Moon Animator Studio",
-            ok and "Moon Animator Keyframe Editor mounted! Select any limb track to pose." or "Failed to mount Moon Animator.",
-            3.5,
-            CustomIcons.Animator
-        )
-    end,
-    CustomIcons.Animator
-)
-TabAnimator:AddButton(
-    "Rescan Character Motor6D Rig",
-    "Refresh all body & weapon Motor6D joints in Moon Animator track list",
-    "Rescan Rig",
-    function()
-        if MoonAnimatorInstance and MoonAnimatorInstance.ScanCharacterRig then
-            MoonAnimatorInstance:ScanCharacterRig()
-            MoonAnimatorInstance:MountUI()
-            notify("Rig Rescanned", "Updated all Motor6D joints in Moon Animator!", 2.5, CustomIcons.Loop)
-        else
-            launchMoonAnimatorStudio()
-        end
-    end,
-    CustomIcons.Loop
-)
-TabAnimator:AddButton(
-    "Export Keyframes to Clipboard",
-    "Copy your custom keyframe animation as a standalone Luau script",
-    "Export Lua",
-    function()
-        if MoonAnimatorInstance and MoonAnimatorInstance.ExportToLuaScript then
-            MoonAnimatorInstance:ExportToLuaScript()
-            notify("Exported to Clipboard", "Copied custom Luau keyframe animation table!", 3, CustomIcons.HubCrest)
-        else
-            notify("Moon Animator", "Open Moon Animator Studio first to record keyframes!", 2.5, CustomIcons.Animator)
-        end
-    end,
-    CustomIcons.HubCrest
-)
-TabAnimator:AddButton(
-    "Reset Character Rig Pose",
-    "Restore all Motor6D joints to default C0 and re-enable Roblox Animate",
-    "Reset Rig",
-    function()
-        stopSkillAnimation()
-        notify("Rig Reset", "Restored default character Motor6D poses", 2.5, CustomIcons.Stop)
-    end,
-    CustomIcons.Stop
-)
-
-TabAnimator:AddSection("3D VFX & Sovereign Haki Aura")
-TabAnimator:AddToggle("Sovereign Haki Aura", "Persistent rising neon aura particles around your character", Config.SovereignHakiAura, function(v)
-    Config.SovereignHakiAura = v
-end, CustomIcons.Wand)
-TabAnimator:AddButton("Trigger Conqueror's Haki Dome", "Crimson & dark lightning expansion shockwave", "Burst VFX", function()
-    triggerSkillVFX("ConquerorHakiBurst")
-end, CustomIcons.Wand)
-TabAnimator:AddButton("Trigger Kitsune Azure Flame", "Cyan fox-fire vortex & radial slash arcs", "Burst VFX", function()
-    triggerSkillVFX("KitsuneAzureFlame")
-end, CustomIcons.Fruits)
-
-TabAnimator:AddSection("Auto Skill Combo Caster (Z / X / C / V)")
-TabAnimator:AddToggle("Auto Cast Skill [Z]", "Automatically trigger Z mastery skill in combat", Config.AutoSkillComboZ, function(v) Config.AutoSkillComboZ = v end, CustomIcons.Layers)
-TabAnimator:AddToggle("Auto Cast Skill [X]", "Automatically trigger X mastery skill in combat", Config.AutoSkillComboX, function(v) Config.AutoSkillComboX = v end, CustomIcons.Layers)
-TabAnimator:AddToggle("Auto Cast Skill [C]", "Automatically trigger C mastery skill in combat", Config.AutoSkillComboC, function(v) Config.AutoSkillComboC = v end, CustomIcons.Layers)
-TabAnimator:AddToggle("Auto Cast Skill [V]", "Automatically trigger V awakening/transformation skill", Config.AutoSkillComboV, function(v) Config.AutoSkillComboV = v end, CustomIcons.Layers)
-
--- ─── TAB 3: STATS & COMBAT ───
+-- ─── TAB 2: STATS & COMBAT ───
 TabStats:AddSection("Auto Stats Allocation")
 TabStats:AddSlider("Points Per Tick", "Stat points allocated per batch", 1, 100, Config.StatPointsBatch, function(v) Config.StatPointsBatch = v end, CustomIcons.Stats)
 TabStats:AddToggle("Auto Melee", "Automatically invest stat points into Melee", Config.AutoStatMelee, function(v) Config.AutoStatMelee = v end, CustomIcons.Stats)
@@ -1867,6 +1723,12 @@ TabStats:AddToggle("Auto Defense", "Automatically invest stat points into Defens
 TabStats:AddToggle("Auto Sword", "Automatically invest stat points into Sword", Config.AutoStatSword, function(v) Config.AutoStatSword = v end, CustomIcons.AutoFarm)
 TabStats:AddToggle("Auto Gun", "Automatically invest stat points into Gun", Config.AutoStatGun, function(v) Config.AutoStatGun = v end, CustomIcons.Lightning)
 TabStats:AddToggle("Auto Blox Fruit", "Automatically invest stat points into Blox Fruit", Config.AutoStatFruit, function(v) Config.AutoStatFruit = v end, CustomIcons.Fruits)
+
+TabStats:AddSection("Auto Mastery Skill Caster (Z / X / C / V)")
+TabStats:AddToggle("Auto Cast Skill [Z]", "Automatically trigger Z mastery skill in combat", Config.AutoSkillComboZ, function(v) Config.AutoSkillComboZ = v end, CustomIcons.Layers)
+TabStats:AddToggle("Auto Cast Skill [X]", "Automatically trigger X mastery skill in combat", Config.AutoSkillComboX, function(v) Config.AutoSkillComboX = v end, CustomIcons.Layers)
+TabStats:AddToggle("Auto Cast Skill [C]", "Automatically trigger C mastery skill in combat", Config.AutoSkillComboC, function(v) Config.AutoSkillComboC = v end, CustomIcons.Layers)
+TabStats:AddToggle("Auto Cast Skill [V]", "Automatically trigger V awakening/transformation skill", Config.AutoSkillComboV, function(v) Config.AutoSkillComboV = v end, CustomIcons.Layers)
 
 TabStats:AddSection("Haki, Race & Fighting Styles")
 TabStats:AddToggle("Auto Instinct (Ken Haki)", "Keep Observation Haki active automatically", Config.AutoKen, function(v) Config.AutoKen = v end, CustomIcons.ESP)
@@ -1991,7 +1853,6 @@ MinBtn.MouseButton1Click:Connect(toggleWindow)
 FloatBtn.MouseButton1Click:Connect(toggleWindow)
 CloseBtn.MouseButton1Click:Connect(function()
     stopTween()
-    stopSkillAnimation()
     clearESP()
     ESPFolder:Destroy()
     ScreenGui:Destroy()
@@ -2004,4 +1865,4 @@ UserInputService.InputBegan:Connect(function(input, gpe)
     end
 end)
 
-notify("Skill Hub v2.5 Ultra", string.format("Custom Vector Icons + Skill Animator Ready (Sea %d)", CURRENT_SEA), 4, CustomIcons.HubCrest)
+notify("Skill Hub v2.5 Ultra", string.format("Blox Fruits Update 24+ Ready (Sea %d) • RightCtrl to toggle", CURRENT_SEA), 4, CustomIcons.HubCrest)

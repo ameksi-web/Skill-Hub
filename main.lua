@@ -1,5 +1,5 @@
 --[[
-    Skill Hub v3.2 Ultra — Blox Fruits Edition (Update 24+)
+    Skill Hub v3.3 Ultra — Blox Fruits Edition (Update 24+)
     Interface: "Porcelain" design system — soft-dark graphite surfaces, hairline
                borders, 20px radii, muted editorial accents. No neon, no glow.
     Features:
@@ -23,7 +23,6 @@ local RunService          = game:GetService("RunService")
 local VirtualUser         = game:GetService("VirtualUser")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local TeleportService     = game:GetService("TeleportService")
-local CoreGui             = game:GetService("CoreGui")
 local Lighting            = game:GetService("Lighting")
 local StatsService        = game:GetService("Stats")
 local Debris              = game:GetService("Debris")
@@ -606,6 +605,8 @@ local Config = {
     -- Hitbox Expander v2
     HitboxMobs          = true,
     SafeHookMode        = true,
+    HookEngine          = false,   -- metamethod hooks are opt-in (cannot be removed until rejoin)
+    HookHitCount        = 0,
     FreezeMobAnimations = false,
     HitboxMobsSize      = 55,
     HitboxMobsRange     = 420,
@@ -747,11 +748,14 @@ local function isSuspiciousRemote(remoteObj)
 end
 
 local function initBloxFruitsAntiCheatBypass()
-    -- 1. Install the unified, error-proof __namecall hook (it also covers :Kick()).
-    --    The old build called hookfunction(LocalPlayer.Kick, plainLuaClosure) and
-    --    installed a raw second __namecall hook; chaining un-wrapped Lua closures
-    --    is what broke Roblox's own CoreGui scripts ("attempt to call a nil value").
-    pcall(function() HookRegistry.installNamecall() end)
+    -- 1. Metamethod hooks are OPT-IN (Config.HookEngine, default OFF).
+    --    Hook methods (__namecall) cannot be removed from a live client, so the hub
+    --    installs one only when you ask for it — everything else in this file is
+    --    plain, removable Lua (loops, watchers, remotes) that cannot touch Roblox's
+    --    own CoreGui scripts.
+    if Config.HookEngine then
+        pcall(function() HookRegistry.installNamecall() end)
+    end
 
     -- 2. Neutralize client-side velocity / teleport watchdog scripts. Only
     --    PlayerScripts is touched — CoreGui and RobloxGui are never modified.
@@ -772,12 +776,34 @@ end
 
 initBloxFruitsAntiCheatBypass()
 
+-- Applied once per character spawn: disables Ragdoll/FallingDown states so stuns
+-- and falls can never flip the Humanoid into a locked state mid-fight.
+local function applyCharacterTweaks(char)
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    pcall(function()
+        hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+        hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+    end)
+    if char:FindFirstChild("Stun") then pcall(function() char.Stun.Value = 0 end) end
+    if char:FindFirstChild("Busy") then pcall(function() char.Busy.Value = false end) end
+end
+
+if LocalPlayer.Character then applyCharacterTweaks(LocalPlayer.Character) end
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(0.35)
+    applyCharacterTweaks(char)
+end)
+
 -- Continuous SimulationRadius, Anti-Stun, Anti-Ragdoll & Velocity Stabilizer
+local lastSimRadiusWrite = 0
 RunService.Heartbeat:Connect(function()
     if not Config.BypassAntiCheat and not Config.AntiStun then return end
     pcall(function()
-        -- Maximize SimulationRadius so BringMobs owns enemy physics
-        if sethiddenproperty then
+        -- Widen SimulationRadius so BringMobs owns enemy physics. Written at most
+        -- once every 2 seconds (it persists) instead of 60 times per second.
+        if sethiddenproperty and (tick() - lastSimRadiusWrite) > 2 then
+            lastSimRadiusWrite = tick()
             pcall(function()
                 sethiddenproperty(LocalPlayer, "SimulationRadius", 9e9)
                 sethiddenproperty(LocalPlayer, "MaxSimulationRadius", 9e9)
@@ -799,15 +825,8 @@ RunService.Heartbeat:Connect(function()
             end
         end
 
-        -- Prevent Ragdoll / FallingDown states & rubberband velocity spikes during farm
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum then
-            hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-            hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
-            if Config.NoFallDamage then
-                pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
-            end
-        end
+        -- (Humanoid state tweaks are applied once per character spawn — see
+        --  applyCharacterTweaks below — instead of every Heartbeat.)
 
         if Config.AutoFarmLevel or Config.AutoFarmNearest or Config.AutoFarmBoss or Config.AutoFarmAllBosses then
             local hrp = char:FindFirstChild("HumanoidRootPart")
@@ -1927,6 +1946,7 @@ local function namecallInterceptor(self, ...)
 
     local method = getnamecallmethod()
     if type(method) ~= "string" or not HANDLED_METHODS[method] then return nil end
+    HookRegistry.hits = (HookRegistry.hits or 0) + 1
 
     -- 1. never let the game kick us
     if method == "Kick" or method == "kick" then
@@ -1996,6 +2016,8 @@ end
 
 HookRegistry.installNamecall = function()
     if HookRegistry.namecallActive then return end
+    if not Config.HookEngine then return end          -- opt-in only
+    if not Config.SafeHookMode then return end        -- pass-through profile
     if not (hookmetamethod and getnamecallmethod) then return end
 
     local replacement = unifiedNamecall
@@ -2905,8 +2927,8 @@ end)
 
 local ESPFolder = Instance.new("Folder")
 ESPFolder.Name = "SkillHub_BF_ESP"
-pcall(function() ESPFolder.Parent = CoreGui end)
-if not ESPFolder.Parent then ESPFolder.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+-- PlayerGui (not CoreGui): the hub never touches Roblox's own GUI containers
+pcall(function() ESPFolder.Parent = LocalPlayer:WaitForChild("PlayerGui") end)
 
 local function clearESP()
     ESPFolder:ClearAllChildren()
@@ -3460,7 +3482,7 @@ hairline(VersionChip, Theme.StrokeSoft, 1, 0.4)
 new("TextLabel", {
     BackgroundTransparency = 1,
     Font = UIFontMono,
-    Text = "v3.2",
+    Text = "v3.3",
     TextColor3 = Theme.TextMuted,
     TextSize = 9,
     Size = UDim2.new(1, 0, 1, 0),
@@ -4060,7 +4082,7 @@ local WatermarkText = new("TextLabel", {
     Font = UIFontMono,
     Position = UDim2.new(0, 32, 0, 0),
     Size = UDim2.new(1, -40, 1, 0),
-    Text = "SKILL HUB 3.2 · SEA 1",
+    Text = "SKILL HUB 3.3 · SEA 1",
     TextColor3 = Theme.TextSecondary,
     TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -4105,7 +4127,7 @@ task.spawn(function()
             local status = getServerStatus()
 
             WatermarkBar.Visible = Config.ShowWatermarkHUD
-            WatermarkText.Text = string.format("SKILL HUB 3.2 · SEA %d [%s] · LV %d · %d FPS · %d MS",
+            WatermarkText.Text = string.format("SKILL HUB 3.3 · SEA %d [%s] · LV %d · %d FPS · %d MS",
                 CURRENT_SEA, string.upper(tostring(SEA_DETECT_SOURCE)), getPlayerLevel(), fps, status.ping)
 
             StatusBar.Visible = Config.ServerStatusHUD and Config.ShowWatermarkHUD
@@ -5905,7 +5927,17 @@ TabMisc:AddLivePanel("Server Report", "live server snapshot", 1.5, function()
 end, 104, CustomIcons.Server)
 
 TabMisc:AddSection("Anti-Cheat Engine · hook health")
-TabMisc:AddToggle("Safe Hook Mode", "Single newcclosure'd __namecall hook that only inspects Kick/FireServer/InvokeServer/raycast calls and can never break another script. OFF = pure pass-through.", Config.SafeHookMode, function(v)
+TabMisc:AddToggle("Metamethod Hook Engine (opt-in)", "Installs ONE newcclosure'd __namecall hook (Kick guard + security remote block + aim raycast redirect). OFF by default: hooks cannot be removed until you rejoin, and no-hook mode keeps the console perfectly clean.", Config.HookEngine, function(v)
+    Config.HookEngine = v
+    if v then
+        HookRegistry.installNamecall()
+        notify("Hook Engine", HookRegistry.namecallActive and "Hook installed — rejoin to fully remove it" or "Executor does not support hookmetamethod", 4, CustomIcons.Shield)
+    else
+        Config.SafeHookMode = false
+        notify("Hook Engine", "Hook is now a pass-through — rejoin to clear it completely", 4, CustomIcons.Stop)
+    end
+end, CustomIcons.Shield)
+TabMisc:AddToggle("Safe Hook Mode", "When the hook engine is on: pass-through on any internal error, inspecting only Kick / FireServer / InvokeServer / raycast calls.", Config.SafeHookMode, function(v)
     Config.SafeHookMode = v
     notify("Hook Engine", v and "Safe hook mode ON" or "Hook is now a pass-through (no interception)", 3, CustomIcons.Shield)
 end, CustomIcons.Shield)
@@ -5915,11 +5947,12 @@ end, CustomIcons.Stop)
 TabMisc:AddToggle("Freeze Mob Animations", "Stops mob animation tracks instead of destroying their Animator (avoids animation load spam)", Config.FreezeMobAnimations, function(v) Config.FreezeMobAnimations = v end, CustomIcons.Layers)
 TabMisc:AddLivePanel("Hook & Anti-Cheat Status", "live diagnostics for the __namecall hook", 1.5, function()
     return string.format(
-        "Namecall hook : %s\nSafe hook mode : %s\nKick guard     : %s\nRemote block   : %s\nSimRadius      : %s",
-        HookRegistry.namecallActive and "ACTIVE" or "not installed (executor lacks hookmetamethod)",
-        Config.SafeHookMode and "ON" or "OFF (no interception)",
+        "Hook engine    : %s\nNamecall hook  : %s\nIntercepted    : %d calls\nKick guard     : %s\nSecurity block : %s\nSimRadius      : %s\nCoreGui touched: never",
+        Config.HookEngine and "enabled by user" or "OFF (recommended · console-neutral)",
+        HookRegistry.namecallActive and "ACTIVE" or "not installed",
+        HookRegistry.hits or 0,
         HookRegistry.namecallActive and "enabled" or "disabled",
-        Config.BypassAntiCheat and ("blocking " .. #BLOCKED_REMOTE_PATTERNS .. " security patterns") or "off",
+        Config.BypassAntiCheat and ("blocking " .. #BLOCKED_REMOTE_PATTERNS .. " patterns") or "off",
         "9e9 (finite — no inf/NaN)"
     )
 end, 116, CustomIcons.Shield)
@@ -6033,20 +6066,20 @@ local function UnloadSkillHub()
 end
 
 SharedEnv.SkillHubInstance = {
-    version = "3.2",
-    banner = "Skill Hub v3.2 Ultra",
+    version = "3.3",
+    banner = "Skill Hub v3.3 Ultra",
     config = Config,
     hookActive = function() return HookRegistry.namecallActive end,
     unload = UnloadSkillHub,
 }
 
-print(string.format("[Skill Hub v3.2] loaded · sea=%d (%s) · namecall hook=%s · safeHook=%s",
+print(string.format("[Skill Hub v3.3] loaded · sea=%d (%s) · hookEngine=%s · hook=%s",
     CURRENT_SEA, tostring(SEA_DETECT_SOURCE),
-    HookRegistry.namecallActive and "ACTIVE" or "off",
-    tostring(Config.SafeHookMode)))
+    tostring(Config.HookEngine),
+    HookRegistry.namecallActive and "ACTIVE" or "off"))
 
 notify(
-    "Skill Hub v3.2 Ultra",
+    "Skill Hub v3.3 Ultra",
     string.format("Blox Fruits Update 24+ • Sea %d (%s) • PvP & Players tab added • RightCtrl = toggle, RightShift = AimLock, RightAlt = Fly", CURRENT_SEA, tostring(SEA_DETECT_SOURCE)),
     5,
     CustomIcons.HubCrest

@@ -1,5 +1,5 @@
 --[[
-    Skill Hub v3.8 Ultra — Blox Fruits Edition (Update 30)
+    Skill Hub v3.8.1 Ultra — Blox Fruits Edition (Update 30)
     Architecture: the engine layer and the interface each run inside their own
                   factory function (see "ENGINES FACTORY" / "INTERFACE FACTORY").
                   Lua allows only 200 *active* local variables per function and
@@ -1660,7 +1660,7 @@ local function getPvPStatus(plr)
     if not char or not hum then return false, "LOADING / DEAD", grey end
     if hum.Health <= 0 then return false, "DEAD", grey end
 
-    if char:FindFirstChild("ForceField") or char:FindFirstChild("ForceField") then
+    if char:FindFirstChild("ForceField") then
         return false, "SAFE · FORCEFIELD", blue
     end
 
@@ -1668,8 +1668,12 @@ local function getPvPStatus(plr)
     local flag, flagName = findPvpFlag(char)
     if not flag then flag, flagName = findPvpFlag(plr:FindFirstChild("Data")) end
     if not flag then flag, flagName = findPvpFlag(plr) end
-    if not flag and plr.PlayerGui then
-        local main = plr.PlayerGui:FindFirstChild("Main")
+    if not flag then
+        -- PlayerGui is a CHILD of a Player, never a property: `plr.PlayerGui`
+        -- throws "PlayerGui is not a valid member of Player". That single line
+        -- killed the auto player list and, with it, the rest of the UI build.
+        local playerGui = plr:FindFirstChild("PlayerGui")
+        local main = playerGui and playerGui:FindFirstChild("Main")
         if main then flag, flagName = findPvpFlag(main) end
     end
     if flag then
@@ -4129,6 +4133,38 @@ local function iconTile(parent, iconAssetId, accentColor, sizePx, posUDim, zIdx)
         Position = UDim2.new(0.5, -inner / 2, 0.5, -inner / 2),
         ZIndex = (zIdx or 4) + 1,
     }, holder)
+
+    -- Asset ids can be moderated, moved or simply missing. If the image never
+    -- loads, draw a vector badge instead of leaving the tile empty.
+    task.delay(3, function()
+        if not holder.Parent or not img.Parent then return end
+        local loaded = true
+        pcall(function() loaded = img.IsLoaded end)
+        if loaded then return end
+        print(string.format("[Skill Hub] icon %s did not load — drawing the vector fallback", tostring(iconAssetId)))
+        img.Visible = false
+        local dot = new("Frame", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundColor3 = accentColor,
+            BackgroundTransparency = 0.12,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0.5, 0, 0.5, 0),
+            Size = UDim2.new(0, math.max(inner - 5, 6), 0, math.max(inner - 5, 6)),
+            ZIndex = (zIdx or 4) + 1,
+        }, holder)
+        corner(dot, math.max(math.floor(inner / 2), 3))
+        local core = new("Frame", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundColor3 = Theme.BgApp,
+            BackgroundTransparency = 0.2,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0.5, 0, 0.5, 0),
+            Size = UDim2.new(0, math.max(inner - 14, 3), 0, math.max(inner - 14, 3)),
+            ZIndex = (zIdx or 4) + 2,
+        }, dot)
+        corner(core, math.max(math.floor(inner / 4), 2))
+    end)
+
     return holder, img
 end
 
@@ -4257,7 +4293,7 @@ hairline(VersionChip, Theme.StrokeSoft, 1, 0.4)
 new("TextLabel", {
     BackgroundTransparency = 1,
     Font = UIFontMono,
-    Text = "v3.8",
+    Text = "v3.8.1",
     TextColor3 = Theme.TextMuted,
     TextSize = 9,
     Size = UDim2.new(1, 0, 1, 0),
@@ -4857,7 +4893,7 @@ local WatermarkText = new("TextLabel", {
     Font = UIFontMono,
     Position = UDim2.new(0, 32, 0, 0),
     Size = UDim2.new(1, -40, 1, 0),
-    Text = "SKILL HUB 3.8 · SEA 1",
+    Text = "SKILL HUB 3.8.1 · SEA 1",
     TextColor3 = Theme.TextSecondary,
     TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -4902,7 +4938,7 @@ task.spawn(function()
             local status = getServerStatus()
 
             WatermarkBar.Visible = Config.ShowWatermarkHUD
-            WatermarkText.Text = string.format("SKILL HUB 3.8 · SEA %d [%s] · LV %d · %d FPS · %d MS",
+            WatermarkText.Text = string.format("SKILL HUB 3.8.1 · SEA %d [%s] · LV %d · %d FPS · %d MS",
                 CURRENT_SEA, string.upper(tostring(SEA_DETECT_SOURCE)), getPlayerLevel(), fps, status.ping)
 
             StatusBar.Visible = Config.ServerStatusHUD and Config.ShowWatermarkHUD
@@ -5101,8 +5137,12 @@ local function createTab(iconAsset, name, accentOverride)
         applySearch()
     end
 
-    btn.MouseButton1Click:Connect(selectTab)
-    if #tabs == 1 then selectTab() end
+    -- A tab click must never fail silently: the tab name goes into the log.
+    tabObj.Select = selectTab
+    btn.MouseButton1Click:Connect(function()
+        SkillHubStep("tab click -> " .. tostring(name), selectTab)
+    end)
+    if #tabs == 1 then SkillHubStep("tab click -> " .. tostring(name) .. " (boot)", selectTab) end
 
     -- ── SECTION HEADER ──────────────────────────────────────────────────────
     function tabObj:AddSection(title)
@@ -6226,7 +6266,7 @@ local function createTab(iconAsset, name, accentOverride)
             countLbl.Text = string.format("%d online · %d listed", #Players:GetPlayers(), presentCount)
         end
 
-        rebuild()
+        SkillHubStep("playerList:initial rebuild", rebuild)
         task.spawn(function()
             while true do
                 task.wait(1)
@@ -6237,6 +6277,27 @@ local function createTab(iconAsset, name, accentOverride)
 
         table.insert(allSearchables, { frame = card, label = title .. " " .. (desc or "") })
         return { card = card, refresh = rebuild }
+    end
+
+    -- ── BUILD SAFETY NET ────────────────────────────────────────────────────
+    -- Tabs are filled in by calling these methods one after another from the main
+    -- chunk. Before this guard, a single failing widget threw and every widget
+    -- after it in the same build pass was never created — which is exactly how
+    -- one bad line left whole tabs empty. Now a failure is logged with the
+    -- method name and the next widget is still built.
+    for _, methodName in ipairs({ "AddSection", "AddToggle", "AddButton", "AddSlider",
+        "AddDropdown", "AddSegmented", "AddLabel", "AddLivePanel", "AddInput", "AddPlayerList" }) do
+        local original = tabObj[methodName]
+        if type(original) == "function" then
+            tabObj[methodName] = function(self, ...)
+                local result = table.pack(pcall(original, self, ...))
+                if not result[1] then
+                    SkillHubStep("ui:" .. methodName, function() error(tostring(result[2]), 0) end)
+                    return nil
+                end
+                return table.unpack(result, 2, result.n)
+            end
+        end
     end
 
     return tabObj
@@ -6306,6 +6367,18 @@ local UI = UIFactory({
 local CloseBtn, FloatBtn, MainWindow, MinBtn, ScreenGui, StatusBar = UI.CloseBtn, UI.FloatBtn, UI.MainWindow, UI.MinBtn, UI.ScreenGui, UI.StatusBar
 local TabESP, TabFarm, TabFruits, TabMisc, TabPvP, TabStats = UI.TabESP, UI.TabFarm, UI.TabFruits, UI.TabMisc, UI.TabPvP, UI.TabStats
 local TabTeleport, WatermarkBar, _, notify = UI.TabTeleport, UI.WatermarkBar, UI._, UI.notify
+
+-- Tab registry for the census / self-test below (assigned at the end of the build).
+local TabRegistry = {
+    { name = "Auto Farm",       tab = TabFarm },
+    { name = "PvP & Players",   tab = TabPvP },
+    { name = "Stats & Combat",  tab = TabStats },
+    { name = "Fruits & Raids",  tab = TabFruits },
+    { name = "Teleport & Seas", tab = TabTeleport },
+    { name = "ESP & Visuals",   tab = TabESP },
+    { name = "Misc & Settings", tab = TabMisc },
+}
+local tabCensus, tabSelfTest
 TabFarm:AddSection("Weapon & Triple-Layer Fast Attack")
 TabFarm:AddDropdown("Weapon Category", "Select weapon type to auto-equip during farming", {"Melee", "Sword", "Blox Fruit", "Gun"}, Config.SelectedWeaponType, function(val)
     Config.SelectedWeaponType = val
@@ -6799,6 +6872,14 @@ end, CustomIcons.HubCrest)
 TabMisc:AddToggle("Debug Action Trace", "When the engine reports a CoreGui/Locales error, print the last actions this hub performed just before it — so we can pin the trigger exactly", Config.DebugTrace, function(v) Config.DebugTrace = v end, CustomIcons.Search)
 TabMisc:AddToggle("Incremental UI Build", "Build the interface across frames instead of one big GUI-creation spike (recommended)", Config.IncrementalUIBuild, function(v) Config.IncrementalUIBuild = v end, CustomIcons.Layers)
 TabMisc:AddToggle("CoreGui Watchdog", "Read-only: snapshots CoreGui the moment the hub starts and logs every instance added there afterwards, with the traceback of whoever created it", Config.CoreGuiWatch, function(v) Config.CoreGuiWatch = v end, CustomIcons.Server)
+TabMisc:AddButton("Tab Self-Test", "Selects every tab in turn and prints how many widgets each page holds — if a tab looks empty, this names it", "Run Test", function()
+    if tabSelfTest then
+        tabSelfTest("tab self-test requested from Misc")
+        notify("Tab Self-Test", "Every tab was selected in turn — the census is in the console", 4, CustomIcons.Search)
+    else
+        notify("Tab Self-Test", "The interface is still building — try again in a second", 3, CustomIcons.Stop)
+    end
+end, CustomIcons.Search)
 TabMisc:AddButton("Console Audit (paste-ready)", "Prints the whole evidence block on demand: CoreGui snapshot, every CoreGui addition, the hub action trace, and how this script's own errors are labelled", "Audit", function()
     pcall(function() SkillHubEvidence.report("manual console audit requested from Misc") end)
     notify("Console Audit", "Report printed in the console — copy the [Skill Hub] block", 4, CustomIcons.Search)
@@ -6953,22 +7034,53 @@ local function UnloadSkillHub()
     print("[Skill Hub] unloaded")
 end
 
+-- ─── TAB SELF-TEST / CENSUS ─────────────────────────────────────────────────
+-- One console line shows how much of the interface actually exists, so "a tab
+-- does nothing" never has to be a guess again.
+tabCensus = function(label)
+    local parts = {}
+    for _, entry in ipairs(TabRegistry) do
+        local page = entry.tab and entry.tab.page
+        local count = -1
+        if page then pcall(function() count = #page:GetChildren() end) end
+        table.insert(parts, string.format("%s=%s", entry.name, count >= 0 and tostring(count) or "?"))
+    end
+    print(string.format("[Skill Hub] %s -> %s", tostring(label), table.concat(parts, " · ")))
+    return parts
+end
+
+tabSelfTest = function(reason)
+    tabCensus(reason or "tab census")
+    for _, entry in ipairs(TabRegistry) do
+        SkillHubStep("tab self-test: " .. entry.name, function()
+            if entry.tab and entry.tab.Select then entry.tab.Select() end
+            local page = entry.tab and entry.tab.page
+            if not (page and page.Visible) then error("page did not become visible", 0) end
+        end)
+    end
+end
+
+tabCensus("tab census")
+
 SharedEnv.SkillHubInstance = {
-    version = "3.8",
-    banner = "Skill Hub v3.8 Ultra",
+    version = "3.8.1",
+    banner = "Skill Hub v3.8.1 Ultra",
     config = Config,
     hookActive = function() return HookRegistry.namecallActive end,
     unload = UnloadSkillHub,
+    -- manual console diagnostics (also on the Misc tab)
+    tabCensus = function() return tabCensus("tab census (manual)") end,
+    tabSelfTest = function() return tabSelfTest("tab self-test (manual)") end,
 }
 
-print(string.format("[Skill Hub v3.8] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · syntheticInput=%s · coreGui=none",
+print(string.format("[Skill Hub v3.8.1] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · syntheticInput=%s · coreGui=none",
     ExecutorName, CURRENT_SEA, tostring(SEA_DETECT_SOURCE),
     tostring(Config.HookEngine),
     HookRegistry.namecallActive and "ACTIVE" or "off",
     Config.UseVirtualInput and "on" or "OFF"))
 
 notify(
-    "Skill Hub v3.8 Ultra",
+    "Skill Hub v3.8.1 Ultra",
     string.format("Blox Fruits Update 30 • Sea %d (%s) • PvP & Players tab added • RightCtrl = toggle, RightShift = AimLock, RightAlt = Fly", CURRENT_SEA, tostring(SEA_DETECT_SOURCE)),
     5,
     CustomIcons.HubCrest

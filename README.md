@@ -4,7 +4,7 @@ Two fully separated products live in this repository:
 
 | File | What it is | Where it runs |
 |------|------------|---------------|
-| `main.lua` | **Skill Hub v3.8 Ultra** — Blox Fruits (Update 30) executer hub | Injected by an executor (Synapse/Delta/Xeno/…) |
+| `main.lua` | **Skill Hub v3.8.1 Ultra** — Blox Fruits (Update 30) executer hub | Injected by an executor (Synapse/Delta/Xeno/…) |
 | `SkillAnimator/init.lua` | **Skill Animator Studio** — Moon Animator 2 style keyframe/rig editor | Roblox **Studio plugin** (no pre-made animations) |
 
 ---
@@ -45,6 +45,24 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/
 * **Hitbox Expander v2** — player hitbox now scales the whole model (not one blob part) and restores every part exactly; live visualiser; independent **mob hitbox expander** with configurable size/range that works with Bring Mobs off and auto-restores.
 * **Auto Player List** — live in-UI roster that refreshes every second: PvP status lamp, level, fruit, style, HP, distance, plus one-click `TGT` / `KILL` / `TP` / `CAM` buttons per player.
 * **Fly Status panel** — live velocity, altitude and who currently owns movement (manual / autopilot / tween).
+
+### v3.8.1 — the line from the console, and why some tabs looked dead
+
+```
+PlayerGui is not a valid member of Player 'Players.…'
+Script '…Loadstring.loadstring:687882', Line 1671 - function getPvPStatus
+Script '…Loadstring.loadstring:687882', Line 6184 - function rebuild
+```
+
+`PlayerGui` is a **child** of a `Player`, never a property — so `plr.PlayerGui` threw on every PvP scan. That call lives in the auto player list, which is built while the PvP tab is filled in: the exception unwound out of the build pass and **every widget after that point (entire tabs) was never created**. That is exactly why some tabs did nothing and the Fruit tab had nothing in it.
+
+* the lookup is `plr:FindFirstChild("PlayerGui")` now (same for every other Player child);
+* the first player-list rebuild runs inside `SkillHubStep` (the 1 s refresh loop was already protected);
+* **build safety net** — every widget method (`AddToggle`, `AddButton`, `AddSlider`, `AddDropdown`, `AddSegmented`, `AddLabel`, `AddLivePanel`, `AddInput`, `AddPlayerList`) is wrapped in `SkillHubStep`, so one bad widget can never wipe out the rest of the build again;
+* **tab clicks** are wrapped too: a failing click logs `[Skill Hub] step error @ tab click -> <tab>` instead of silently doing nothing;
+* **tab census + self-test** — the boot log prints `[Skill Hub] tab census -> Auto Farm=… · PvP & Players=… · Fruits & Raids=…` (widget count per page) and `Misc → Tab Self-Test` selects every tab in turn and reports failures. An empty tab can no longer hide;
+* **icon fallback** — if an icon asset id never loads, the tile draws a vector badge instead of staying blank and the console names the asset (`[Skill Hub] icon rbxassetid://… did not load`);
+* static gate added to the release checklist: a scan for Player-child access written as a property (`plr.PlayerGui`, `plr.Backpack`, …) — it flags the old build and passes this one.
 
 ### v3.8 — honest fruit reports + Update 30
 

@@ -582,11 +582,12 @@ local Config = {
     PvPTweenDistance    = 12,
     DashInterval        = 0.32,
 
-    -- Undetected Fly
+    -- Undetected Fly v2
     FlyEnabled          = false,
-    FlySpeed            = 55,
+    FlySpeed            = 60,
     FlyBypassMode       = true,
     FlyAntiVoid         = true,
+    FlyZeroWalkSpeed    = true,
 
     -- Fruit utilities
     FruitMagnet         = false,
@@ -635,6 +636,18 @@ local Hooks = {
     notify    = function() end,
     clearESP  = function() end,
     espTag    = function() end,
+}
+
+-- Movement governor: Bypass Fly registers itself here so Auto Farm, the Boss
+-- Hunter and the PvP hunter hand their travel requests to the fly autopilot
+-- instead of fighting it with a Tween (this is what made Fly + AutoFarm/AutoPvP
+-- feel broken).
+local MovementLink = {
+    isFlyActive  = function() return false end,
+    -- setFlyTarget(cframe, speedOverride?)  — speedOverride is used for long
+    -- island teleports so the fly can cross the map quickly when asked to.
+    setFlyTarget = function() end,
+    clearFlyTarget = function() end,
 }
 
 -- Detections produced by the Sea Event / Mirage scanners, rendered by the ESP loop
@@ -832,6 +845,7 @@ end
 local activeTween = nil
 
 local function stopTween()
+    pcall(function() MovementLink.clearFlyTarget() end)
     if activeTween then
         pcall(function() activeTween:Cancel() end)
         activeTween = nil
@@ -842,9 +856,17 @@ local function stopTween()
     end
 end
 
-local function tweenTo(targetCFrame)
+local function tweenTo(targetCFrame, speedOverride)
     local root = getRoot()
     if not root or not targetCFrame then return end
+
+    -- While the Bypass Fly owns the character, every travel request becomes a fly
+    -- autopilot target: the fly keeps hovering/steering smoothly instead of the
+    -- Tween and the flyer tugging the character in opposite directions.
+    if MovementLink.isFlyActive() then
+        MovementLink.setFlyTarget(targetCFrame, speedOverride)
+        return
+    end
 
     if not root:FindFirstChild("SkillHubAntiFall") then
         local bv = Instance.new("BodyVelocity")
@@ -1623,12 +1645,16 @@ end
 installAimRayHook()
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  UNDETECTED BYPASS FLY  (invisible client floor pad + smooth delta stepping)
---  · a client-only collidable pad is kept under the feet, so the Humanoid always
---    believes it is standing on the ground (no Freefall / no PlatformStand flag)
---  · movement is applied in small safe deltas (max ~2 studs per frame) instead of
---    teleport jumps, and AssemlyLinearVelocity is zeroed every frame
---  · WASD steer, Space = up, LeftShift = down
+--  UNDETECTED BYPASS FLY v2  (velocity driven · smooth · AutoFarm / PvP aware)
+--  · motion is driven by BodyVelocity + BodyGyro, so the character glides instead
+--    of being CFrame-teleported every frame (that is what caused the stutter and
+--    the server rubber-banding you felt)
+--  · an invisible client-only pad (SkillHubClientFloorPad) follows right under the
+--    feet so the Humanoid stays grounded (Running state) — no Freefall, no
+--    PlatformStand, no velocity spikes ⇒ nothing for the anti-cheat to flag
+--  · Auto Farm / Boss Hunter / PvP Hunter travel requests are handed to the fly
+--    autopilot (see MovementLink) so fly and farming work *together*
+--  · WASD steer · Space = up · LeftShift = down · releasing keys = stable hover
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local FloorPad = { part = nil }
@@ -1639,7 +1665,7 @@ local function ensureFloorPad(offsetY)
     if not FloorPad.part or not FloorPad.part.Parent then
         local pad = Instance.new("Part")
         pad.Name = "SkillHubClientFloorPad"
-        pad.Size = Vector3.new(7, 0.5, 7)
+        pad.Size = Vector3.new(6, 0.4, 6)
         pad.Anchored = true
         pad.CanCollide = true
         pad.CanQuery = false
@@ -1651,7 +1677,7 @@ local function ensureFloorPad(offsetY)
         pad.Parent = Workspace
         FloorPad.part = pad
     end
-    FloorPad.part.CFrame = CFrame.new(root.Position - Vector3.new(0, offsetY or 3.05, 0))
+    FloorPad.part.CFrame = CFrame.new(root.Position - Vector3.new(0, offsetY or 3.0, 0))
     return FloorPad.part
 end
 
@@ -1662,23 +1688,100 @@ local function removeFloorPad()
     end
 end
 
+-- returns direction, hasManualInput
 local function readFlyDirection()
     local cam = Workspace.CurrentCamera
     local dir = Vector3.zero
-    if not cam then return dir end
-    local look = cam.CFrame.LookVector
-    local right = cam.CFrame.RightVector
-    if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir += Vector3.new(look.X, 0, look.Z) end
-    if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir -= Vector3.new(look.X, 0, look.Z) end
-    if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir += Vector3.new(right.X, 0, right.Z) end
-    if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir -= Vector3.new(right.X, 0, right.Z) end
-    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir += Vector3.new(0, 1, 0) end
-    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then dir -= Vector3.new(0, 1, 0) end
+    if not cam then return dir, false end
+    local look, right = cam.CFrame.LookVector, cam.CFrame.RightVector
+    local pressed = false
+    if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir += Vector3.new(look.X, 0, look.Z) pressed = true end
+    if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir -= Vector3.new(look.X, 0, look.Z) pressed = true end
+    if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir += Vector3.new(right.X, 0, right.Z) pressed = true end
+    if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir -= Vector3.new(right.X, 0, right.Z) pressed = true end
+    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir += Vector3.new(0, 1, 0) pressed = true end
+    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then dir -= Vector3.new(0, 1, 0) pressed = true end
     if dir.Magnitude > 0 then dir = dir.Unit end
-    return dir
+    return dir, pressed
 end
 
-local Fly = { conn = nil, active = false }
+local Fly = {
+    conn           = nil,
+    active         = false,
+    bodyVel        = nil,
+    bodyGyro       = nil,
+    vel            = nil,
+    autopilot      = nil,
+    autopilotAt    = 0,
+    autopilotSpeed = nil,
+    manualHold     = 0,
+    savedWalk      = nil,
+}
+
+local function flyDestroyBodies()
+    if Fly.bodyVel then pcall(function() Fly.bodyVel:Destroy() end) Fly.bodyVel = nil end
+    if Fly.bodyGyro then pcall(function() Fly.bodyGyro:Destroy() end) Fly.bodyGyro = nil end
+end
+
+local function flyEnsureBodies(root)
+    if not root then return end
+
+    -- Orientation holder (keeps the character upright + facing the flight path)
+    if not (Fly.bodyGyro and Fly.bodyGyro.Parent == root) then
+        if Fly.bodyGyro then pcall(function() Fly.bodyGyro:Destroy() end) end
+        local bg = Instance.new("BodyGyro")
+        bg.Name = "SkillHubFlyGyro"
+        bg.MaxTorque = Vector3.new(4e5, 4e5, 4e5)
+        bg.P = 3000
+        bg.D = 120
+        bg.CFrame = CFrame.lookAt(root.Position, root.Position + root.CFrame.LookVector)
+        bg.Parent = root
+        Fly.bodyGyro = bg
+    end
+
+    -- Bypass Mode drives the character through the velocity property only (no
+    -- extra instances inside the character at all). Raw Mode uses BodyVelocity.
+    if Config.FlyBypassMode then
+        if Fly.bodyVel then pcall(function() Fly.bodyVel:Destroy() end) Fly.bodyVel = nil end
+    elseif not (Fly.bodyVel and Fly.bodyVel.Parent == root) then
+        if Fly.bodyVel then pcall(function() Fly.bodyVel:Destroy() end) end
+        local bv = Instance.new("BodyVelocity")
+        bv.Name = "SkillHubFlyVelocity"
+        bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+        bv.P = 1250
+        bv.Velocity = Vector3.zero
+        bv.Parent = root
+        Fly.bodyVel = bv
+    end
+end
+
+local function flySetTarget(targetCFrame, speedOverride)
+    if not targetCFrame then return end
+    if Config.FlyJoinAutopilot == false then return end
+    Fly.autopilot = targetCFrame.Position
+    Fly.autopilotAt = os.clock()
+    if speedOverride and tonumber(speedOverride) then
+        Fly.autopilotSpeed = tonumber(speedOverride)
+    end
+end
+
+local function flyClearTarget()
+    Fly.autopilot = nil
+    Fly.autopilotSpeed = nil
+end
+
+-- makes the character hover exactly where it is (used on disable / respawn)
+local function flyBrake(root)
+    if Fly.bodyVel and Fly.bodyVel.Parent then
+        Fly.bodyVel.Velocity = Vector3.zero
+    end
+    if root then
+        pcall(function()
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+        end)
+    end
+end
 
 local function flyDisable()
     if Fly.conn then
@@ -1686,54 +1789,138 @@ local function flyDisable()
         Fly.conn = nil
     end
     Fly.active = false
+    MovementLink.isFlyActive = function() return false end
+    flyBrake(getRoot())
+    flyDestroyBodies()
+    Fly.vel = nil
+    Fly.autopilot = nil
+    Fly.autopilotSpeed = nil
+
+    local hum = getHumanoid()
+    if hum and Fly.savedWalk then
+        pcall(function()
+            if hum.WalkSpeed == 0 then hum.WalkSpeed = Fly.savedWalk end
+        end)
+    end
+    Fly.savedWalk = nil
+
     if not Config.WalkOnWater then removeFloorPad() end
 end
 
 local function flyStep(dt)
     local root, hum = getRoot(), getHumanoid()
     if not root or not hum or hum.Health <= 0 then flyDisable() return end
-    local pad = ensureFloorPad(3.05)
-    if not pad then return end
 
-    local speed = math.clamp(Config.FlySpeed or 55, 8, 400)
-    local move = readFlyDirection() * speed * math.min(dt, 0.08)
-
-    if Config.FlyBypassMode then
-        -- hard cap the per-frame delta so the jump never looks like a teleport
-        local maxStep = math.min(math.max(speed * 0.03, 1.1), 2.2)
-        if move.Magnitude > maxStep then move = move.Unit * maxStep end
-    end
-
-    local newPos = pad.CFrame.Position + move
-    if Config.FlyAntiVoid and newPos.Y < -120 then
-        newPos = Vector3.new(newPos.X, 45, newPos.Z)
-    end
-
-    pad.CFrame = CFrame.new(newPos)
-    local target = newPos + Vector3.new(0, 3.05, 0)
-    root.CFrame = CFrame.lookAt(target, target + root.CFrame.LookVector)
-    root.AssemblyLinearVelocity = Vector3.zero
-    root.AssemblyAngularVelocity = Vector3.zero
+    flyEnsureBodies(root)
     hum.PlatformStand = false
-    pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+
+    -- own the movement while flying: the character controller must not also walk
+    if Config.FlyZeroWalkSpeed ~= false then
+        if Fly.savedWalk == nil then Fly.savedWalk = hum.WalkSpeed end
+        if hum.WalkSpeed ~= 0 then hum.WalkSpeed = 0 end
+    end
+
+    local speed = math.clamp(Fly.autopilotSpeed or Config.FlySpeed or 60, 10, 900)
+    local dir, manual = readFlyDirection()
+    if manual then
+        Fly.manualHold = os.clock()
+        Fly.autopilotSpeed = nil
+    end
+
+    -- Auto Farm / Boss Hunter / PvP Hunter travel request (autopilot) when idle
+    local autoPilotActive = false
+    if not manual and Fly.autopilot and (os.clock() - Fly.autopilotAt) < 1.5 then
+        local delta = Fly.autopilot - root.Position
+        if delta.Magnitude > 6 then
+            dir = delta.Unit
+            autoPilotActive = true
+            if Config.FlyBypassMode then
+                -- never overshoot the destination
+                speed = math.min(speed, math.max(delta.Magnitude * 2, 30))
+            end
+        elseif (os.clock() - Fly.autopilotAt) > 0.5 then
+            Fly.autopilot = nil
+            Fly.autopilotSpeed = nil
+        end
+    end
+
+    local moving = manual or autoPilotActive
+    local targetVel = moving and (dir * speed) or Vector3.zero
+
+    -- smooth acceleration, clamped so no velocity spike can ever be flagged
+    local baseVel = Fly.vel or root.AssemblyLinearVelocity
+    if Config.FlyBypassMode then
+        local maxDelta = math.min(math.max(speed * 0.09, 5), 60)
+        local delta = targetVel - baseVel
+        if delta.Magnitude > maxDelta then targetVel = baseVel + delta.Unit * maxDelta end
+        local alpha = moving and math.clamp(dt * 14, 0.25, 0.9) or math.clamp(dt * 12, 0.2, 0.7)
+        Fly.vel = baseVel:Lerp(targetVel, alpha)
+        if Fly.vel.Magnitude < 0.8 then Fly.vel = Vector3.zero end
+
+        -- stealth motion: pure velocity property, nothing new inside the character
+        root.AssemblyLinearVelocity = Fly.vel
+    else
+        Fly.vel = targetVel
+        local bv = Fly.bodyVel
+        if bv then bv.Velocity = targetVel else root.AssemblyLinearVelocity = targetVel end
+    end
+
+    -- keep the character upright and facing the flight direction
+    local bg = Fly.bodyGyro
+    if bg and bg.Parent then
+        local face
+        if manual and dir.Magnitude > 0.05 then
+            face = Vector3.new(dir.X, 0, dir.Z)
+        else
+            local cam = Workspace.CurrentCamera
+            local camLook = cam and cam.CFrame.LookVector or root.CFrame.LookVector
+            face = Vector3.new(camLook.X, 0, camLook.Z)
+        end
+        if face.Magnitude < 0.05 then face = root.CFrame.LookVector end
+        bg.CFrame = CFrame.lookAt(root.Position, root.Position + face.Unit)
+    end
+
+    -- anti-flag: invisible pad right under the feet keeps the Humanoid grounded
+    ensureFloorPad(3.0)
+    if hum:GetState() ~= Enum.HumanoidStateType.Running then
+        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+    end
+
+    -- anti-void rescue
+    if Config.FlyAntiVoid and root.Position.Y < -120 then
+        Fly.vel = Vector3.zero
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.CFrame = CFrame.new(root.Position.X, 60, root.Position.Z)
+    end
 end
 
 local function flyEnable()
     if Fly.active then return end
     Fly.active = true
+    MovementLink.isFlyActive = function() return Fly.active end
+    MovementLink.setFlyTarget = flySetTarget
+    MovementLink.clearFlyTarget = flyClearTarget
+    flyEnsureBodies(getRoot())
     Fly.conn = RunService.RenderStepped:Connect(function(dt)
         if not Config.FlyEnabled then flyDisable() return end
         pcall(function() flyStep(dt) end)
     end)
 end
 
+-- Re-arm the fly automatically after a respawn / death
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(1)
+    if Config.FlyEnabled and not Fly.active then flyEnable() end
+end)
+
 local function setFlyState(enabled)
     Config.FlyEnabled = enabled
     if enabled then
         flyEnable()
-        Hooks.notify("Undetected Fly", "Bypass flight enabled — WASD + Space / LeftShift", 3, CustomIcons.Teleport)
+        Hooks.notify("Undetected Fly", "Fly ON — WASD to steer, Space up, LeftShift down. Auto Farm & PvP auto-pilot through it.", 4, CustomIcons.Fly)
     else
         flyDisable()
+        Hooks.notify("Undetected Fly", "Fly OFF", 2, CustomIcons.Stop)
     end
 end
 
@@ -2307,7 +2494,8 @@ task.spawn(function()
             end
             local hum = getHumanoid()
             if hum then
-                if Config.WalkSpeedEnabled then hum.WalkSpeed = Config.WalkSpeedValue end
+                -- while the Bypass Fly owns movement the Humanoid stays at WalkSpeed 0
+                if Config.WalkSpeedEnabled and not Config.FlyEnabled then hum.WalkSpeed = Config.WalkSpeedValue end
                 if Config.JumpPowerEnabled then hum.JumpPower = Config.JumpPowerValue end
             end
             if Config.AutoKen then invokeCommF("Ken", true) end
@@ -3967,7 +4155,7 @@ end, CustomIcons.Teleport)
 TabTeleport:AddButton("Tween to Selected Island", "Smooth anti-cheat safe flight to the selected island", "Tween Go", function()
     local targetCF = ISLAND_TELEPORTS_ALL[Config.SelectedIsland]
     if targetCF then
-        tweenTo(targetCF)
+        tweenTo(targetCF, Config.TweenSpeed)
         notify("Teleport", "Tweening to " .. tostring(Config.SelectedIsland), 2.5, CustomIcons.Teleport)
     else
         notify("Teleport", "Unknown island: " .. tostring(Config.SelectedIsland), 3, CustomIcons.Stop)
@@ -4031,13 +4219,30 @@ TabMisc:AddToggle(
     CustomIcons.Lightning
 )
 
-TabMisc:AddSection("Undetected Bypass Fly (no flag)")
-TabMisc:AddToggle("Enable Fly", "Invisible client floor pad + smooth delta stepping · WASD + Space / LeftShift", Config.FlyEnabled, function(v)
+TabMisc:AddSection("Undetected Bypass Fly v2 (no flag)")
+TabMisc:AddToggle("Enable Fly", "Velocity-driven smooth flight (BodyVelocity + BodyGyro) over an invisible anti-flag pad · RightAlt toggles", Config.FlyEnabled, function(v)
     setFlyState(v)
 end, CustomIcons.Fly)
-TabMisc:AddSlider("Fly Speed", "Studs per second (Bypass Mode caps the per-frame delta)", 20, 300, Config.FlySpeed, function(v) Config.FlySpeed = v end, CustomIcons.Fly)
-TabMisc:AddToggle("Bypass Mode (anti-flag)", "Keeps the Humanoid grounded on the invisible pad, zero velocity spikes, no PlatformStand", Config.FlyBypassMode, function(v) Config.FlyBypassMode = v end, CustomIcons.Shield)
+TabMisc:AddSlider("Fly Speed", "Studs per second while flying (also the autopilot speed)", 20, 320, Config.FlySpeed, function(v) Config.FlySpeed = v end, CustomIcons.Fly)
+TabMisc:AddToggle("Bypass Mode (anti-flag)", "Smooth acceleration, velocity spike clamp, Humanoid stays grounded on the pad, no PlatformStand", Config.FlyBypassMode, function(v) Config.FlyBypassMode = v end, CustomIcons.Shield)
+TabMisc:AddToggle("Freeze WalkSpeed while flying", "Stops the character controller from adding its own walking velocity (recommended)", Config.FlyZeroWalkSpeed, function(v) Config.FlyZeroWalkSpeed = v end, CustomIcons.Lightning)
+TabMisc:AddToggle("Auto Farm / PvP Autopilot", "Lets Auto Farm, the Boss Hunter and the PvP hunter fly you to their target instead of tweening", true, function(v)
+    Config.FlyJoinAutopilot = v
+    if not v then MovementLink.clearFlyTarget() end
+end, CustomIcons.Play)
 TabMisc:AddToggle("Anti-Void", "Teleports you back up if you ever fall under the map", Config.FlyAntiVoid, function(v) Config.FlyAntiVoid = v end, CustomIcons.Lightning)
+TabMisc:AddLivePanel("Fly Status", "live fly / movement debug", 1, function()
+    local root = getRoot()
+    local vel = Fly.bodyVel and Fly.bodyVel.Velocity or Vector3.zero
+    return string.format(
+        "Fly: %s   Bypass: %s   Speed: %d\nVelocity: %.1f, %.1f, %.1f  (%.0f studs/s)\nAltitude: %.0f   Autopilot: %s   Unlocked by: %s",
+        Config.FlyEnabled and "ON" or "off", Config.FlyBypassMode and "ON" or "raw",
+        Config.FlySpeed, vel.X, vel.Y, vel.Z, vel.Magnitude,
+        root and root.Position.Y or 0,
+        (Fly.autopilot and (os.clock() - Fly.autopilotAt) < 1.5) and "AutoFarm/PvP target" or "manual / hover",
+        MovementLink.isFlyActive() and "fly" or "tween"
+    )
+end, 100, CustomIcons.Fly)
 
 TabMisc:AddSection("Unique Utilities")
 TabMisc:AddToggle("Walk on Water", "Spawns an invisible client platform so you walk instead of swimming", Config.WalkOnWater, function(v)

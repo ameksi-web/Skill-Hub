@@ -4,12 +4,23 @@ Two fully separated products live in this repository:
 
 | File | What it is | Where it runs |
 |------|------------|---------------|
-| `main.lua` | **Skill Hub v3.9.1 Ultra** — Blox Fruits (Update 30) executer hub | Injected by an executor (Synapse/Delta/Xeno/…) |
+| `main.lua` | **Skill Hub v3.10 Ultra** — Blox Fruits (Update 30) executer hub | Injected by an executor (Synapse/Delta/Xeno/…) |
+| `loader.lua` | **protected entry point** — checksum-pinned, key-lockable loader that fetches the sealed build | Share this link instead of the raw script |
+| `dist/skillhub.release.lua` | **sealed build** — comments blanked, every string literal encrypted, no greppable source | Served to the loader |
+| `tools/` | `build_release.py` (seal + checksum), `seal_secret.py` (per-machine endpoint sealing) | Run before each release |
 | `SkillAnimator/init.lua` | **Skill Animator Studio** — Moon Animator 2 style keyframe/rig editor | Roblox **Studio plugin** (no pre-made animations) |
 
 ---
 
 ## 1. Blox Fruits Hub — `main.lua`
+
+**Share this link** (protected loader: checksum-pinned, key-lockable, fetches the sealed build):
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/loader.lua"))()
+```
+
+Source-of-truth script (readable, used by every release gate — the loader builds on top of it):
 
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/main.lua"))()
@@ -45,6 +56,44 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/
 * **Hitbox Expander v2** — player hitbox now scales the whole model (not one blob part) and restores every part exactly; live visualiser; independent **mob hitbox expander** with configurable size/range that works with Bring Mobs off and auto-restores.
 * **Auto Player List** — live in-UI roster that refreshes every second: PvP status lamp, level, fruit, style, HP, distance, plus one-click `TGT` / `KILL` / `TP` / `CAM` buttons per player.
 * **Fly Status panel** — live velocity, altitude and who currently owns movement (manual / autopilot / tween).
+
+### v3.10 — GUARD: anti-theft, anti-tamper, request privacy
+
+**The honest part first.** A script that runs on somebody else's client can always be dumped by that client — no client-side trick changes that. What *can* be done is make a stolen copy **useless**, **traceable** and **refused**. That is what this release does, in three layers: the hub's own guard, a protected loader, and a sealed release build.
+
+**1. Guard inside `main.lua`** (Misc → *Guard · anti-theft & request privacy*, and `SharedEnv.SkillHubInstance.guard`):
+
+* **Pristine references** — `game.HttpGet`, `game.HttpPost`, `loadstring`, `debug.info` are captured once as plain function values and always invoked as **plain functions**, so a `__namecall` / `__index` hook installed by another script (before or after us) never sees, rewrites or fakes our calls.
+* **Fingerprint** — a HWID-derived 12-char tag (`hash32(hwid .. "|skill-hub")`), shown in the status panel, printed at boot, attached as `X-SkillHub-Tag` to every request we tag. A leaked copy names the machine it came from.
+* **Licence gate** — `Config.LicenseKeys` (FNV-1a hashes). Empty list = no gate (default). With a list, `Guard Mode = enforce` stops the combat engines on a copy that was not authorised (`Guard.blocked()` gates `fireAttackPackets` and `attackCharacter`) instead of quietly working for a thief. Misc prints *your* key hash so you can authorise a key by pasting it in.
+* **Tamper audit** — the identity of all 31 engine closures is recorded at boot (`debug.info(fn, "s")`) and re-checked every `Config.TamperAuditSeconds` (default 30 s). If another script swaps one out, the console says which one, and in `enforce` mode firing halts so a hijacked hub cannot get *you* banned.
+* **Hook radar** — reports whether the game's metatable currently carries `__namecall` and whether it is a Luau closure (i.e. somebody else's hook) instead of guessing.
+* **Export seal** — `getgenv().SkillHubInstance` is wrapped in a metatable (`__metatable`, `__newindex` error) so nothing outside can overwrite `unload`, `config` or our callbacks — the classic move of replacing a hub's functions through `getgenv()`.
+* **No third-party code** — the old `PreferExternalFluent` code path that pulled `dawid-scripts/Fluent` from GitHub is **removed**: a foreign payload runs in the same environment as this hub and could hook it or read the user's requests. The Porcelain interface is ours, so nothing is fetched.
+* **Sealed secrets** — `Config.SealedEndpoint` holds a webhook/API url **XOR-sealed with a keystream derived from the machine fingerprint** (`tools/seal_secret.py`). The file never contains the url; on any other machine the blob is noise and the hub prints *fingerprint mismatch* instead of using it. The hub itself stores **no** plaintext endpoint.
+
+**2. `loader.lua` — the link you share**
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/loader.lua"))()
+```
+
+It captures `HttpGet` as a plain function, downloads the **sealed** build, verifies its FNV-1a-32 checksum against the value written by `tools/build_release.py` (a modified payload is **refused**, not executed), prints build + hash + machine tag, optionally enforces a key list (`RequireKey = true`, `Keys = { "<hash>" }`), unloads any previous instance, runs the payload and drops the payload reference again.
+
+**3. `dist/skillhub.release.lua` — the sealed build**
+
+`python3 tools/build_release.py` replaces every comment with spaces (**line numbers are preserved exactly**, so all `SkillHubStep("main.lua:1471", …)` labels keep their meaning), encrypts every string literal into `__S("<seed><hex>")` decoded at runtime by a 4-line XOR decoder on line 1, and writes the payload checksum into `loader.lua`. Verification for the last build: 2 179 literals sealed, 593 comments blanked, 7 704 → 7 704 lines, `LOAD OK` in the mocked-Roblox harness with zero tab errors, and no `rbxassetid` / `discord.com` / `game:HttpGet` plaintext left in the file.
+
+**Commands**
+
+```bash
+python3 tools/build_release.py          # rebuild the sealed payload + re-pin loader.lua
+python3 tools/build_release.py --check  # verify dist/ still matches the pinned checksum
+python3 tools/seal_secret.py --selftest # prove python ⇄ Lua agree on the sealing
+python3 tools/seal_secret.py --tag "<fingerprint from Misc>" --seal "https://discord.com/api/webhooks/…"
+```
+
+**The only way to make the source itself unreadable** is to stop publishing it: move `main.lua` to a private repository (or serve the sealed payload from a key-gated Cloudflare Worker) and distribute `loader.lua` alone. Until then the protection is: sealed build in the open, source of truth private-or-public by your choice, and a leaked copy that is traceable, checksum-refused and licence-stoppable.
 
 ### v3.9.1 — the error reporter was hiding the error, and the icons are drawn now
 

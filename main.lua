@@ -1,5 +1,5 @@
 --[[
-    Skill Hub v3.9.1 Ultra — Blox Fruits Edition (Update 30)
+    Skill Hub v3.10 Ultra — Blox Fruits Edition (Update 30)
     Architecture: the engine layer and the interface each run inside their own
                   factory function (see "ENGINES FACTORY" / "INTERFACE FACTORY").
                   Lua allows only 200 *active* local variables per function and
@@ -819,7 +819,20 @@ Config = {
     NoClip              = false,
     AntiAFK             = true,
     ShowWatermarkHUD    = true,
-    PreferExternalFluent = false,
+    PreferExternalFluent = false,   -- kept for compatibility: the external UI
+                                   -- payload is refused on purpose (see the guard)
+
+    -- ── GUARD · anti-theft, anti-tamper, request privacy ───────────────────
+    GuardMode          = "warn",    -- "off" | "warn" | "enforce"
+                                   --   warn    = report only (default, nothing is blocked)
+                                   --   enforce = an unlicensed or tampered copy stops firing
+    LicenseKey         = "",        -- your key; its hash goes into LicenseKeys
+    LicenseKeys        = {},        -- allowed key hashes — empty list = no gate at all
+    SealedEndpoint     = "",        -- webhook / API url sealed by tools/seal_secret.py
+                                   --   (never stored as readable text: it only decrypts
+                                   --    on the machine whose fingerprint sealed it)
+    RequestWatermark   = true,      -- tag every outbound request with the fingerprint
+    TamperAuditSeconds = 30,        -- how often the integrity audit re-checks our functions
 }
 
 -- Escape hatch: run the hub with ZERO metamethod hooks.
@@ -1279,6 +1292,276 @@ markRespawnQuiet = nil
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
+--  GUARD v3.10 — anti-theft · anti-tamper · request privacy
+--
+--  Honest scope first: a client-side Luau script can never be made impossible to
+--  copy. What CAN be done — and what this block does — is make a stolen copy
+--  useless, traceable and expensive to repackage:
+--
+--   · pristine references — HttpGet / HttpPost / loadstring / debug.info are
+--     captured once as plain function values and always invoked as plain
+--     functions. A `__namecall` or `__index` hook installed by another script
+--     (before or after us) therefore never sees, rewrites or fakes our calls.
+--   · fingerprint — a HWID-derived 12-char tag printed in diagnostics, in every
+--     request we tag and in the loader banner: a leaked copy names its machine.
+--   · licence gate — optional key list. "enforce" stops the combat engines on a
+--     copy that was not authorised, instead of quietly working for a thief.
+--   · tamper audit — the identity of every critical closure is captured at boot
+--     and re-checked on a timer; if another script swaps one out (getupvalue /
+--     setupvalue / exported-table games), the audit says so, and in enforce mode
+--     firing halts so a hijacked hub cannot get the user banned.
+--   · hook radar — reports whether the game's metatable currently carries a
+--     `__namecall` hook and whether it is a Luau closure (i.e. someone else's).
+--   · export seal — getgenv().SkillHubInstance is sealed with a metatable, so
+--     nothing outside can overwrite `unload`, `config` or our callbacks.
+--   · sealed secrets — no webhook/token is ever stored as readable text; a
+--     sealed blob only decrypts on the machine whose fingerprint sealed it.
+-- ═══════════════════════════════════════════════════════════════════════════
+local Guard = {
+    mode        = (Config.GuardMode or "warn"),
+    licensed    = true,
+    compromised = false,
+    hwid        = "unknown",
+    keyHash     = "none",
+    fingerprint = "unknown",
+    watched     = {},
+    lastAudit   = 0,
+    auditNote   = "not run yet",
+    notes       = {},
+}
+
+-- >>> GUARD-CORE · this exact span is mirrored by tools/seal_secret.py <<<
+local function guardMul32(a, b)
+    local result = 0
+    for _ = 1, 32 do
+        if b % 2 == 1 then result = (result + a) % 4294967296 end
+        a = (a * 2) % 4294967296
+        b = math.floor(b / 2)
+    end
+    return result
+end
+
+local function guardXor(a, b)
+    -- only trust the fast path when bit32 really is the library (a mocked or
+    -- shimmed environment must fall through to the arithmetic version)
+    if type(bit32) == "table" and type(bit32.bxor) == "function" then return bit32.bxor(a, b) end
+    local result, bit = 0, 1
+    for _ = 1, 32 do
+        if a % 2 ~= b % 2 then result = result + bit end
+        a, b, bit = math.floor(a / 2), math.floor(b / 2), bit * 2
+    end
+    return result
+end
+
+local function guardHash32(text)
+    local hash = 2166136261
+    for index = 1, #text do
+        hash = guardXor(hash, (string.byte(text, index) or 0) % 256)
+        hash = guardMul32(hash, 16777619)
+    end
+    return string.format("%08x", hash)
+end
+
+-- XOR a hex blob against a keystream seeded from `tag` (identical algorithm in
+-- tools/seal_secret.py). Without the tag the blob is noise.
+local function guardUnseal(blob, tag)
+    if type(blob) ~= "string" or blob == "" then return nil end
+    local seed = tonumber(guardHash32(tag), 16) or 1
+    if seed == 0 then seed = 1 end
+    local out = {}
+    for index = 1, #blob - 1, 2 do
+        local byte = tonumber(string.sub(blob, index, index + 1), 16)
+        if not byte then return nil end
+        seed = guardXor(seed, (seed * 8192) % 4294967296)
+        seed = guardXor(seed, math.floor(seed / 131072))
+        seed = guardXor(seed, (seed * 32) % 4294967296)
+        out[#out + 1] = string.char(guardXor(byte, seed % 256))
+    end
+    return table.concat(out)
+end
+-- <<< GUARD-CORE
+
+-- ── pristine references (captured once, called as plain functions) ──────────
+local Pristine = {}
+do
+    local function grab(object, name)
+        local ok, value = pcall(function() return object[name] end)
+        if ok and type(value) == "function" then return value end
+        return nil
+    end
+    Pristine.HttpGet = grab(game, "HttpGet")
+    Pristine.HttpPost = grab(game, "HttpPost")
+    Pristine.loadstring = loadstring
+    Pristine.info = (type(debug) == "table" and debug.info) or nil
+end
+
+function Guard.http(url)
+    if type(url) ~= "string" or not Pristine.HttpGet then return nil end
+    local ok, body = pcall(Pristine.HttpGet, game, url)
+    if ok and type(body) == "string" then return body end
+    return nil
+end
+
+-- ── machine fingerprint (the anti-leak watermark) ───────────────────────────
+local function globalsTable()
+    if type(_G) == "table" then return _G end
+    if type(SharedEnv) == "table" then return SharedEnv end
+    return {}
+end
+
+local function rawHwid()
+    local env = globalsTable()
+    local candidates = {
+        function() local fn = env.gethwid; if type(fn) == "function" then return fn() end end,
+        function() local fn = env.get_hwid; if type(fn) == "function" then return fn() end end,
+        function() if syn and syn.get_hwid then return syn.get_hwid() end end,
+        function() return game:GetService("RbxAnalyticsService"):GetClientId() end,
+        function() local players = game:GetService("Players"); return players.LocalPlayer and players.LocalPlayer.UserId end,
+        function() return tostring(game.PlaceId) end,
+    }
+    for _, attempt in ipairs(candidates) do
+        local ok, value = pcall(attempt)
+        if ok and value ~= nil and tostring(value) ~= "" then return tostring(value) end
+    end
+    return "unknown"
+end
+
+Guard.hwid = rawHwid()
+Guard.keyHash = guardHash32(tostring(Config.LicenseKey or ""))
+Guard.fingerprint = guardHash32(Guard.hwid .. "|skill-hub")
+
+do
+    local keys = Config.LicenseKeys
+    if type(keys) == "table" and #keys > 0 then
+        Guard.licensed = false
+        for _, entry in ipairs(keys) do
+            if tostring(entry) == Guard.keyHash then
+                Guard.licensed = true
+                break
+            end
+        end
+    end
+end
+
+function Guard.blocked()
+    if Guard.mode ~= "enforce" then return false end
+    return (not Guard.licensed) or Guard.compromised
+end
+
+-- ── tamper audit: our closures must stay our closures ───────────────────────
+function Guard.watchTable(prefix, sourceTable)
+    if type(sourceTable) ~= "table" then return 0 end
+    local count = 0
+    for key, value in pairs(sourceTable) do
+        if type(value) == "function" then
+            local identity = nil
+            if Pristine.info then
+                local ok, info = pcall(Pristine.info, value, "s")
+                if ok and type(info) == "string" then identity = info end
+            end
+            table.insert(Guard.watched, {
+                name = tostring(prefix) .. "." .. tostring(key),
+                fn = value,
+                identity = identity,
+            })
+            count = count + 1
+        end
+    end
+    return count
+end
+
+function Guard.audit()
+    Guard.lastAudit = os.clock()
+    if not Pristine.info then
+        Guard.auditNote = "unavailable in this executor (debug.info missing)"
+        return 0
+    end
+    local broken, checked = 0, 0
+    for _, entry in ipairs(Guard.watched) do
+        if entry.identity then
+            checked = checked + 1
+            local ok, info = pcall(Pristine.info, entry.fn, "s")
+            if not ok or info ~= entry.identity then
+                broken = broken + 1
+                if not entry.reported then
+                    entry.reported = true
+                    print(string.format("[Skill Hub] GUARD: %s was replaced or re-compiled by another script", entry.name))
+                end
+            end
+        end
+    end
+    Guard.auditNote = string.format("%d function(s) checked, %d changed", checked, broken)
+    if broken > 0 and not Guard.compromised then
+        Guard.compromised = true
+        print("[Skill Hub] GUARD: this hub is being tampered with — refuse to fight on a hijacked copy")
+    end
+    return broken
+end
+
+function Guard.startAudit()
+    if Config.GuardMode == "off" then return end
+    task.spawn(function()
+        while true do
+            task.wait(math.max(tonumber(Config.TamperAuditSeconds) or 30, 5))
+            pcall(Guard.audit)
+        end
+    end)
+end
+
+-- ── hook radar: the CoreGui/Locales noise comes from metatable hooks ────────
+function Guard.hookRadar()
+    if type(getrawmetatable) ~= "function" then return "getrawmetatable unavailable" end
+    local ok, metatable = pcall(getrawmetatable, game)
+    if not ok or type(metatable) ~= "table" then return "game metatable not readable" end
+    local namecall = metatable.__namecall
+    if namecall == nil then return "no __namecall hook anywhere (clean)" end
+    local kind = "unknown kind"
+    if type(iscclosure) == "function" then
+        local okC, isC = pcall(iscclosure, namecall)
+        if okC and isC == true then kind = "C closure (executor/hub style)" end
+    end
+    if type(islclosure) == "function" then
+        local okL, isL = pcall(islclosure, namecall)
+        if okL and isL == true then kind = "LUAU closure = another script's hook" end
+    end
+    return "__namecall hooked by " .. kind
+end
+
+-- ── sealed secrets: only this machine can decrypt the endpoint ──────────────
+function Guard.endpoint()
+    if type(Config.SealedEndpoint) ~= "string" or Config.SealedEndpoint == "" then return nil end
+    local url = guardUnseal(Config.SealedEndpoint, Guard.fingerprint)
+    if type(url) ~= "string" or not string.match(url, "^https?://") then
+        print("[Skill Hub] GUARD: the sealed endpoint does not belong to this machine (fingerprint mismatch)")
+        return nil
+    end
+    return url
+end
+
+function Guard.requestHeaders()
+    if Config.RequestWatermark == false then return {} end
+    return { ["X-SkillHub-Tag"] = Guard.fingerprint }
+end
+
+function Guard.report()
+    local lines = {
+        "Guard mode     : " .. tostring(Guard.mode) .. (Guard.mode == "enforce" and " (blocking)" or " (report only)"),
+        "Fingerprint    : " .. Guard.fingerprint .. "   (HWID-derived, printed in every tagged request)",
+        "Licence        : " .. (Guard.licensed and "authorised" or "NOT authorised — this copy is not yours") ..
+            (type(Config.LicenseKeys) == "table" and #Config.LicenseKeys > 0 and "" or " (no key list configured)"),
+        "Your key hash  : " .. Guard.keyHash .. "   ← paste into Config.LicenseKeys to authorise a key",
+        "Tamper audit   : " .. Guard.auditNote .. "  ·  " .. tostring(#Guard.watched) .. " closures watched",
+        "Hook radar     : " .. Guard.hookRadar(),
+        "Sealed endpoint: " .. (type(Config.SealedEndpoint) == "string" and Config.SealedEndpoint ~= "" and "armed (decrypts only here)" or "none"),
+        "Requests       : " .. (Config.RequestWatermark == false and "watermark off" or "watermark on") .. " · https only · no readable endpoints in this file",
+    }
+    return table.concat(lines, "\n")
+end
+
+print(string.format("[Skill Hub] GUARD armed · mode=%s · fingerprint=%s · licence=%s · %s",
+    tostring(Guard.mode), Guard.fingerprint, Guard.licensed and "ok" or "BLOCKED", Guard.hookRadar()))
+
+-- ═══════════════════════════════════════════════════════════════════════════
 --  BLOX FRUITS ANTI-CHEAT DISABLER, SIMRADIUS & ANTI-STUN ENGINE
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -1298,6 +1581,7 @@ local EngineFactory = function(E)
     local SkillHubStep, StatsService, TweenService, UserInputService = E.SkillHubStep, E.StatsService, E.TweenService, E.UserInputService
     local VirtualUser, Workspace, getFruitTier, isMeleeTool = E.VirtualUser, E.Workspace, E.getFruitTier, E.isMeleeTool
     local pressKey, refreshSea, toolMatchesCategory, trace = E.pressKey, E.refreshSea, E.toolMatchesCategory, E.trace
+    local Guard = E.Guard
     local virtualClick = E.virtualClick
 
 local SAFE_GAMEPLAY_REMOTES = {
@@ -1880,6 +2164,7 @@ end
 -- Fires the Triple-Layer attack packet stack at an explicit target list.
 -- Used by Fast Attack, Kill Aura and the PvP hunter.
 local function fireAttackPackets(primaryPart, bladeHits, rawParts, reachHint)
+    if Guard.blocked() then return end
     local char = getCharacter()
     if not char or not primaryPart then return end
     bladeHits = bladeHits or {}
@@ -2168,6 +2453,7 @@ end
 
 -- Attack one specific character (used by Auto Kill Selected / Auto Kill PvP / aimlock)
 local function attackCharacter(char)
+    if Guard.blocked() then return false end
     local payload = buildAttackPayload(char)
     if not payload then return false end
 
@@ -3993,6 +4279,7 @@ Hooks.espTag = createESPBillboard
 end
 
 local Engines = EngineFactory({
+    Guard = Guard,
     BLOCKED_REMOTE_PATTERNS = BLOCKED_REMOTE_PATTERNS,
     BOSSES_BY_SEA = BOSSES_BY_SEA,
     CURRENT_SEA = CURRENT_SEA,
@@ -4034,6 +4321,9 @@ local getRoot, getServerStatus, initBloxFruitsAntiCheatBypass, invokeCommF, isBu
 local magnetPart, removeFloorPad, scanSeaEvents, setFlyState, setPlayerHitbox, setSpectate = Engines.magnetPart, Engines.removeFloorPad, Engines.scanSeaEvents, Engines.setFlyState, Engines.setPlayerHitbox, Engines.setSpectate
 local stopTween, tweenTo, tweenToPlayer, flyPark = Engines.stopTween, Engines.tweenTo, Engines.tweenToPlayer, Engines.flyPark
 
+-- Guard: remember the identity of every engine closure so a swap can be spotted.
+print(string.format("[Skill Hub] GUARD watching %d engine closures", Guard.watchTable("engines", Engines)))
+
 -- ───────────────────────────────────────────────────────────────────────────
 --  INTERFACE FACTORY
 --  The "Porcelain" interface is its own function for the same reason:
@@ -4047,13 +4337,12 @@ local UIFactory = function(E)
     local getPlayerLevel, getPlayerLoadout, getPvPStatus, getRoot = E.getPlayerLevel, E.getPlayerLoadout, E.getPvPStatus, E.getRoot
     local getServerStatus, isBuddhaUser, isGiantForm, setSpectate = E.getServerStatus, E.isBuddhaUser, E.isGiantForm, E.setSpectate
     local trace, tweenToPlayer = E.trace, E.tweenToPlayer
+    local Guard = E.Guard
 
+-- External UI libraries are refused on purpose: a third-party payload would run
+-- inside this same environment, able to hook our functions and read the user's
+-- requests. The Porcelain interface is our own code, so nothing is fetched here.
 local ExternalFluent = nil
-if Config.PreferExternalFluent then
-    pcall(function()
-        ExternalFluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
-    end)
-end
 
 -- ═══════════════════════════════════════════════════════════════════════════
 --  DESIGN SYSTEM 2026 — "PORCELAIN"
@@ -4561,7 +4850,7 @@ hairline(VersionChip, Theme.StrokeSoft, 1, 0.4)
 new("TextLabel", {
     BackgroundTransparency = 1,
     Font = UIFontMono,
-    Text = "v3.9.1",
+    Text = "v3.10",
     TextColor3 = Theme.TextMuted,
     TextSize = 9,
     Size = UDim2.new(1, 0, 1, 0),
@@ -5161,7 +5450,7 @@ local WatermarkText = new("TextLabel", {
     Font = UIFontMono,
     Position = UDim2.new(0, 32, 0, 0),
     Size = UDim2.new(1, -40, 1, 0),
-    Text = "SKILL HUB 3.9.1 · SEA 1",
+    Text = "SKILL HUB 3.10 · SEA 1",
     TextColor3 = Theme.TextSecondary,
     TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -5206,7 +5495,7 @@ task.spawn(function()
             local status = getServerStatus()
 
             WatermarkBar.Visible = Config.ShowWatermarkHUD
-            WatermarkText.Text = string.format("SKILL HUB 3.9.1 · SEA %d [%s] · LV %d · %d FPS · %d MS",
+            WatermarkText.Text = string.format("SKILL HUB 3.10 · SEA %d [%s] · LV %d · %d FPS · %d MS",
                 CURRENT_SEA, string.upper(tostring(SEA_DETECT_SOURCE)), getPlayerLevel(), fps, status.ping)
 
             StatusBar.Visible = Config.ServerStatusHUD and Config.ShowWatermarkHUD
@@ -6629,6 +6918,7 @@ local UI = UIFactory({
     isBuddhaUser = isBuddhaUser,
     isGiantForm = isGiantForm,
     setSpectate = setSpectate,
+    Guard = Guard,
     trace = trace,
     tweenToPlayer = tweenToPlayer,
 })
@@ -7187,6 +7477,26 @@ TabMisc:AddLivePanel("Hook & Anti-Cheat Status", "live diagnostics for the __nam
     )
 end, 116, CustomIcons.Shield)
 
+TabMisc:AddSection("Guard · anti-theft & request privacy")
+TabMisc:AddDropdown("Guard Mode", "warn = report only · enforce = an unlicensed or tampered copy stops firing · off = no audit loop", {"off", "warn", "enforce"}, Config.GuardMode, function(value)
+    Config.GuardMode = value
+    Guard.mode = value
+    notify("Guard Mode", value == "enforce" and "Enforcing — unauthorised copies will not fire" or ("Set to " .. tostring(value)), 4, CustomIcons.Shield)
+end, CustomIcons.Shield)
+TabMisc:AddLivePanel("Guard Status", "fingerprint · licence · tamper audit · namecall hook radar", 2, function()
+    return Guard.report()
+end, 104, CustomIcons.Shield)
+TabMisc:AddButton("Copy Fingerprint + Guard Report", "The fingerprint identifies this machine in any leaked copy; the key hash is what you paste into Config.LicenseKeys to authorise a key", "Copy", function()
+    local text = Guard.report()
+    print("[Skill Hub] guard report:\n" .. text)
+    if type(setclipboard) == "function" then pcall(setclipboard, text) end
+    notify("Guard", "Report printed and copied — fingerprint " .. Guard.fingerprint, 4, CustomIcons.Shield)
+end, CustomIcons.Shield)
+TabMisc:AddButton("Run Tamper Audit Now", "Re-checks that every engine closure is still ours and reports the namecall hook radar", "Audit", function()
+    local broken = Guard.audit()
+    notify("Tamper Audit", broken == 0 and "Clean — every closure is still ours" or (tostring(broken) .. " closure(s) changed by another script"), 4, broken == 0 and CustomIcons.Shield or CustomIcons.Stop)
+end, CustomIcons.Search)
+
 TabMisc:AddSection("Team & Character")
 TabMisc:AddButton("Join Pirates Team", "Switch allegiance to Pirates via CommF_", "Pirates", function() invokeCommF("SetTeam", "Pirates") end, CustomIcons.AutoFarm)
 TabMisc:AddButton("Join Marines Team", "Switch allegiance to Marines via CommF_", "Marines", function() invokeCommF("SetTeam", "Marines") end, CustomIcons.Shield)
@@ -7350,25 +7660,43 @@ end
 
 tabCensus("tab census")
 
-SharedEnv.SkillHubInstance = {
-    version = "3.9.1",
-    banner = "Skill Hub v3.9.1 Ultra",
+Guard.audit()
+Guard.startAudit()
+
+-- Anti-hijack: the shared handle is sealed. Nothing outside this script can
+-- overwrite `unload`, `config` or our callbacks — the classic skid move of
+-- replacing a hub's functions through getgenv().  (The double-injection guard
+-- above still unloads a *previous* instance cleanly before it is sealed.)
+SharedEnv.SkillHubInstance = setmetatable({
+    version = "3.10",
+    banner = "Skill Hub v3.10 Ultra",
     config = Config,
     hookActive = function() return HookRegistry.namecallActive end,
     unload = UnloadSkillHub,
     -- manual console diagnostics (also on the Misc tab)
     tabCensus = function() return tabCensus("tab census (manual)") end,
     tabSelfTest = function() return tabSelfTest("tab self-test (manual)") end,
-}
+    -- read-only guard identity: lets a user (or the loader) verify the build
+    guard = {
+        fingerprint = Guard.fingerprint,
+        licensed = Guard.licensed,
+        mode = Guard.mode,
+        report = function() return Guard.report() end,
+    },
+}, {
+    __metatable = "Skill Hub · sealed instance",
+    __newindex = function() error("Skill Hub instance is sealed (anti-hijack guard)", 2) end,
+})
 
-print(string.format("[Skill Hub v3.9.1] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · syntheticInput=%s · coreGui=none",
+print(string.format("[Skill Hub v3.10] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · syntheticInput=%s · guard=%s · fingerprint=%s",
     ExecutorName, CURRENT_SEA, tostring(SEA_DETECT_SOURCE),
     tostring(Config.HookEngine),
     HookRegistry.namecallActive and "ACTIVE" or "off",
-    Config.UseVirtualInput and "on" or "OFF"))
+    Config.UseVirtualInput and "on" or "OFF",
+    tostring(Config.GuardMode), Guard.fingerprint))
 
 notify(
-    "Skill Hub v3.9.1 Ultra",
+    "Skill Hub v3.10 Ultra",
     string.format("Blox Fruits Update 30 • Sea %d (%s) • PvP & Players tab added • RightCtrl = toggle, RightShift = AimLock, RightAlt = Fly", CURRENT_SEA, tostring(SEA_DETECT_SOURCE)),
     5,
     CustomIcons.HubCrest

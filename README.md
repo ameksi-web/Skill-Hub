@@ -4,7 +4,7 @@ Two fully separated products live in this repository:
 
 | File | What it is | Where it runs |
 |------|------------|---------------|
-| `main.lua` | **Skill Hub v3.0 Ultra** — Blox Fruits (Update 24+) executer hub | Injected by an executor (Synapse/Delta/Xeno/…) |
+| `main.lua` | **Skill Hub v3.7 Ultra** — Blox Fruits (Update 24+) executer hub | Injected by an executor (Synapse/Delta/Xeno/…) |
 | `SkillAnimator/init.lua` | **Skill Animator Studio** — Moon Animator 2 style keyframe/rig editor | Roblox **Studio plugin** (no pre-made animations) |
 
 ---
@@ -46,6 +46,13 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/
 * **Auto Player List** — live in-UI roster that refreshes every second: PvP status lamp, level, fruit, style, HP, distance, plus one-click `TGT` / `KILL` / `TP` / `CAM` buttons per player.
 * **Fly Status panel** — live velocity, altitude and who currently owns movement (manual / autopilot / tween).
 
+### Stability updates (v3.7)
+* **Synthetic input is OFF by default.** `VirtualUser` / `VirtualInputManager` are the only engine *input* APIs this hub ever calls, and the engine funnels their failures through the CoreGui / Locales formatter. Fast Attack still fires through the packet layers and `Tool:Activate()`; re-enable the synthetic layer in `Misc → Synthetic Input` if you want it. Anti-AFK now nudges the character instead of clicking, so it needs no input API at all.
+* **Script-identity sample** — the hub prints, at boot and in every report, how a real error *inside this file* is labelled in the console, so that label can be compared directly with any red line.
+* **CoreGui watchdog (read-only)** — snapshots `CoreGui` the moment the hub starts (an instance already present cannot have been created by the hub) and logs every instance added there afterwards together with the Luau traceback of that moment. A traceback with no Luau frame means the engine created it from C.
+* **Second error reporter** — besides `LogService.MessageOut`, `ScriptContext.Error` is now watched too: it hands over the failing script object, so the report can name the instance that raised the error.
+* **`Misc → Console Audit (paste-ready)`** prints the whole evidence block on demand: CoreGui snapshot, CoreGui additions, the hub action trace and the identity sample.
+
 ### Stability updates (v3.5)
 * **ESP billboard pooling** — the ESP no longer destroys and re-creates 100+ `BillboardGui`s twice per second; tags are pooled per adornee and only updated/swept. GUI churn around death/respawn is practically eliminated.
 * **Death / respawn quiet window** — all heavy work (ESP, attack spam) stands down for ~2.5–3 s while the character is loading or unloading, exactly when Roblox rebuilds its own UI and when CoreScript errors are reported.
@@ -55,9 +62,11 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/
 
 ### Diagnosing console errors
 Roblox tags each console line with where it was raised:
-* `[Roblox][CoreGui...] ... Script 'CoreGui.<id>'` → raised inside **Roblox's own CoreScripts** (the well-known `RobloxGui.Modules.Common.Locales.en-us` message is a Roblox/CoreGui quirk and appears in unmodified sessions too).
+* `[Roblox][CoreGui...] ... Script 'CoreGui.<id>'` → raised inside a script that lives in `CoreGui` (Roblox's own CoreScripts are the usual owner of the `RobloxGui.Modules.Common.Locales.en-us` message; injected code can also reach that formatter through unofficial engine APIs, which is why the hub stops calling them by default).
 * `-- [Blox Fruits] ...` → raised by the game.
 * Lines without those tags that mention `main`/your executor → raised by scripts you injected.
+
+The hub now *measures* this instead of asserting it: the boot line `[Skill Hub] CoreGui audit @ injection: … numeric-named: …` and the watchdog report printed with every engine error show whether a CoreGui script existed before the hub ran and whether anything was added to CoreGui while it was alive. Load with `Misc → CoreGui Watchdog` on (default) and send that block whenever a red `CoreGui` line appears.
 
 If you want to prove a console error does **not** come from this hub, load it with the hook engine completely off:
 

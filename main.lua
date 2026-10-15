@@ -1,5 +1,5 @@
 --[[
-    Skill Hub v3.6 Ultra — Blox Fruits Edition (Update 24+)
+    Skill Hub v3.7 Ultra — Blox Fruits Edition (Update 24+)
     Interface: "Porcelain" design system — soft-dark graphite surfaces, hairline
                borders, 20px radii, muted editorial accents. No neon, no glow.
     Features:
@@ -692,7 +692,11 @@ local Config = {
     HitboxMobs          = true,
     SafeHookMode        = true,
     HookEngine          = false,   -- metamethod hooks are opt-in (cannot be removed until rejoin)
-    UseVirtualInput     = true,    -- synthetic key events + virtual mouse clicks
+    UseVirtualInput     = false,   -- synthetic key events + virtual mouse clicks. OFF by default
+                                   -- since v3.7: these are the ONLY engine input APIs this hub
+                                   -- ever calls, and the engine formats their failures through
+                                   -- the CoreGui / Locales module. Re-enable in Misc if you want.
+    CoreGuiWatch        = true,    -- snapshot CoreGui at boot + log everything added there after
     DebugTrace          = true,    -- print the action trace when the engine reports an error
     IncrementalUIBuild  = true,    -- spread GUI construction across frames (no creation spikes)
     LogStepErrors       = true,    -- print [Skill Hub] step error @ line … when our own code fails
@@ -832,6 +836,129 @@ local function trace(action)
     while #ActionTrace.items > TRACE_MAX do table.remove(ActionTrace.items, 1) end
 end
 
+-- ─── SCRIPT IDENTITY + CoreGui WATCHDOG ─────────────────────────────────────
+-- The one console line that survived v3.5 and v3.6 is this one, word for word:
+--      Script 'CoreGui.11596.5539769', Line 2 : attempt to call a nil value
+-- It names a script that lives inside CoreGui. This hub parents nothing into
+-- CoreGui, so instead of arguing about it, v3.7 measures it three ways:
+--   1. a snapshot of CoreGui taken the moment this file starts running — an
+--      instance that is already there cannot have been created by this hub;
+--   2. a watchdog that logs every instance added under CoreGui WHILE the hub
+--      runs, with the Luau traceback of the moment it appeared. A traceback
+--      with no Luau frame at all means the engine created it from C;
+--   3. an identity sample: how a real error inside this hub gets labelled.
+local SkillHubEvidence = {
+    boot = os.clock(), log = {}, max = 12, names = {}, numeric = {},
+    readable = true, report = nil, watch = nil, identity = nil,
+}
+
+do
+    local LF = string.char(10)
+
+    local function coreGuiService()
+        local ok, gui = pcall(function() return game:GetService("CoreGui") end)
+        if ok and gui then return gui end
+        return nil
+    end
+
+    local function identitySample()
+        local ok, tb = pcall(function()
+            return select(2, xpcall(
+                function() error("Skill Hub identity probe", 0) end,
+                function(err) return debug.traceback(err, 2) end))
+        end)
+        if not ok or type(tb) ~= "string" then return "unavailable in this executor" end
+        local first, second = string.match(tb, "([^" .. LF .. "]*)" .. LF .. "([^" .. LF .. "]*)")
+        if not first then return "unavailable in this executor" end
+        return first .. (second and ("  |  " .. second) or "")
+    end
+
+    local function creatorNote()
+        local ok, tb = pcall(function() return debug.traceback("", 2) end)
+        if not ok or type(tb) ~= "string" then return "trace unavailable" end
+        local frames = {}
+        for line in string.gmatch(tb, "[^" .. LF .. "]+") do
+            local clean = string.gsub(line, "^%s+", "")
+            local skip = clean == "" or clean == "[C]" or clean == "Stack Begin" or clean == "Stack End"
+                or string.find(clean, "creatorNote", 1, true)
+                or string.find(clean, "coreGuiAdded", 1, true)
+                or string.find(clean, "DescendantAdded", 1, true)
+            if not skip then
+                table.insert(frames, clean)
+                if #frames >= 2 then break end
+            end
+        end
+        if #frames == 0 then return "no Luau frame at all — created by the engine from C" end
+        return table.concat(frames, "  <--  ")
+    end
+
+    local function coreGuiAdded(inst)
+        local okName, name = pcall(function() return inst.Name end)
+        local okCls, cls = pcall(function() return inst.ClassName end)
+        name = okName and tostring(name) or "?"
+        cls = okCls and tostring(cls) or "?"
+        local isScript = (cls == "Script" or cls == "LocalScript" or cls == "ModuleScript")
+        local numeric = string.match(name, "^%d+$") and " · numeric name (engine module loader)" or ""
+        table.insert(SkillHubEvidence.log, string.format(
+            "[t=%.2f] +%s%s '%s'%s · creator: %s",
+            os.clock(), isScript and "SCRIPT " or "", cls, name, numeric, creatorNote()))
+        while #SkillHubEvidence.log > SkillHubEvidence.max do table.remove(SkillHubEvidence.log, 1) end
+    end
+
+    local function coreGuiWatcher()
+        local gui = coreGuiService()
+        if not gui then
+            SkillHubEvidence.readable = false
+            return
+        end
+        pcall(function()
+            for _, child in ipairs(gui:GetChildren()) do
+                local ok, n = pcall(function() return child.Name end)
+                if ok then
+                    n = tostring(n)
+                    table.insert(SkillHubEvidence.names, n)
+                    if string.match(n, "^%d+$") then table.insert(SkillHubEvidence.numeric, n) end
+                end
+            end
+        end)
+        if Config.CoreGuiWatch == false then return end
+        pcall(function()
+            gui.DescendantAdded:Connect(function(inst) pcall(coreGuiAdded, inst) end)
+        end)
+    end
+
+    SkillHubEvidence.identity = identitySample
+    SkillHubEvidence.watch = coreGuiWatcher
+
+    -- The evidence block: printed whenever the engine reports an error, and on
+    -- demand from Misc. Everything in it is measured, nothing is assumed.
+    SkillHubEvidence.report = function(reason)
+        print("[Skill Hub] " .. tostring(reason))
+        print(string.format("    hub alive for %.1fs · a real error inside this hub is labelled like: %s",
+            os.clock() - SkillHubEvidence.boot, identitySample()))
+        print("    our last tracked actions:")
+        if #ActionTrace.items == 0 then
+            print("        · (none — the hub had not performed a single tracked action yet)")
+        end
+        for _, item in ipairs(ActionTrace.items) do print("        · " .. item) end
+        if not SkillHubEvidence.readable then
+            print("    CoreGui snapshot: not readable by this executor")
+        elseif #SkillHubEvidence.numeric > 0 then
+            print("    CoreGui BEFORE this hub started: numeric-named children were already there -> "
+                .. table.concat(SkillHubEvidence.numeric, ", "))
+        else
+            print(string.format("    CoreGui BEFORE this hub started: %d top-level children, none numeric-named",
+                #SkillHubEvidence.names))
+        end
+        if #SkillHubEvidence.log == 0 then
+            print("    CoreGui AFTER this hub started: nothing was added there by anyone")
+        else
+            print("    CoreGui AFTER this hub started:")
+            for _, item in ipairs(SkillHubEvidence.log) do print("        · " .. item) end
+        end
+    end
+end
+
 do
     local ok, LogService = pcall(function() return game:GetService("LogService") end)
     if ok and LogService then
@@ -845,17 +972,64 @@ do
                 local now = os.clock()
                 if now - lastDump < 5 then return end
                 lastDump = now
-                print("[Skill Hub] engine reported a CoreGui/Locales error while our last actions were:")
-                if #ActionTrace.items == 0 then
-                    print("    • (nothing — the hub had not performed any tracked action yet)")
-                end
-                for _, item in ipairs(ActionTrace.items) do
-                    print("    • " .. item)
-                end
+                print("[Skill Hub] engine reported a CoreGui/Locales error (LogService): " .. message)
+                SkillHubEvidence.report("what this hub was doing at that exact moment:")
             end)
         end)
     end
 end
+
+-- ─── SECOND REPORTER: ScriptContext.Error ──────────────────────────────────
+-- LogService does not always hand CoreScript errors to injected code, so we
+-- also listen on the engine's own error event. That one gives us the failing
+-- script object itself — which is how "whose error is this?" stops being an
+-- opinion and becomes a name printed in the console.
+do
+    local LF = string.char(10)
+    local ok, SC = pcall(function() return game:GetService("ScriptContext") end)
+    if ok and SC then
+        local lastSCError = 0
+        pcall(function()
+            SC.Error:Connect(function(message, stack, script)
+                if type(message) ~= "string" then return end
+                if not string.find(message, "nil value", 1, true) then return end
+                local now = os.clock()
+                if now - lastSCError < 5 then return end
+                lastSCError = now
+                print("[Skill Hub] engine error event: " .. message)
+                if type(stack) == "string" then
+                    local shown = 0
+                    for line in string.gmatch(stack, "[^" .. LF .. "]+") do
+                        if shown < 3 then print("    trace: " .. line) end
+                        shown = shown + 1
+                    end
+                end
+                if script ~= nil then
+                    local okFull, full = pcall(function() return script:GetFullName() end)
+                    local okCls, cls  = pcall(function() return script.ClassName end)
+                    local owned = okFull and tostring(full) or "?"
+                    print(string.format("    failing instance: %s (%s)", owned, okCls and tostring(cls) or "?"))
+                    if string.find(owned, "CoreGui", 1, true) then
+                        print("    -> it lives inside CoreGui; this hub parents nothing there")
+                    elseif string.find(owned, "main.lua", 1, true) then
+                        print("    -> it is OURS. Send this line and it is fixed immediately.")
+                    end
+                else
+                    print("    failing instance: not reported by this executor")
+                end
+                SkillHubEvidence.report("full hub state at that moment:")
+            end)
+        end)
+    end
+end
+
+-- CoreGui audit at injection time — printed with the boot log, so the snapshot
+-- is taken before this hub has built a single instance.
+SkillHubEvidence.watch()
+print(string.format("[Skill Hub] CoreGui audit @ injection: %d top-level children · numeric-named: %s",
+    #SkillHubEvidence.names,
+    #SkillHubEvidence.numeric > 0 and table.concat(SkillHubEvidence.numeric, ", ") or "none"))
+print("[Skill Hub] identity sample · a real error inside this hub is labelled like: " .. SkillHubEvidence.identity())
 
 -- ─── SYNTHETIC INPUT SANDBOX ────────────────────────────────────────────────
 -- VirtualUser:CaptureController()/Button1Down()/Button1Up() are NOT part of the
@@ -3177,13 +3351,25 @@ RunService.Stepped:Connect(function()
 end)
 
 LocalPlayer.Idled:Connect(function()
-    if Config.AntiAFK then
-        if VirtualUser and Config.UseVirtualInput ~= false then
-            SkillHubStep("antiAfkClick@VirtualUser", function()
-                VirtualUser:CaptureController()
-                VirtualUser:ClickButton2(Vector2.zero)
-            end)
-        end
+    if not Config.AntiAFK then return end
+    if VirtualUser and Config.UseVirtualInput ~= false then
+        SkillHubStep("antiAfkClick@VirtualUser", function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.zero)
+        end)
+    else
+        -- Synthetic input is off (default since v3.7): nudge the character
+        -- instead. This touches no input API at all, so it cannot reach the
+        -- CoreGui / Locales error formatter.
+        SkillHubStep("antiAfkNudge", function()
+            local char = getCharacter()
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum and hrp then
+                hum:ChangeState(Enum.HumanoidStateType.Jumping)
+                hrp.CFrame = hrp.CFrame * CFrame.new(0, 0.05, 0)
+            end
+        end)
     end
 end)
 
@@ -3799,7 +3985,7 @@ hairline(VersionChip, Theme.StrokeSoft, 1, 0.4)
 new("TextLabel", {
     BackgroundTransparency = 1,
     Font = UIFontMono,
-    Text = "v3.6",
+    Text = "v3.7",
     TextColor3 = Theme.TextMuted,
     TextSize = 9,
     Size = UDim2.new(1, 0, 1, 0),
@@ -4399,7 +4585,7 @@ local WatermarkText = new("TextLabel", {
     Font = UIFontMono,
     Position = UDim2.new(0, 32, 0, 0),
     Size = UDim2.new(1, -40, 1, 0),
-    Text = "SKILL HUB 3.6 · SEA 1",
+    Text = "SKILL HUB 3.7 · SEA 1",
     TextColor3 = Theme.TextSecondary,
     TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -4444,7 +4630,7 @@ task.spawn(function()
             local status = getServerStatus()
 
             WatermarkBar.Visible = Config.ShowWatermarkHUD
-            WatermarkText.Text = string.format("SKILL HUB 3.6 · SEA %d [%s] · LV %d · %d FPS · %d MS",
+            WatermarkText.Text = string.format("SKILL HUB 3.7 · SEA %d [%s] · LV %d · %d FPS · %d MS",
                 CURRENT_SEA, string.upper(tostring(SEA_DETECT_SOURCE)), getPlayerLevel(), fps, status.ping)
 
             StatusBar.Visible = Config.ServerStatusHUD and Config.ShowWatermarkHUD
@@ -6285,6 +6471,11 @@ TabMisc:AddButton("Copy Diagnostics to Clipboard", "Copies the report above (exe
 end, CustomIcons.HubCrest)
 TabMisc:AddToggle("Debug Action Trace", "When the engine reports a CoreGui/Locales error, print the last actions this hub performed just before it — so we can pin the trigger exactly", Config.DebugTrace, function(v) Config.DebugTrace = v end, CustomIcons.Search)
 TabMisc:AddToggle("Incremental UI Build", "Build the interface across frames instead of one big GUI-creation spike (recommended)", Config.IncrementalUIBuild, function(v) Config.IncrementalUIBuild = v end, CustomIcons.Layers)
+TabMisc:AddToggle("CoreGui Watchdog", "Read-only: snapshots CoreGui the moment the hub starts and logs every instance added there afterwards, with the traceback of whoever created it", Config.CoreGuiWatch, function(v) Config.CoreGuiWatch = v end, CustomIcons.Server)
+TabMisc:AddButton("Console Audit (paste-ready)", "Prints the whole evidence block on demand: CoreGui snapshot, every CoreGui addition, the hub action trace, and how this script's own errors are labelled", "Audit", function()
+    SkillHubEvidence.report("manual console audit requested from Misc")
+    notify("Console Audit", "Report printed in the console — copy the [Skill Hub] block", 4, CustomIcons.Search)
+end, CustomIcons.Search)
 TabMisc:AddToggle("Synthetic Input (keys + virtual clicks)", "VirtualInputManager key events + VirtualUser mouse clicks for skills / M1 fallback. Auto-disables and prints a notice if the executor only partially implements them.", Config.UseVirtualInput, function(v)
     Config.UseVirtualInput = v
     notify("Synthetic Input", v and "Enabled" or "Disabled (skills still fire through the game's remote packets)", 3, CustomIcons.Lightning)
@@ -6436,20 +6627,21 @@ local function UnloadSkillHub()
 end
 
 SharedEnv.SkillHubInstance = {
-    version = "3.6",
-    banner = "Skill Hub v3.6 Ultra",
+    version = "3.7",
+    banner = "Skill Hub v3.7 Ultra",
     config = Config,
     hookActive = function() return HookRegistry.namecallActive end,
     unload = UnloadSkillHub,
 }
 
-print(string.format("[Skill Hub v3.6] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · coreGui=none",
+print(string.format("[Skill Hub v3.7] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · syntheticInput=%s · coreGui=none",
     ExecutorName, CURRENT_SEA, tostring(SEA_DETECT_SOURCE),
     tostring(Config.HookEngine),
-    HookRegistry.namecallActive and "ACTIVE" or "off"))
+    HookRegistry.namecallActive and "ACTIVE" or "off",
+    Config.UseVirtualInput and "on" or "OFF"))
 
 notify(
-    "Skill Hub v3.6 Ultra",
+    "Skill Hub v3.7 Ultra",
     string.format("Blox Fruits Update 24+ • Sea %d (%s) • PvP & Players tab added • RightCtrl = toggle, RightShift = AimLock, RightAlt = Fly", CURRENT_SEA, tostring(SEA_DETECT_SOURCE)),
     5,
     CustomIcons.HubCrest

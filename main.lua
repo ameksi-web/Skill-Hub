@@ -579,7 +579,16 @@ local Config = {
     PlayerHitboxSize    = 14,
     IgnoreFriendsPvP    = true,
     PvPSkills           = true,
-    PvPTweenDistance    = 12,
+    KillAuraAllPvP      = true,
+    KillAuraRange       = 95,
+    BuddhaAwareCombat   = true,
+
+    -- Hitbox Expander v2
+    HitboxMobs          = true,
+    HitboxMobsSize      = 55,
+    HitboxMobsRange     = 420,
+    ShowHitboxVisual    = false,
+    PvPTweenDistance    = 9,
     DashInterval        = 0.32,
 
     -- Undetected Fly v2
@@ -588,6 +597,7 @@ local Config = {
     FlyBypassMode       = true,
     FlyAntiVoid         = true,
     FlyZeroWalkSpeed    = true,
+    FlyJoinAutopilot    = true,
 
     -- Fruit utilities
     FruitMagnet         = false,
@@ -1247,7 +1257,7 @@ end
 
 -- Fires the Triple-Layer attack packet stack at an explicit target list.
 -- Used by Fast Attack, Kill Aura and the PvP hunter.
-local function fireAttackPackets(primaryPart, bladeHits, rawParts)
+local function fireAttackPackets(primaryPart, bladeHits, rawParts, reachHint)
     local char = getCharacter()
     if not char or not primaryPart then return end
     bladeHits = bladeHits or {}
@@ -1280,7 +1290,7 @@ local function fireAttackPackets(primaryPart, bladeHits, rawParts)
             ac.blocking = false
             ac.focusStart = 0
             ac.increment = 3
-            ac.hitboxMagnitude = Config.AttackRange or 65
+            ac.hitboxMagnitude = reachHint or Config.AttackRange or 65
 
             if #rawParts > 0 then
                 local rem = ReplicatedStorage:FindFirstChild("RigControllerEvent")
@@ -1391,6 +1401,77 @@ local PvPState = {
     hitboxOriginals = {},
 }
 
+-- ─── BUDDHA / GIANT FORM AWARENESS ─────────────────────────────────────────
+-- Buddha (and every other grow/transformation) scales the WHOLE character model.
+-- A head-only M1 packet therefore missed: the small Head part floats metres above
+-- the pivot and the blade test almost never touched it. We now detect a scaled
+-- model, aim at its torso centre and send *every* body part as a blade hit so any
+-- contact registers, plus the hitbox scales with the model.
+
+local GIANT_MARKER_NAMES = { "Buddha", "BuddhaForm", "GiantForm", "Transformation", "Giant", "BigMode" }
+
+local function getCharBoundingBox(char)
+    if not char then return nil, nil end
+    local ok, cf, size = pcall(function() return char:GetBoundingBox() end)
+    if ok and cf and size then return cf, size end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp then return hrp.CFrame, hrp.Size end
+    return nil, nil
+end
+
+local giantCache = {}
+local function computeGiantForm(char)
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum and (tonumber(hum.HipHeight) or 0) > 6 then return true end
+    local ok, size = pcall(function() return char:GetExtentsSize() end)
+    if ok and size and size.Y > 11 then return true end
+    for _, marker in ipairs(GIANT_MARKER_NAMES) do
+        if char:FindFirstChild(marker) then return true end
+    end
+    for _, attr in ipairs({ "Buddha", "Giant", "Transformed", "IsGiant" }) do
+        local v = char:GetAttribute(attr)
+        if type(v) == "boolean" and v then return true end
+    end
+    local scale = char:GetAttribute("Scale") or char:GetAttribute("Size")
+    if type(scale) == "number" and scale > 1.6 then return true end
+    return false
+end
+
+-- cached for 0.4s: this is called from the __namecall hook on every game raycast
+local function isGiantForm(char)
+    if not char or not char.Parent then return false end
+    local now = os.clock()
+    local cached = giantCache[char]
+    if cached and (now - cached.t) < 0.4 then return cached.v end
+    local result = computeGiantForm(char)
+    giantCache[char] = { t = now, v = result }
+
+    local count = 0
+    for key in pairs(giantCache) do
+        count = count + 1
+        if count > 96 or not key.Parent then giantCache[key] = nil end
+    end
+    return result
+end
+
+local function isBuddhaUser(plr)
+    if not plr then return false end
+    local data = plr:FindFirstChild("Data")
+    local fruit = data and data:FindFirstChild("DevilFruit")
+    if fruit and tostring(fruit.Value):lower():find("buddha", 1, true) then return true end
+    for _, container in ipairs({ plr.Character, plr:FindFirstChild("Backpack") }) do
+        if container then
+            for _, tool in ipairs(container:GetChildren()) do
+                if tool:IsA("Tool") then
+                    local original = tostring(tool:GetAttribute("OriginalName") or ""):lower()
+                    if original:find("buddha", 1, true) or tool.Name:lower():find("buddha", 1, true) then return true end
+                end
+            end
+        end
+    end
+    return false
+end
+
 local function getCharacterCombatParts(char)
     if not char or char == LocalPlayer.Character then return nil end
     local hum = char:FindFirstChildOfClass("Humanoid")
@@ -1413,36 +1494,97 @@ local function castCombatSkills()
     end
 end
 
--- Attack one specific player (used by Auto Kill Selected / Auto Kill PvP / aimlock)
+-- Builds the complete blade payload for one character (giant / Buddha aware)
+local function buildAttackPayload(char)
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hum or not hrp or hum.Health <= 0 then return nil end
+
+    local head = char:FindFirstChild("Head") or hrp
+    local giant = Config.BuddhaAwareCombat ~= false and isGiantForm(char)
+    local bbox, size = getCharBoundingBox(char)
+
+    local bladeHits, rawParts, seen = {}, {}, {}
+    local function addPart(part)
+        if part and part:IsA("BasePart") and not seen[part] then
+            seen[part] = true
+            table.insert(bladeHits, { char, part })
+            table.insert(rawParts, part)
+        end
+    end
+
+    if giant then
+        -- every limb / torso / accessory part becomes a valid blade contact point
+        for _, d in ipairs(char:GetDescendants()) do
+            if d:IsA("BasePart") then addPart(d) end
+        end
+    end
+    addPart(head)
+    addPart(hrp)
+
+    -- aim point: torso centre for giants (Head sits metres above the pivot), head otherwise
+    local aimPoint = head.Position
+    if giant and bbox and size then
+        aimPoint = bbox.Position + Vector3.new(0, math.clamp(size.Y * 0.22, 2, 16), 0)
+    end
+
+    return {
+        char = char, hum = hum, hrp = hrp, head = head,
+        giant = giant, size = size, bbox = bbox,
+        aimPoint = aimPoint, bladeHits = bladeHits, rawParts = rawParts,
+    }
+end
+
+-- Attack one specific character (used by Auto Kill Selected / Auto Kill PvP / aimlock)
 local function attackCharacter(char)
-    local info = getCharacterCombatParts(char)
-    if not info then return false end
+    local payload = buildAttackPayload(char)
+    if not payload then return false end
 
-    local bladeHits = { { info.char, info.head } }
-    local rawParts = { info.head }
+    -- giants need extra reach: their model is several times taller
+    local range = (Config.AttackRange or 65) + (payload.giant and (payload.size and payload.size.Y * 0.6 or 25) or 0)
 
-    -- merge in everything else inside Attack Range for extra packet coverage
-    local _, extraBlade, extraRaw = getBladeHitTargets(Config.AttackRange)
-    if extraBlade then
-        for idx, entry in ipairs(extraBlade) do
-            if entry[1] ~= info.char then table.insert(bladeHits, entry) end
+    local _, extraBlade, extraRaw = getBladeHitTargets(range)
+    for _, entry in ipairs(extraBlade or {}) do
+        if entry[1] ~= payload.char and not payload.rawParts[entry[2]] then
+            table.insert(payload.bladeHits, entry)
+            table.insert(payload.rawParts, entry[2])
         end
     end
-    if extraRaw then
-        for _, part in ipairs(extraRaw) do
-            if part ~= info.head then table.insert(rawParts, part) end
-        end
+    for _, part in ipairs(extraRaw or {}) do
+        if part ~= payload.head then table.insert(payload.rawParts, part) end
     end
 
-    fireAttackPackets(info.head, bladeHits, rawParts)
+    fireAttackPackets(payload.head, payload.bladeHits, payload.rawParts, range)
     return true
 end
 
 local function tweenToPlayer(plr, distance)
-    local info = getCharacterCombatParts(plr and plr.Character)
-    if not info then return false end
-    tweenTo(info.hrp.CFrame * CFrame.new(0, distance or Config.PvPTweenDistance or 12, 0))
+    local payload = buildAttackPayload(plr and plr.Character)
+    if not payload then return false end
+    local base = distance or Config.PvPTweenDistance or 12
+    if payload.giant and payload.size then
+        base = base + math.clamp(payload.size.Y * 0.35, 6, 26)
+    end
+    tweenTo(payload.hrp.CFrame * CFrame.new(0, base, 0))
     return true
+end
+
+-- ─── PLAYER HITBOX EXPANDER v2 ──────────────────────────────────────────────
+-- Expands the WHOLE model (not just HumanoidRootPart), so Buddha/giant users get a
+-- proportionally inflated hitbox instead of one blob part. Every touched part is
+-- stored and restored exactly on disable, and the visualiser makes it visible.
+local function storeHitboxState(key, char)
+    local store = PvPState.hitboxOriginals[key]
+    if store then return store end
+    store = { parts = {}, order = {} }
+    for _, d in ipairs(char:GetDescendants()) do
+        if d:IsA("BasePart") then
+            store.parts[d] = { size = d.Size, transparency = d.Transparency, collide = d.CanCollide, massless = d.Massless }
+            table.insert(store.order, d)
+        end
+    end
+    PvPState.hitboxOriginals[key] = store
+    return store
 end
 
 local function setPlayerHitbox(plr, expand)
@@ -1450,23 +1592,43 @@ local function setPlayerHitbox(plr, expand)
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
     local key = plr.Name
+
     if expand then
-        if not PvPState.hitboxOriginals[key] then
-            PvPState.hitboxOriginals[key] = { size = hrp.Size, transparency = hrp.Transparency, collide = hrp.CanCollide }
-        end
-        local size = math.clamp(Config.PlayerHitboxSize or 14, 4, 40)
+        local store = storeHitboxState(key, char)
+        local target = math.clamp(Config.PlayerHitboxSize or 14, 4, 60)
+        local factor = math.min(target / math.max(hrp.Size.X, 0.5), 3)
         pcall(function()
-            hrp.Size = Vector3.new(size, size, size)
-            hrp.Transparency = 1
-            hrp.CanCollide = false
+            for _, part in ipairs(store.order) do
+                if part.Parent then
+                    local orig = store.parts[part]
+                    if part == hrp then
+                        part.Size = Vector3.new(target, target, target)
+                    else
+                        part.Size = orig.size * factor
+                    end
+                    part.CanCollide = false
+                    part.Massless = true
+                    if Config.ShowHitboxVisual then
+                        part.Transparency = part == hrp and 0.6 or math.max(orig.transparency, 0.7)
+                    else
+                        part.Transparency = orig.transparency
+                    end
+                end
+            end
         end)
     else
-        local orig = PvPState.hitboxOriginals[key]
-        if orig then
+        local store = PvPState.hitboxOriginals[key]
+        if store then
             pcall(function()
-                hrp.Size = orig.size
-                hrp.Transparency = orig.transparency
-                hrp.CanCollide = orig.collide
+                for _, part in ipairs(store.order) do
+                    if part.Parent then
+                        local orig = store.parts[part]
+                        part.Size = orig.size
+                        part.Transparency = orig.transparency
+                        part.CanCollide = orig.collide
+                        part.Massless = orig.massless
+                    end
+                end
             end)
             PvPState.hitboxOriginals[key] = nil
         end
@@ -1556,6 +1718,23 @@ task.spawn(function()
                         if now - (PvPState.lastAttack or 0) >= 0.11 then
                             PvPState.lastAttack = now
                             attackCharacter(target.Character)
+
+                            -- Kill Aura: slash every other attackable player in range too
+                            if Config.AutoKillPvP and Config.KillAuraAllPvP ~= false then
+                                local myPos = myRoot and myRoot.Position
+                                for _, other in ipairs(Players:GetPlayers()) do
+                                    if other ~= LocalPlayer and other ~= target and not isFriend(other) and canAttackPlayer(other) then
+                                        local oInfo = getCharacterCombatParts(other.Character)
+                                        if oInfo then
+                                            local auraRange = Config.KillAuraRange or 95
+                                            if not myPos or (oInfo.hrp.Position - myPos).Magnitude <= auraRange then
+                                                attackCharacter(other.Character)
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+
                             if Config.PvPSkills ~= false then castCombatSkills() end
                         end
                     end
@@ -1591,10 +1770,104 @@ RunService.RenderStepped:Connect(function(dt)
         local fov = Config.AimLockFOV or 300
         if fov > 0 and (info.hrp.Position - myRoot.Position).Magnitude > fov then return end
 
-        local goal = CFrame.lookAt(cam.CFrame.Position, info.head.Position)
+        local aimPos = info.head.Position
+        if Config.BuddhaAwareCombat ~= false and isGiantForm(target.Character) then
+            local bbox, size = getCharBoundingBox(target.Character)
+            if bbox and size then aimPos = bbox.Position + Vector3.new(0, math.clamp(size.Y * 0.22, 2, 16), 0) end
+        end
+        local goal = CFrame.lookAt(cam.CFrame.Position, aimPos)
         local alpha = math.clamp(Config.AimLockSmoothness or 0.3, 0.05, 1)
         cam.CFrame = cam.CFrame:Lerp(goal, alpha)
     end)
+end)
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  MOB HITBOX EXPANDER v2  (works even with Bring Mobs OFF)
+--  · inflates the HumanoidRootPart of every living enemy inside the configured
+--    radius and marks all their parts non-colliding/massless
+--  · remembers the exact original size/transparency of every touched part and
+--    restores it the moment the mob leaves range, dies or the toggle is turned off
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local MobHitboxStore = {}
+local mobStoreCount = 0
+
+task.spawn(function()
+    while task.wait(0.35) do
+        pcall(function()
+            local enemies = Workspace:FindFirstChild("Enemies")
+            if not enemies then return end
+            local root = getRoot()
+            local size = math.clamp(Config.HitboxMobsSize or 55, 6, 90)
+            local range = Config.HitboxMobsRange or 420
+
+            for _, mob in ipairs(enemies:GetChildren()) do
+                local hum = mob:FindFirstChildOfClass("Humanoid")
+                local hrp = mob:FindFirstChild("HumanoidRootPart")
+                if hum and hrp and hum.Health > 0 and hrp.Parent then
+                    local inRange = (not root) or (hrp.Position - root.Position).Magnitude <= range
+                    if Config.HitboxMobs and inRange then
+                        local store = MobHitboxStore[mob]
+                        if not store then
+                            store = { parts = {}, order = {} }
+                            for _, d in ipairs(mob:GetDescendants()) do
+                                if d:IsA("BasePart") then
+                                    store.parts[d] = { size = d.Size, transparency = d.Transparency, collide = d.CanCollide }
+                                    table.insert(store.order, d)
+                                end
+                            end
+                            MobHitboxStore[mob] = store
+                            mobStoreCount = mobStoreCount + 1
+                        end
+                        hrp.Size = Vector3.new(size, size, size)
+                        hrp.CanCollide = false
+                        hrp.Massless = true
+                        for _, part in ipairs(store.order) do
+                            if part ~= hrp and part.Parent then
+                                part.CanCollide = false
+                                part.Massless = true
+                                if Config.ShowHitboxVisual then part.Transparency = math.max(part.Transparency, 0.75) end
+                            end
+                        end
+                    elseif MobHitboxStore[mob] then
+                        local store = MobHitboxStore[mob]
+                        for _, part in ipairs(store.order) do
+                            if part.Parent then
+                                local orig = store.parts[part]
+                                part.Size = orig.size
+                                part.Transparency = orig.transparency
+                                part.CanCollide = orig.collide
+                            end
+                        end
+                        MobHitboxStore[mob] = nil
+                        mobStoreCount = math.max(mobStoreCount - 1, 0)
+                    end
+                elseif MobHitboxStore[mob] then
+                    local store = MobHitboxStore[mob]
+                    for _, part in ipairs(store.order) do
+                        if part.Parent then
+                            local orig = store.parts[part]
+                            part.Size = orig.size
+                            part.Transparency = orig.transparency
+                            part.CanCollide = orig.collide
+                        end
+                    end
+                    MobHitboxStore[mob] = nil
+                    mobStoreCount = math.max(mobStoreCount - 1, 0)
+                end
+            end
+
+            -- sweep dead references so the store never leaks
+            if mobStoreCount > 0 then
+                for mob, store in pairs(MobHitboxStore) do
+                    if not mob.Parent then
+                        MobHitboxStore[mob] = nil
+                        mobStoreCount = mobStoreCount - 1
+                    end
+                end
+            end
+        end)
+    end
 end)
 
 -- Skill Aimbot · __namecall ray-redirect hook.
@@ -1614,24 +1887,32 @@ local function installAimRayHook()
                 local targetChar = PvPState.target and PvPState.target.Character
                 local info = getCharacterCombatParts(targetChar)
                 if info then
+                    -- Buddha/giants: aim at the torso centre, the Head is metres away
+                    local aimPos = info.head.Position
+                    if Config.BuddhaAwareCombat ~= false and isGiantForm(targetChar) then
+                        local bbox, size = getCharBoundingBox(targetChar)
+                        if bbox and size then
+                            aimPos = bbox.Position + Vector3.new(0, math.clamp(size.Y * 0.22, 2, 16), 0)
+                        end
+                    end
                     local args = { ... }
                     if method == "FindPartOnRayWithIgnoreList" and args[1] then
                         local ray = args[1]
-                        local dir = info.head.Position - ray.Origin
+                        local dir = aimPos - ray.Origin
                         if dir.Magnitude > 0.1 then
-                            local newRay = Ray.new(ray.Origin, dir.Unit * math.clamp(dir.Magnitude + 6, 1, 400))
+                            local newRay = Ray.new(ray.Origin, dir.Unit * math.clamp(dir.Magnitude + 8, 1, 600))
                             return oldNamecall(self, newRay, args[2], select(3, ...))
                         end
                     elseif method == "FindPartOnRay" and args[1] then
                         local ray = args[1]
-                        local dir = info.head.Position - ray.Origin
+                        local dir = aimPos - ray.Origin
                         if dir.Magnitude > 0.1 then
-                            local newRay = Ray.new(ray.Origin, dir.Unit * math.clamp(dir.Magnitude + 6, 1, 400))
+                            local newRay = Ray.new(ray.Origin, dir.Unit * math.clamp(dir.Magnitude + 8, 1, 600))
                             return oldNamecall(self, newRay, select(2, ...))
                         end
                     elseif method == "Raycast" and args[1] and args[2] then
                         local origin = args[1]
-                        local dir = info.head.Position - origin
+                        local dir = aimPos - origin
                         if dir.Magnitude > 0.1 then
                             return oldNamecall(self, origin, dir, select(3, ...))
                         end
@@ -3842,6 +4123,248 @@ local function createTab(iconAsset, name, accentOverride)
         return box
     end
 
+    -- AUTO PLAYER LIST: rebuilds itself every second with every player in the
+    -- server, their PvP status, level, fruit, distance and 4 one-click actions.
+    function tabObj:AddPlayerList(title, desc, height, itemIcon)
+        self.order = self.order + 1
+        local card = Instance.new("Frame", self.page)
+        card.Size = UDim2.new(1, 0, 0, height or 268)
+        card.BackgroundColor3 = Theme.BgCard
+        card.BorderSizePixel = 0
+        card.LayoutOrder = self.order
+        Instance.new("UICorner", card).CornerRadius = UDim.new(0, 9)
+        addGlassFinish(card, self.color)
+
+        createVectorIconBadge(card, itemIcon or CustomIcons.Players, self.color, 26, UDim2.new(0, 10, 0, 9), 4)
+
+        local tLbl = Instance.new("TextLabel", card)
+        tLbl.Size = UDim2.new(0.6, 0, 0, 18)
+        tLbl.Position = UDim2.new(0, 44, 0, 7)
+        tLbl.BackgroundTransparency = 1
+        tLbl.Font = Enum.Font.GothamBold
+        tLbl.TextSize = 12
+        tLbl.TextColor3 = Theme.TextPrimary
+        tLbl.TextXAlignment = Enum.TextXAlignment.Left
+        tLbl.Text = title
+
+        local dLbl = Instance.new("TextLabel", card)
+        dLbl.Size = UDim2.new(0.72, 0, 0, 16)
+        dLbl.Position = UDim2.new(0, 44, 0, 23)
+        dLbl.BackgroundTransparency = 1
+        dLbl.Font = Enum.Font.Gotham
+        dLbl.TextSize = 10
+        dLbl.TextColor3 = Theme.TextMuted
+        dLbl.TextXAlignment = Enum.TextXAlignment.Left
+        dLbl.Text = desc or ""
+
+        local countLbl = Instance.new("TextLabel", card)
+        countLbl.Size = UDim2.new(0.28, -10, 0, 30)
+        countLbl.Position = UDim2.new(0.72, 0, 0, 7)
+        countLbl.BackgroundTransparency = 1
+        countLbl.Font = Enum.Font.GothamBold
+        countLbl.TextSize = 10
+        countLbl.TextColor3 = self.color
+        countLbl.TextXAlignment = Enum.TextXAlignment.Right
+        countLbl.TextYAlignment = Enum.TextYAlignment.Center
+        countLbl.Text = "scanning..."
+
+        local list = Instance.new("ScrollingFrame", card)
+        list.Size = UDim2.new(1, -16, 1, -48)
+        list.Position = UDim2.new(0, 8, 0, 44)
+        list.BackgroundColor3 = Theme.BgControl
+        list.BackgroundTransparency = 0.35
+        list.BorderSizePixel = 0
+        list.ScrollBarThickness = 3
+        list.ScrollBarImageColor3 = self.color
+        list.CanvasSize = UDim2.new()
+        list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        Instance.new("UICorner", list).CornerRadius = UDim.new(0, 7)
+
+        local lLayout = Instance.new("UIListLayout", list)
+        lLayout.Padding = UDim.new(0, 4)
+        lLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+        local function rowButton(parent, text, xOffset, btnColor, callback)
+            local btn = Instance.new("TextButton", parent)
+            btn.Size = UDim2.new(0, 44, 0, 20)
+            btn.Position = UDim2.new(1, xOffset, 0, 17)
+            btn.BackgroundColor3 = btnColor
+            btn.BackgroundTransparency = 0.12
+            btn.Font = Enum.Font.GothamBold
+            btn.TextSize = 10
+            btn.TextColor3 = Color3.new(1, 1, 1)
+            btn.Text = text
+            btn.BorderSizePixel = 0
+            Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
+            btn.MouseButton1Click:Connect(function() task.spawn(callback) end)
+            return btn
+        end
+
+        -- in-place row updates: labels refresh every second, the row objects stay
+        -- alive so clicking a button can never be interrupted by a rebuild
+        local rows, emptyLbl = {}, nil
+
+        local function createRow(plr)
+            local row = Instance.new("Frame", list)
+            row.Size = UDim2.new(1, -4, 0, 54)
+            row.BackgroundColor3 = Theme.BgCard
+            row.BackgroundTransparency = 0.08
+            row.BorderSizePixel = 0
+            Instance.new("UICorner", row).CornerRadius = UDim.new(0, 7)
+
+            local rStroke = Instance.new("UIStroke", row)
+            rStroke.Color = self.color
+            rStroke.Thickness = 1
+            rStroke.Transparency = 0.55
+
+            local lamp = Instance.new("Frame", row)
+            lamp.Size = UDim2.new(0, 4, 1, -12)
+            lamp.Position = UDim2.new(0, 0, 0, 6)
+            lamp.BackgroundColor3 = self.color
+            lamp.BorderSizePixel = 0
+            Instance.new("UICorner", lamp).CornerRadius = UDim.new(1, 0)
+
+            local nameLbl = Instance.new("TextLabel", row)
+            nameLbl.Size = UDim2.new(1, -212, 0, 18)
+            nameLbl.Position = UDim2.new(0, 10, 0, 5)
+            nameLbl.BackgroundTransparency = 1
+            nameLbl.Font = Enum.Font.GothamBold
+            nameLbl.TextSize = 12
+            nameLbl.TextColor3 = Theme.TextPrimary
+            nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+            nameLbl.Text = plr.DisplayName
+
+            local infoLbl = Instance.new("TextLabel", row)
+            infoLbl.Size = UDim2.new(1, -212, 0, 15)
+            infoLbl.Position = UDim2.new(0, 10, 0, 23)
+            infoLbl.BackgroundTransparency = 1
+            infoLbl.Font = Enum.Font.GothamMedium
+            infoLbl.TextSize = 10
+            infoLbl.TextColor3 = Theme.TextMuted
+            infoLbl.TextXAlignment = Enum.TextXAlignment.Left
+            infoLbl.Text = "loading..."
+
+            local metaLbl = Instance.new("TextLabel", row)
+            metaLbl.Size = UDim2.new(1, -212, 0, 14)
+            metaLbl.Position = UDim2.new(0, 10, 0, 37)
+            metaLbl.BackgroundTransparency = 1
+            metaLbl.Font = Enum.Font.Gotham
+            metaLbl.TextSize = 10
+            metaLbl.TextColor3 = Theme.TextMuted
+            metaLbl.TextXAlignment = Enum.TextXAlignment.Left
+            metaLbl.Text = ""
+
+            rowButton(row, "TGT", -196, self.color, function()
+                Config.SelectedPlayer = plr.Name
+                notify("Target Locked", plr.DisplayName .. " selected as PvP target", 2.5, CustomIcons.PvP)
+            end)
+            rowButton(row, "KILL", -148, Theme.Danger, function()
+                Config.SelectedPlayer = plr.Name
+                Config.AutoKillSelected = true
+                notify("Auto Kill", "Hunting " .. plr.DisplayName .. " (Auto Kill Selected ON)", 3, CustomIcons.PvP)
+            end)
+            rowButton(row, "TP", -100, Theme.Success, function()
+                if tweenToPlayer(plr) then
+                    notify("Teleport", "Tweening to " .. plr.Name, 2.5, CustomIcons.Teleport)
+                else
+                    notify("Teleport", plr.Name .. " has no character", 2.5, CustomIcons.Stop)
+                end
+            end)
+            rowButton(row, "CAM", -52, Theme.AccentSecondary, function()
+                Config.SelectedPlayer = plr.Name
+                Config.SpectatePlayer = true
+                setSpectate(plr)
+                notify("Spectate", "Watching " .. plr.Name, 2.5, CustomIcons.ESP)
+            end)
+
+            return { row = row, stroke = rStroke, lamp = lamp, nameLbl = nameLbl, infoLbl = infoLbl, metaLbl = metaLbl }
+        end
+
+        local function rebuild()
+            local myRoot = getRoot()
+            local present = {}
+            local presentCount = 0
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LocalPlayer then
+                    present[plr.Name] = plr
+                    presentCount = presentCount + 1
+                end
+            end
+
+            -- drop rows for players who left
+            for name, entry in pairs(rows) do
+                if not present[name] then
+                    entry.row:Destroy()
+                    rows[name] = nil
+                end
+            end
+
+            -- alphabetical layout order
+            local names = {}
+            for name in pairs(present) do table.insert(names, name) end
+            table.sort(names, function(a, b) return a:lower() < b:lower() end)
+
+            for index, name in ipairs(names) do
+                local plr = present[name]
+                local entry = rows[name]
+                if not entry then
+                    entry = createRow(plr)
+                    rows[name] = entry
+                end
+                entry.row.LayoutOrder = index
+
+                local attackable, statusText, statusColor = getPvPStatus(plr)
+                local lo = getPlayerLoadout(plr)
+                local hrp = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
+                local dist = (hrp and myRoot) and math.floor((hrp.Position - myRoot.Position).Magnitude) or -1
+                local giantTag = ""
+                if isGiantForm(plr.Character) then
+                    giantTag = " · GIANT FORM"
+                elseif isBuddhaUser(plr) then
+                    giantTag = " · BUDDHA user"
+                end
+
+                entry.nameLbl.Text = string.format("%s  [Lv.%s]", plr.DisplayName, tostring(lo.level))
+                entry.infoLbl.Text = statusText .. (Config.SelectedPlayer == plr.Name and "  ◀ LOCKED" or "")
+                entry.infoLbl.TextColor3 = statusColor
+                entry.metaLbl.Text = string.format("Fruit: %s · Style: %s · HP %d/%d · %s%s",
+                    lo.fruit, lo.style, lo.hp, lo.maxHp,
+                    dist >= 0 and (dist .. "m") or "-", giantTag)
+                entry.stroke.Color = statusColor
+                entry.lamp.BackgroundColor3 = statusColor
+            end
+
+            if presentCount == 0 then
+                if not emptyLbl then
+                    emptyLbl = Instance.new("TextLabel", list)
+                    emptyLbl.Size = UDim2.new(1, 0, 0, 40)
+                    emptyLbl.BackgroundTransparency = 1
+                    emptyLbl.Font = Enum.Font.GothamMedium
+                    emptyLbl.TextSize = 11
+                    emptyLbl.TextColor3 = Theme.TextMuted
+                    emptyLbl.Text = "No other players in this server."
+                end
+                emptyLbl.Visible = true
+            elseif emptyLbl then
+                emptyLbl.Visible = false
+            end
+
+            countLbl.Text = string.format("%d online · %d listed", #Players:GetPlayers(), presentCount)
+        end
+
+        rebuild()
+        task.spawn(function()
+            while true do
+                task.wait(1)
+                if not card.Parent then break end
+                pcall(rebuild)
+            end
+        end)
+
+        table.insert(allSearchables, {frame = card, label = title .. " " .. (desc or "")})
+        return { card = card, refresh = rebuild }
+    end
+
     return tabObj
 end
 
@@ -3877,7 +4400,7 @@ TabFarm:AddSlider("Attack Reach (Studs)", "Multi-target blade hit radius (up to 
 TabFarm:AddToggle("Attack Players in Range", "Include enemy players in Fast Attack multi-target hit list", Config.AttackPlayers, function(v) Config.AttackPlayers = v end, CustomIcons.Boss)
 TabFarm:AddToggle("Auto Buso Haki", "Automatically activate Aura (Buso Haki) in combat", Config.AutoBuso, function(v) Config.AutoBuso = v end, CustomIcons.Shield)
 TabFarm:AddToggle("Bring Mobs (Magnet + SimRadius)", "Pull quest enemies together and lock their physics", Config.BringMobs, function(v) Config.BringMobs = v end, CustomIcons.Layers)
-TabFarm:AddToggle("Hitbox Expander (55 Studs)", "Expand enemy HumanoidRootPart hitbox for 100% hit registration", Config.HitboxExpander, function(v) Config.HitboxExpander = v end, CustomIcons.Layers)
+TabFarm:AddToggle("Hitbox Expander (55 Studs)", "Expand enemy HumanoidRootPart hitbox for 100% hit registration (see PvP & Players tab for size/range)", Config.HitboxExpander, function(v) Config.HitboxExpander = v; Config.HitboxMobs = v end, CustomIcons.Layers)
 TabFarm:AddSlider("Hover Distance", "Studs above target enemy while farming", 5, 45, Config.FarmDistance, function(v) Config.FarmDistance = v end, CustomIcons.Teleport)
 
 TabFarm:AddSection("Level & Mob Farming")
@@ -3957,6 +4480,14 @@ for _, style in ipairs(FIGHTING_STYLES) do
 end
 
 -- ─── TAB 3: PVP & PLAYERS ───
+TabPvP:AddSection("Auto Player List · live roster")
+TabPvP:AddPlayerList(
+    "Server Players",
+    "Auto-refreshes every second: PvP status lamp, level, fruit, style, distance.  TGT = lock · KILL = auto kill · TP = tween · CAM = spectate",
+    286,
+    CustomIcons.Players
+)
+
 TabPvP:AddSection("Hotkeys")
 TabPvP:AddLivePanel("PvP Hotkeys", "quick controls available anywhere in the game", 30, function()
     return "RightShift  →  toggle Skill Aimbot / AimLock\n" ..
@@ -4021,6 +4552,8 @@ TabPvP:AddToggle("Auto Kill PvP-Enabled Players", "Automatically hunts every dam
     notify("PvP Hunter", v and "Hunting all PvP-enabled players" or "PvP hunt stopped", 3, CustomIcons.PvP)
 end, CustomIcons.PvP)
 TabPvP:AddToggle("Ignore Friends", "Skips Roblox friends while auto-killing", Config.IgnoreFriendsPvP, function(v) Config.IgnoreFriendsPvP = v end, CustomIcons.Shield)
+TabPvP:AddSlider("Hover Distance", "Studs above the target while hunting (giants automatically get extra distance)", 4, 30, Config.PvPTweenDistance, function(v) Config.PvPTweenDistance = v end, CustomIcons.Teleport)
+TabPvP:AddSlider("Kill Aura Radius", "Attack every PvP player inside this radius of you", 30, 260, Config.KillAuraRange, function(v) Config.KillAuraRange = v end, CustomIcons.Lightning)
 TabPvP:AddToggle("Auto Cast Skills on Target (Z/X/C/V)", "Fires mastery skills during the PvP combo", Config.PvPSkills, function(v) Config.PvPSkills = v end, CustomIcons.Layers)
 
 TabPvP:AddSection("Skill Aimbot / AimLock")
@@ -4039,8 +4572,44 @@ TabPvP:AddToggle("Player Hitbox Expander", "Inflates the target's HumanoidRootPa
         end
     end
 end, CustomIcons.Layers)
-TabPvP:AddSlider("Hitbox Size (Studs)", "Expanded HumanoidRootPart size", 6, 40, Config.PlayerHitboxSize, function(v) Config.PlayerHitboxSize = v end, CustomIcons.Layers)
+TabPvP:AddSlider("Hitbox Size (Studs)", "Expanded HumanoidRootPart size — the whole model scales with it (great vs Buddha)", 6, 60, Config.PlayerHitboxSize, function(v) Config.PlayerHitboxSize = v end, CustomIcons.Layers)
 TabPvP:AddToggle("Attack Range includes players", "Fast Attack / Kill Aura also hits players in range", Config.AttackPlayers, function(v) Config.AttackPlayers = v end, CustomIcons.AutoFarm)
+
+TabPvP:AddSection("Hitbox Expander v2 & Buddha / Giant Combat")
+TabPvP:AddToggle("Buddha / Giant Aware Combat", "Detects scaled (Buddha) models: aims at their torso centre, sends every limb as a blade hit and extends reach", Config.BuddhaAwareCombat, function(v)
+    Config.BuddhaAwareCombat = v
+    notify("Buddha Combat", v and "Giant/Buddha models fully hittable" or "Standard head-only targeting", 3, CustomIcons.PvP)
+end, CustomIcons.Shield)
+TabPvP:AddToggle("Kill Aura hits every PvP player", "Auto Kill PvP also slashes every other attackable player inside the aura radius", Config.KillAuraAllPvP, function(v) Config.KillAuraAllPvP = v end, CustomIcons.Lightning)
+TabPvP:AddToggle("Show Hitbox Visualiser", "Makes the expanded player/mob hitboxes visible so you can see them working", Config.ShowHitboxVisual, function(v) Config.ShowHitboxVisual = v end, CustomIcons.ESP)
+TabPvP:AddToggle("Mob Hitbox Expander", "Inflates every living mob in range (works with Bring Mobs OFF, auto-restores)", Config.HitboxMobs, function(v)
+    Config.HitboxMobs = v
+    notify("Mob Hitbox", v and "Mob hitboxes inflated" or "Mob hitboxes restored", 2.5, CustomIcons.Layers)
+end, CustomIcons.Layers)
+TabPvP:AddSlider("Mob Hitbox Size", "HumanoidRootPart size applied to mobs", 10, 90, Config.HitboxMobsSize, function(v) Config.HitboxMobsSize = v end, CustomIcons.Layers)
+TabPvP:AddSlider("Mob Hitbox Range", "Only mobs within this distance get inflated", 60, 1500, Config.HitboxMobsRange, function(v) Config.HitboxMobsRange = v end, CustomIcons.Teleport)
+TabPvP:AddLivePanel("Buddha / Giant Scanner", "live model size + hitbox state per player", 1.5, function()
+    local lines = {}
+    local myRoot = getRoot()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            local _, size = getCharBoundingBox(plr.Character)
+            local giant = isGiantForm(plr.Character)
+            local buddha = isBuddhaUser(plr)
+            local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+            local dist = (hrp and myRoot) and math.floor((hrp.Position - myRoot.Position).Magnitude) or -1
+            table.insert(lines, string.format("%s · model %s · %s%s · %dm · hitbox %s",
+                plr.DisplayName,
+                size and string.format("%.0fx%.0f", size.X, size.Y) or "?",
+                giant and "GIANT FORM" or "normal",
+                buddha and " (Buddha user)" or "",
+                dist,
+                PvPState.hitboxOriginals[plr.Name] and "EXPANDED" or "normal"))
+        end
+    end
+    if #lines == 0 then return "No players with a live character right now." end
+    return table.concat(lines, "\n")
+end, 170, CustomIcons.Shield)
 
 TabPvP:AddSection("Player Inspector · who is PvP + their loadout")
 TabPvP:AddLivePanel("Player Scanner", "live PvP status · Devil Fruit · Fighting Style · Sword · Gun · Level · Bounty", 1.2, function()

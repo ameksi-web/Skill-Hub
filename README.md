@@ -46,6 +46,15 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/
 * **Auto Player List** — live in-UI roster that refreshes every second: PvP status lamp, level, fruit, style, HP, distance, plus one-click `TGT` / `KILL` / `TP` / `CAM` buttons per player.
 * **Fly Status panel** — live velocity, altitude and who currently owns movement (manual / autopilot / tween).
 
+### v3.7.3 — the console now names our own lines, and they are fixed
+With the whole interface running for the first time, Roblox's console started reporting errors *from this file* (`CoreGui.11596.Loadstring.loadstring.<id>` **is** this script — that is how an executor names a `loadstring` container, and the `Locales.en-us` module is only Roblox's error formatter). Two real bugs surfaced and are fixed:
+
+* `selectTab` tweened `t.pillStroke`, but the tab record was created **without** that field → `TweenService:Create failed because Instance is null` on every tab click and in the boot sequence.
+* **Every** UI animation now goes through `SafeTween(instance, info, props)`: a missing instance simply does nothing instead of reaching the engine, so that entire class of red line is gone (61 call sites). The instance helpers (`new`, `corner`, `hairline`, `pad`) also refuse to parent `nil` any more.
+* Hotfixes in the same build: the debounce timers that could swallow the *first* report are initialised properly, and the boot banner shows the real version.
+
+Regression test: the file is loaded in a mocked Roblox harness where `TweenService:Create(nil, …)` raises exactly like the engine does. v3.7.2 reproduces the user's error, v3.7.3 runs through the full boot **and** a click on every tab with zero errors.
+
 ### Critical fix (v3.7.2) — why the hub stopped loading, and what changed
 **Root cause.** Lua (and Luau) allow only **200 active local variables per function**. `main.lua` is one giant chunk, and by commit `f776e6d` it had grown to **205** top-level locals, then 234 with the redesign and 259 with the diagnostics — so the file **no longer compiled at all**: the executor printed a compile error and the hub never started. Everything after that commit (design, hook work, console-error rounds) was shipping into a file that could not run.
 

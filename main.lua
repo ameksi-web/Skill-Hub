@@ -1,5 +1,5 @@
 --[[
-    Skill Hub v3.7.2 Ultra — Blox Fruits Edition (Update 24+)
+    Skill Hub v3.7.3 Ultra — Blox Fruits Edition (Update 24+)
     Architecture: the engine layer and the interface each run inside their own
                   factory function (see "ENGINES FACTORY" / "INTERFACE FACTORY").
                   Lua allows only 200 *active* local variables per function and
@@ -1063,6 +1063,30 @@ pcall(function()
     print("[Skill Hub] identity sample · a real error inside this hub is labelled like: " .. SkillHubEvidence.identity())
 end)
 
+-- ─── SAFE TWEEN ────────────────────────────────────────────────────────────
+-- Every animation in the interface goes through SafeTween. A missing instance
+-- used to be handed straight to the engine, which answered with a red
+--      TweenService:Create failed because Instance is null
+-- line emitted through Roblox's own CoreGui/Locales logger. Now the call simply
+-- does nothing. Global on purpose: both factory functions must reach it.
+local NoTween = {
+    Play   = function() end,
+    Cancel = function() end,
+    Pause  = function() end,
+}
+
+local function isInstanceValue(v)
+    if typeof == nil then return type(v) == "userdata" or type(v) == "table" end
+    return typeof(v) == "Instance"
+end
+
+function SafeTween(inst, info, props)
+    if not isInstanceValue(inst) or type(props) ~= "table" then return NoTween end
+    local ok, tw = pcall(TweenService.Create, TweenService, inst, info, props)
+    if ok and tw ~= nil then return tw end
+    return NoTween
+end
+
 -- ─── SYNTHETIC INPUT SANDBOX ────────────────────────────────────────────────
 -- VirtualUser:CaptureController()/Button1Down()/Button1Up() are NOT part of the
 -- public Roblox API — they only exist while the executor patches them in, and on
@@ -1423,7 +1447,7 @@ local function tweenTo(targetCFrame, speedOverride)
     if activeTween then
         pcall(function() activeTween:Cancel() end)
     end
-    activeTween = TweenService:Create(root, info, {CFrame = targetCFrame})
+    activeTween = SafeTween(root, info, {CFrame = targetCFrame})
     activeTween:Play()
 end
 
@@ -3270,7 +3294,7 @@ task.spawn(function()
                     spark.CFrame = CFrame.new(root.Position + offset)
                     spark.Transparency = 0.2
                     spark.Parent = Workspace
-                    TweenService:Create(spark, TweenInfo.new(0.5, Enum.EasingStyle.Sine), {
+                    SafeTween(spark, TweenInfo.new(0.5, Enum.EasingStyle.Sine), {
                         CFrame = spark.CFrame + Vector3.new(0, 6, 0),
                         Transparency = 1,
                         Size = Vector3.new(0.1, 3.8, 0.1),
@@ -3859,14 +3883,14 @@ local RADIUS = { window = 20, panel = 14, card = 12, control = 10, chip = 8, pil
 local function new(class, props, parent)
     local inst = Instance.new(class)
     for k, v in pairs(props or {}) do inst[k] = v end
-    if parent then inst.Parent = parent end
+    if parent ~= nil then pcall(function() inst.Parent = parent end) end
     return inst
 end
 
 local function corner(parent, radius)
     local c = Instance.new("UICorner")
     c.CornerRadius = UDim.new(0, radius or RADIUS.card)
-    c.Parent = parent
+    if parent ~= nil then pcall(function() c.Parent = parent end) end
     return c
 end
 
@@ -3876,7 +3900,7 @@ local function hairline(parent, color, thickness, transparency)
     s.Thickness = thickness or 1
     s.Transparency = transparency or 0.35
     s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    s.Parent = parent
+    if parent ~= nil then pcall(function() s.Parent = parent end) end
     return s
 end
 
@@ -3891,7 +3915,7 @@ local function pad(parent, all, extra)
     if extra then
         for side, value in pairs(extra) do p["Padding" .. side] = UDim.new(0, value) end
     end
-    p.Parent = parent
+    if parent ~= nil then pcall(function() p.Parent = parent end) end
     return p
 end
 
@@ -3955,21 +3979,21 @@ local function addFinish(card, accent, opts)
 
     if opts.interactive ~= false then
         card.MouseEnter:Connect(function()
-            TweenService:Create(card, TweenInfo.new(0.16, Enum.EasingStyle.Quad), { BackgroundColor3 = hoverColor }):Play()
-            TweenService:Create(stroke, TweenInfo.new(0.16), { Color = opts.hoverStroke or Theme.Hairline, Transparency = opts.hoverStrokeTransparency or 0.72 }):Play()
+            SafeTween(card, TweenInfo.new(0.16, Enum.EasingStyle.Quad), { BackgroundColor3 = hoverColor }):Play()
+            SafeTween(stroke, TweenInfo.new(0.16), { Color = opts.hoverStroke or Theme.Hairline, Transparency = opts.hoverStrokeTransparency or 0.72 }):Play()
         end)
         card.MouseLeave:Connect(function()
-            TweenService:Create(card, TweenInfo.new(0.2, Enum.EasingStyle.Quad), { BackgroundColor3 = baseColor }):Play()
-            TweenService:Create(stroke, TweenInfo.new(0.2), { Color = opts.strokeColor or Theme.StrokeSoft, Transparency = 0.25 }):Play()
+            SafeTween(card, TweenInfo.new(0.2, Enum.EasingStyle.Quad), { BackgroundColor3 = baseColor }):Play()
+            SafeTween(stroke, TweenInfo.new(0.2), { Color = opts.strokeColor or Theme.StrokeSoft, Transparency = 0.25 }):Play()
         end)
         card.InputBegan:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                TweenService:Create(card, TweenInfo.new(0.08), { BackgroundColor3 = baseColor:Lerp(Color3.new(0, 0, 0), 0.08) }):Play()
+                SafeTween(card, TweenInfo.new(0.08), { BackgroundColor3 = baseColor:Lerp(Color3.new(0, 0, 0), 0.08) }):Play()
             end
         end)
         card.InputEnded:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                TweenService:Create(card, TweenInfo.new(0.14), { BackgroundColor3 = hoverColor }):Play()
+                SafeTween(card, TweenInfo.new(0.14), { BackgroundColor3 = hoverColor }):Play()
             end
         end)
     end
@@ -4088,11 +4112,11 @@ corner(WinClip, RADIUS.window)
 MainWindow.BackgroundTransparency = 1
 winStroke.Transparency = 1
 UIScale.Scale = UIScale.Scale * 0.985
-TweenService:Create(MainWindow, TweenInfo.new(0.28, Enum.EasingStyle.Quart), { BackgroundTransparency = 0 }):Play()
-TweenService:Create(winStroke, TweenInfo.new(0.32), { Transparency = 0.2 }):Play()
+SafeTween(MainWindow, TweenInfo.new(0.28, Enum.EasingStyle.Quart), { BackgroundTransparency = 0 }):Play()
+SafeTween(winStroke, TweenInfo.new(0.32), { Transparency = 0.2 }):Play()
 task.spawn(function()
     task.wait(0.05)
-    TweenService:Create(UIScale, TweenInfo.new(0.34, Enum.EasingStyle.Quart), { Scale = math.clamp(math.min(Workspace.CurrentCamera.ViewportSize.X / 820, Workspace.CurrentCamera.ViewportSize.Y / 560), 0.62, 1) }):Play()
+    SafeTween(UIScale, TweenInfo.new(0.34, Enum.EasingStyle.Quart), { Scale = math.clamp(math.min(Workspace.CurrentCamera.ViewportSize.X / 820, Workspace.CurrentCamera.ViewportSize.Y / 560), 0.62, 1) }):Play()
 end)
 
 -- ─── TITLE BAR ──────────────────────────────────────────────────────────────
@@ -4129,7 +4153,7 @@ hairline(VersionChip, Theme.StrokeSoft, 1, 0.4)
 new("TextLabel", {
     BackgroundTransparency = 1,
     Font = UIFontMono,
-    Text = "v3.7.2",
+    Text = "v3.7.3",
     TextColor3 = Theme.TextMuted,
     TextSize = 9,
     Size = UDim2.new(1, 0, 1, 0),
@@ -4176,10 +4200,10 @@ local SearchBox = new("TextBox", {
     ZIndex = 8,
 }, SearchShell)
 SearchBox.Focused:Connect(function()
-    TweenService:Create(searchStroke, TweenInfo.new(0.16), { Color = Theme.Accent, Transparency = 0.45 }):Play()
+    SafeTween(searchStroke, TweenInfo.new(0.16), { Color = Theme.Accent, Transparency = 0.45 }):Play()
 end)
 SearchBox.FocusLost:Connect(function()
-    TweenService:Create(searchStroke, TweenInfo.new(0.18), { Color = Theme.StrokeSoft, Transparency = 0.35 }):Play()
+    SafeTween(searchStroke, TweenInfo.new(0.18), { Color = Theme.StrokeSoft, Transparency = 0.35 }):Play()
 end)
 
 -- window controls: ghost circular buttons
@@ -4199,14 +4223,14 @@ local function ghostButton(parent, glyph, xOffset, danger)
     corner(btn, RADIUS.pill)
 
     btn.MouseEnter:Connect(function()
-        TweenService:Create(btn, TweenInfo.new(0.14), {
+        SafeTween(btn, TweenInfo.new(0.14), {
             BackgroundTransparency = 0,
             BackgroundColor3 = danger and tint(Theme.Danger, 0.82) or Theme.BgRaised,
             TextColor3 = danger and Theme.Danger or Theme.TextPrimary,
         }):Play()
     end)
     btn.MouseLeave:Connect(function()
-        TweenService:Create(btn, TweenInfo.new(0.18), {
+        SafeTween(btn, TweenInfo.new(0.18), {
             BackgroundTransparency = 1,
             TextColor3 = Theme.TextMuted,
         }):Play()
@@ -4676,7 +4700,7 @@ local function notify(title, message, duration, iconAsset)
         ZIndex = 103,
     }, progressTrack)
     corner(progress, RADIUS.pill)
-    TweenService:Create(progress, TweenInfo.new(duration, Enum.EasingStyle.Linear), { Size = UDim2.new(0, 0, 1, 0) }):Play()
+    SafeTween(progress, TweenInfo.new(duration, Enum.EasingStyle.Linear), { Size = UDim2.new(0, 0, 1, 0) }):Play()
 
     -- entrance: the list layout owns Position, so animate the card height instead
     card.Size = UDim2.new(1, 0, 0, 0)
@@ -4684,7 +4708,7 @@ local function notify(title, message, duration, iconAsset)
         for _, child in ipairs(card:GetDescendants()) do
             if child:IsA("GuiObject") then child.Visible = false end
         end
-        TweenService:Create(card, TweenInfo.new(0.26, Enum.EasingStyle.Quart), { Size = UDim2.new(1, 0, 0, 62) }):Play()
+        SafeTween(card, TweenInfo.new(0.26, Enum.EasingStyle.Quart), { Size = UDim2.new(1, 0, 0, 62) }):Play()
         task.wait(0.09)
         for _, child in ipairs(card:GetDescendants()) do
             if child:IsA("GuiObject") then child.Visible = true end
@@ -4693,10 +4717,10 @@ local function notify(title, message, duration, iconAsset)
 
     task.delay(duration, function()
         if card and card.Parent then
-            TweenService:Create(card, TweenInfo.new(0.22, Enum.EasingStyle.Quad), { BackgroundTransparency = 1 }):Play()
+            SafeTween(card, TweenInfo.new(0.22, Enum.EasingStyle.Quad), { BackgroundTransparency = 1 }):Play()
             for _, child in ipairs(card:GetDescendants()) do
                 if child:IsA("TextLabel") or child:IsA("ImageLabel") then
-                    TweenService:Create(child, TweenInfo.new(0.2), { TextTransparency = 1, ImageTransparency = 1 }):Play()
+                    SafeTween(child, TweenInfo.new(0.2), { TextTransparency = 1, ImageTransparency = 1 }):Play()
                 end
             end
             task.wait(0.24)
@@ -4729,7 +4753,7 @@ local WatermarkText = new("TextLabel", {
     Font = UIFontMono,
     Position = UDim2.new(0, 32, 0, 0),
     Size = UDim2.new(1, -40, 1, 0),
-    Text = "SKILL HUB 3.7.2 · SEA 1",
+    Text = "SKILL HUB 3.7.3 · SEA 1",
     TextColor3 = Theme.TextSecondary,
     TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -4774,7 +4798,7 @@ task.spawn(function()
             local status = getServerStatus()
 
             WatermarkBar.Visible = Config.ShowWatermarkHUD
-            WatermarkText.Text = string.format("SKILL HUB 3.7.2 · SEA %d [%s] · LV %d · %d FPS · %d MS",
+            WatermarkText.Text = string.format("SKILL HUB 3.7.3 · SEA %d [%s] · LV %d · %d FPS · %d MS",
                 CURRENT_SEA, string.upper(tostring(SEA_DETECT_SOURCE)), getPlayerLevel(), fps, status.ping)
 
             StatusBar.Visible = Config.ServerStatusHUD and Config.ShowWatermarkHUD
@@ -4819,12 +4843,12 @@ attachShadow(FloatBtn, 26, 0.55)
 iconTile(FloatBtn, CustomIcons.HubCrest, Theme.Accent, 22, UDim2.new(0, 10, 0.5, -11), 92)
 
 FloatBtn.MouseEnter:Connect(function()
-    TweenService:Create(FloatBtn, TweenInfo.new(0.16), { BackgroundTransparency = 0, Size = UDim2.new(0, 44, 0, 44), Position = UDim2.new(0, 19, 0.5, -22) }):Play()
-    TweenService:Create(floatStroke, TweenInfo.new(0.16), { Color = Theme.Hairline, Transparency = 0.7 }):Play()
+    SafeTween(FloatBtn, TweenInfo.new(0.16), { BackgroundTransparency = 0, Size = UDim2.new(0, 44, 0, 44), Position = UDim2.new(0, 19, 0.5, -22) }):Play()
+    SafeTween(floatStroke, TweenInfo.new(0.16), { Color = Theme.Hairline, Transparency = 0.7 }):Play()
 end)
 FloatBtn.MouseLeave:Connect(function()
-    TweenService:Create(FloatBtn, TweenInfo.new(0.2), { BackgroundTransparency = 0.06, Size = UDim2.new(0, 42, 0, 42), Position = UDim2.new(0, 20, 0.5, -21) }):Play()
-    TweenService:Create(floatStroke, TweenInfo.new(0.2), { Color = Theme.Stroke, Transparency = 0.3 }):Play()
+    SafeTween(FloatBtn, TweenInfo.new(0.2), { BackgroundTransparency = 0.06, Size = UDim2.new(0, 42, 0, 42), Position = UDim2.new(0, 20, 0.5, -21) }):Play()
+    SafeTween(floatStroke, TweenInfo.new(0.2), { Color = Theme.Stroke, Transparency = 0.3 }):Play()
 end)
 
 -- ─── SEARCH STATE + EMPTY STATE ─────────────────────────────────────────────
@@ -4924,38 +4948,39 @@ local function createTab(iconAsset, name, accentOverride)
     pad(page, nil, { Right = 8, Bottom = 12 })
 
     local tabObj = {
-        btn = btn, bar = bar, lbl = lbl, page = page, pill = pill, tile = tile, tileIcon = tileIcon,
+        btn = btn, bar = bar, lbl = lbl, page = page, pill = pill, pillStroke = pillStroke,
+        tile = tile, tileIcon = tileIcon,
         name = name, icon = iconAsset, color = tabColor, order = 0,
     }
     table.insert(tabs, tabObj)
 
     btn.MouseEnter:Connect(function()
         if page.Visible then return end
-        TweenService:Create(btn, TweenInfo.new(0.16), { BackgroundTransparency = 0, BackgroundColor3 = Theme.BgRaised }):Play()
+        SafeTween(btn, TweenInfo.new(0.16), { BackgroundTransparency = 0, BackgroundColor3 = Theme.BgRaised }):Play()
     end)
     btn.MouseLeave:Connect(function()
         if page.Visible then return end
-        TweenService:Create(btn, TweenInfo.new(0.18), { BackgroundTransparency = 1 }):Play()
+        SafeTween(btn, TweenInfo.new(0.18), { BackgroundTransparency = 1 }):Play()
     end)
 
     local function selectTab()
         for _, t in ipairs(tabs) do
             t.page.Visible = false
-            TweenService:Create(t.pill, TweenInfo.new(0.2), { BackgroundTransparency = 1 }):Play()
-            TweenService:Create(t.pillStroke, TweenInfo.new(0.2), { Transparency = 1 }):Play()
-            TweenService:Create(t.bar, TweenInfo.new(0.2), { BackgroundTransparency = 1 }):Play()
-            TweenService:Create(t.btn, TweenInfo.new(0.2), { BackgroundTransparency = 1 }):Play()
-            TweenService:Create(t.tile, TweenInfo.new(0.2), { BackgroundTransparency = 1 }):Play()
+            SafeTween(t.pill, TweenInfo.new(0.2), { BackgroundTransparency = 1 }):Play()
+            SafeTween(t.pillStroke, TweenInfo.new(0.2), { Transparency = 1 }):Play()
+            SafeTween(t.bar, TweenInfo.new(0.2), { BackgroundTransparency = 1 }):Play()
+            SafeTween(t.btn, TweenInfo.new(0.2), { BackgroundTransparency = 1 }):Play()
+            SafeTween(t.tile, TweenInfo.new(0.2), { BackgroundTransparency = 1 }):Play()
             t.tileIcon.ImageColor3 = Theme.TextMuted
             t.lbl.TextColor3 = Theme.TextSecondary
             t.lbl.Font = UIFont
         end
 
         page.Visible = true
-        TweenService:Create(pill, TweenInfo.new(0.2), { BackgroundTransparency = 0 }):Play()
-        TweenService:Create(pillStroke, TweenInfo.new(0.2), { Transparency = 0.86 }):Play()
-        TweenService:Create(bar, TweenInfo.new(0.2), { BackgroundTransparency = 0 }):Play()
-        TweenService:Create(tile, TweenInfo.new(0.2), { BackgroundTransparency = 0 }):Play()
+        SafeTween(pill, TweenInfo.new(0.2), { BackgroundTransparency = 0 }):Play()
+        SafeTween(pillStroke, TweenInfo.new(0.2), { Transparency = 0.86 }):Play()
+        SafeTween(bar, TweenInfo.new(0.2), { BackgroundTransparency = 0 }):Play()
+        SafeTween(tile, TweenInfo.new(0.2), { BackgroundTransparency = 0 }):Play()
         tileIcon.ImageColor3 = tabColor
         lbl.TextColor3 = Theme.TextPrimary
         lbl.Font = UIFontBold
@@ -4968,7 +4993,7 @@ local function createTab(iconAsset, name, accentOverride)
 
         -- gentle page entrance
         page.Position = UDim2.new(0, 8, 0, 0)
-        TweenService:Create(page, TweenInfo.new(0.22, Enum.EasingStyle.Quart), { Position = UDim2.new(0, 0, 0, 0) }):Play()
+        SafeTween(page, TweenInfo.new(0.22, Enum.EasingStyle.Quart), { Position = UDim2.new(0, 0, 0, 0) }):Play()
         applySearch()
     end
 
@@ -5102,14 +5127,14 @@ local function createTab(iconAsset, name, accentOverride)
         local state = defaultValue and true or false
         local function render(animate)
             local info = TweenInfo.new(animate and 0.2 or 0, Enum.EasingStyle.Quart)
-            TweenService:Create(track, info, {
+            SafeTween(track, info, {
                 BackgroundColor3 = state and tint(self.color, 0.52) or Theme.BgInset,
             }):Play()
-            TweenService:Create(trackStroke, info, {
+            SafeTween(trackStroke, info, {
                 Color = state and self.color or Theme.StrokeSoft,
                 Transparency = state and 0.45 or 0.35,
             }):Play()
-            TweenService:Create(knob, info, {
+            SafeTween(knob, info, {
                 Position = state and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9),
             }):Play()
             stateLbl.Text = state and "ON" or "OFF"
@@ -5186,18 +5211,18 @@ local function createTab(iconAsset, name, accentOverride)
         local actStroke = hairline(actBtn, self.color, 1, 0.72)
 
         actBtn.MouseEnter:Connect(function()
-            TweenService:Create(actBtn, TweenInfo.new(0.14), { BackgroundColor3 = tint(self.color, 0.74) }):Play()
-            TweenService:Create(actStroke, TweenInfo.new(0.14), { Transparency = 0.5 }):Play()
+            SafeTween(actBtn, TweenInfo.new(0.14), { BackgroundColor3 = tint(self.color, 0.74) }):Play()
+            SafeTween(actStroke, TweenInfo.new(0.14), { Transparency = 0.5 }):Play()
         end)
         actBtn.MouseLeave:Connect(function()
-            TweenService:Create(actBtn, TweenInfo.new(0.18), { BackgroundColor3 = tint(self.color, 0.86) }):Play()
-            TweenService:Create(actStroke, TweenInfo.new(0.18), { Transparency = 0.72 }):Play()
+            SafeTween(actBtn, TweenInfo.new(0.18), { BackgroundColor3 = tint(self.color, 0.86) }):Play()
+            SafeTween(actStroke, TweenInfo.new(0.18), { Transparency = 0.72 }):Play()
         end)
         actBtn.MouseButton1Down:Connect(function()
-            TweenService:Create(actBtn, TweenInfo.new(0.08), { BackgroundColor3 = tint(self.color, 0.62) }):Play()
+            SafeTween(actBtn, TweenInfo.new(0.08), { BackgroundColor3 = tint(self.color, 0.62) }):Play()
         end)
         actBtn.MouseButton1Click:Connect(function()
-            TweenService:Create(actBtn, TweenInfo.new(0.16), { BackgroundColor3 = tint(self.color, 0.74) }):Play()
+            SafeTween(actBtn, TweenInfo.new(0.16), { BackgroundColor3 = tint(self.color, 0.74) }):Play()
             if callback then task.spawn(callback) end
         end)
 
@@ -5313,7 +5338,7 @@ local function createTab(iconAsset, name, accentOverride)
         hitArea.InputBegan:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                 dragging = true
-                TweenService:Create(knob, TweenInfo.new(0.12), { Size = UDim2.new(0, 15, 0, 15) }):Play()
+                SafeTween(knob, TweenInfo.new(0.12), { Size = UDim2.new(0, 15, 0, 15) }):Play()
                 updateFromX(input.Position.X)
             end
         end)
@@ -5325,7 +5350,7 @@ local function createTab(iconAsset, name, accentOverride)
         UserInputService.InputEnded:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                 dragging = false
-                TweenService:Create(knob, TweenInfo.new(0.16), { Size = UDim2.new(0, 12, 0, 12) }):Play()
+                SafeTween(knob, TweenInfo.new(0.16), { Size = UDim2.new(0, 12, 0, 12) }):Play()
             end
         end)
 
@@ -5395,12 +5420,12 @@ local function createTab(iconAsset, name, accentOverride)
         local trigStroke = hairline(trigger, Theme.StrokeSoft, 1, 0.4)
 
         trigger.MouseEnter:Connect(function()
-            TweenService:Create(trigger, TweenInfo.new(0.14), { BackgroundColor3 = Theme.BgControl, TextColor3 = Theme.TextPrimary }):Play()
-            TweenService:Create(trigStroke, TweenInfo.new(0.14), { Color = Theme.Hairline, Transparency = 0.7 }):Play()
+            SafeTween(trigger, TweenInfo.new(0.14), { BackgroundColor3 = Theme.BgControl, TextColor3 = Theme.TextPrimary }):Play()
+            SafeTween(trigStroke, TweenInfo.new(0.14), { Color = Theme.Hairline, Transparency = 0.7 }):Play()
         end)
         trigger.MouseLeave:Connect(function()
-            TweenService:Create(trigger, TweenInfo.new(0.18), { BackgroundColor3 = Theme.BgInset, TextColor3 = Theme.TextSecondary }):Play()
-            TweenService:Create(trigStroke, TweenInfo.new(0.18), { Color = Theme.StrokeSoft, Transparency = 0.4 }):Play()
+            SafeTween(trigger, TweenInfo.new(0.18), { BackgroundColor3 = Theme.BgInset, TextColor3 = Theme.TextSecondary }):Play()
+            SafeTween(trigStroke, TweenInfo.new(0.18), { Color = Theme.StrokeSoft, Transparency = 0.4 }):Play()
         end)
 
         local listFrame = new("ScrollingFrame", {
@@ -5422,7 +5447,7 @@ local function createTab(iconAsset, name, accentOverride)
 
         trigger.MouseButton1Click:Connect(function()
             expanded = not expanded
-            TweenService:Create(card, TweenInfo.new(0.22, Enum.EasingStyle.Quart), {
+            SafeTween(card, TweenInfo.new(0.22, Enum.EasingStyle.Quart), {
                 Size = UDim2.new(1, 0, 0, expanded and expandedHeight or collapsed),
             }):Play()
         end)
@@ -5461,10 +5486,10 @@ local function createTab(iconAsset, name, accentOverride)
             end
 
             row.MouseEnter:Connect(function()
-                TweenService:Create(row, TweenInfo.new(0.12), { BackgroundTransparency = 0, BackgroundColor3 = Theme.BgRaised }):Play()
+                SafeTween(row, TweenInfo.new(0.12), { BackgroundTransparency = 0, BackgroundColor3 = Theme.BgRaised }):Play()
             end)
             row.MouseLeave:Connect(function()
-                TweenService:Create(row, TweenInfo.new(0.16), { BackgroundTransparency = 1 }):Play()
+                SafeTween(row, TweenInfo.new(0.16), { BackgroundTransparency = 1 }):Play()
             end)
             row.MouseButton1Click:Connect(function()
                 trigger.Text = "  " .. tostring(opt) .. "   ▾"
@@ -5478,7 +5503,7 @@ local function createTab(iconAsset, name, accentOverride)
                 mark.BackgroundTransparency = 0
                 row.TextColor3 = self.color
                 expanded = false
-                TweenService:Create(card, TweenInfo.new(0.2, Enum.EasingStyle.Quart), { Size = UDim2.new(1, 0, 0, collapsed) }):Play()
+                SafeTween(card, TweenInfo.new(0.2, Enum.EasingStyle.Quart), { Size = UDim2.new(1, 0, 0, collapsed) }):Play()
                 if callback then callback(opt) end
             end)
         end
@@ -5572,11 +5597,11 @@ local function createTab(iconAsset, name, accentOverride)
             btn.MouseButton1Click:Connect(function()
                 selected = optLabel
                 for index, other in ipairs(buttons) do
-                    TweenService:Create(other, TweenInfo.new(0.16), {
+                    SafeTween(other, TweenInfo.new(0.16), {
                         TextColor3 = (options[index] == optLabel) and Theme.TextPrimary or Theme.TextMuted,
                     }):Play()
                 end
-                TweenService:Create(thumb, TweenInfo.new(0.22, Enum.EasingStyle.Quart), {
+                SafeTween(thumb, TweenInfo.new(0.22, Enum.EasingStyle.Quart), {
                     Position = UDim2.new(0, btn.Position.X.Offset, 0, 4),
                 }):Play()
                 if callback then task.spawn(callback, optLabel) end
@@ -5659,7 +5684,7 @@ local function createTab(iconAsset, name, accentOverride)
             while task.wait(1.1) do
                 if not card.Parent then break end
                 SkillHubStep("main.lua:5161", function()
-                    TweenService:Create(liveDot, TweenInfo.new(0.5), {
+                    SafeTween(liveDot, TweenInfo.new(0.5), {
                         BackgroundTransparency = liveDot.BackgroundTransparency > 0.2 and 0 or 0.55,
                     }):Play()
                 end)
@@ -5786,10 +5811,10 @@ local function createTab(iconAsset, name, accentOverride)
             if callback then task.spawn(callback, box.Text) end
         end
         box.Focused:Connect(function()
-            TweenService:Create(shellStroke, TweenInfo.new(0.16), { Color = self.color, Transparency = 0.45 }):Play()
+            SafeTween(shellStroke, TweenInfo.new(0.16), { Color = self.color, Transparency = 0.45 }):Play()
         end)
         box.FocusLost:Connect(function()
-            TweenService:Create(shellStroke, TweenInfo.new(0.18), { Color = Theme.StrokeSoft, Transparency = 0.4 }):Play()
+            SafeTween(shellStroke, TweenInfo.new(0.18), { Color = Theme.StrokeSoft, Transparency = 0.4 }):Play()
             commit()
         end)
         box.ReturnPressedFromOnScreenKeyboard:Connect(commit)
@@ -5892,10 +5917,10 @@ local function createTab(iconAsset, name, accentOverride)
             corner(btn, RADIUS.chip)
             hairline(btn, baseColor, 1, 0.78)
             btn.MouseEnter:Connect(function()
-                TweenService:Create(btn, TweenInfo.new(0.12), { BackgroundColor3 = tint(baseColor, 0.7) }):Play()
+                SafeTween(btn, TweenInfo.new(0.12), { BackgroundColor3 = tint(baseColor, 0.7) }):Play()
             end)
             btn.MouseLeave:Connect(function()
-                TweenService:Create(btn, TweenInfo.new(0.16), { BackgroundColor3 = tint(baseColor, 0.84) }):Play()
+                SafeTween(btn, TweenInfo.new(0.16), { BackgroundColor3 = tint(baseColor, 0.84) }):Play()
             end)
             btn.MouseButton1Click:Connect(function() task.spawn(callback) end)
             return btn
@@ -6823,21 +6848,21 @@ local function UnloadSkillHub()
 end
 
 SharedEnv.SkillHubInstance = {
-    version = "3.7.2",
-    banner = "Skill Hub v3.7.2 Ultra",
+    version = "3.7.3",
+    banner = "Skill Hub v3.7.3 Ultra",
     config = Config,
     hookActive = function() return HookRegistry.namecallActive end,
     unload = UnloadSkillHub,
 }
 
-print(string.format("[Skill Hub v3.7.2] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · syntheticInput=%s · coreGui=none",
+print(string.format("[Skill Hub v3.7.3] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · syntheticInput=%s · coreGui=none",
     ExecutorName, CURRENT_SEA, tostring(SEA_DETECT_SOURCE),
     tostring(Config.HookEngine),
     HookRegistry.namecallActive and "ACTIVE" or "off",
     Config.UseVirtualInput and "on" or "OFF"))
 
 notify(
-    "Skill Hub v3.7.2 Ultra",
+    "Skill Hub v3.7.3 Ultra",
     string.format("Blox Fruits Update 24+ • Sea %d (%s) • PvP & Players tab added • RightCtrl = toggle, RightShift = AimLock, RightAlt = Fly", CURRENT_SEA, tostring(SEA_DETECT_SOURCE)),
     5,
     CustomIcons.HubCrest

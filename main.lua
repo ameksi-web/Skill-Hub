@@ -32,6 +32,66 @@ local LocalPlayer         = Players.LocalPlayer
 -- Shared environment handle (some executors only expose getgenv, others only _G)
 local SharedEnv = (getgenv and getgenv()) or _G or {}
 
+-- ─── EXECUTOR IDENTITY & CAPABILITY PROBE ──────────────────────────────────
+-- Used by the diagnostics panel so you can see exactly which functions your
+-- executor (Xeno, Delta, Synapse, …) actually provides.
+local ExecutorName, ExecutorVersion = "unknown", "unknown"
+do
+    local ok, name = pcall(function() return identifyexecutor and identifyexecutor() end)
+    if ok and type(name) == "string" then
+        local first, rest = string.match(name, "^(%S+)%s*(.*)$")
+        ExecutorName = first or name
+        ExecutorVersion = (rest ~= "" and rest) or "unknown"
+    end
+end
+
+local function capabilityTable()
+    local function has(name)
+        local value
+        local ok = pcall(function() value = _ENV[name] end)
+        if ok and value ~= nil then return true end
+        pcall(function()
+            local env = getgenv and getgenv()
+            if type(env) == "table" then value = env[name] end
+            if value == nil and type(_G) == "table" then value = _G[name] end
+        end)
+        if value == nil then return false end
+        local t = type(value)
+        return (t == "function") or (t == "table") or (t == "userdata")
+    end
+    return {
+        { name = "hookmetamethod",        ok = has("hookmetamethod") },
+        { name = "hookfunction",          ok = has("hookfunction") },
+        { name = "newcclosure",           ok = has("newcclosure") },
+        { name = "getgenv",               ok = has("getgenv") },
+        { name = "firetouchinterest",     ok = has("firetouchinterest") },
+        { name = "sethiddenproperty",     ok = has("sethiddenproperty") },
+        { name = "getconnections",        ok = has("getconnections") },
+        { name = "Drawing",               ok = has("Drawing") },
+        { name = "setclipboard",          ok = has("setclipboard") },
+        { name = "queue_on_teleport",     ok = has("queue_on_teleport") },
+    }
+end
+
+local function diagnosticsText()
+    local caps = capabilityTable()
+    local lines = {
+        string.format("executor      : %s  (%s)", ExecutorName, ExecutorVersion),
+        string.format("place         : %d   sea %d (%s)", game.PlaceId, CURRENT_SEA, tostring(SEA_DETECT_SOURCE)),
+        string.format("hook engine   : %s   installed: %s   intercepted: %d",
+            Config.HookEngine and "enabled" or "OFF", HookRegistry.namecallActive and "yes" or "no", HookRegistry.hits or 0),
+        string.format("coreGui usage : none (this hub never touches CoreGui)"),
+        "",
+    }
+    local ok_list, bad_list = {}, {}
+    for _, cap in ipairs(caps) do
+        table.insert(cap.ok and ok_list or bad_list, cap.name)
+    end
+    table.insert(lines, "supported     : " .. (#ok_list > 0 and table.concat(ok_list, ", ") or "-"))
+    table.insert(lines, "unsupported   : " .. (#bad_list > 0 and table.concat(bad_list, ", ") or "-"))
+    return table.concat(lines, "\n")
+end
+
 -- ─── DOUBLE-INJECTION GUARD ─────────────────────────────────────────────────
 -- Metamethod hooks can never be removed from a running client, so re-executing
 -- the script used to stack a second (third, fourth…) hook on top of the previous
@@ -5944,6 +6004,11 @@ end, CustomIcons.Shield)
 TabMisc:AddButton("Unload Skill Hub", "Removes the UI + ESP, stops every loop and turns the hook into a pass-through (rejoin to fully clear it)", "Unload", function()
     UnloadSkillHub()
 end, CustomIcons.Stop)
+TabMisc:AddLivePanel("Executor & Hook Diagnostics", "what your executor supports · what this hub touches", 2, diagnosticsText, 132, CustomIcons.Server)
+TabMisc:AddButton("Copy Diagnostics to Clipboard", "Copies the report above (executor, place, hook state, capabilities) so you can paste it anywhere", "Copy", function()
+    local ok = pcall(function() setclipboard(diagnosticsText()) end)
+    notify("Diagnostics", ok and "Copied to clipboard" or "setclipboard is not available in this executor", 3, ok and CustomIcons.HubCrest or CustomIcons.Stop)
+end, CustomIcons.HubCrest)
 TabMisc:AddToggle("Freeze Mob Animations", "Stops mob animation tracks instead of destroying their Animator (avoids animation load spam)", Config.FreezeMobAnimations, function(v) Config.FreezeMobAnimations = v end, CustomIcons.Layers)
 TabMisc:AddLivePanel("Hook & Anti-Cheat Status", "live diagnostics for the __namecall hook", 1.5, function()
     return string.format(
@@ -6073,8 +6138,8 @@ SharedEnv.SkillHubInstance = {
     unload = UnloadSkillHub,
 }
 
-print(string.format("[Skill Hub v3.3] loaded · sea=%d (%s) · hookEngine=%s · hook=%s",
-    CURRENT_SEA, tostring(SEA_DETECT_SOURCE),
+print(string.format("[Skill Hub v3.3] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · coreGui=none",
+    ExecutorName, CURRENT_SEA, tostring(SEA_DETECT_SOURCE),
     tostring(Config.HookEngine),
     HookRegistry.namecallActive and "ACTIVE" or "off"))
 

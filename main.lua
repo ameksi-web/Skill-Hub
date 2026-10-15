@@ -1,9 +1,14 @@
 --[[
-    Skill Hub v2.5 Ultra — Blox Fruits Edition (Update 24+)
+    Skill Hub v3.0 Ultra — Blox Fruits Edition (Update 24+)
     Features:
-      • Custom Vector Icon System (Lucide/Feather rbxassetid + Glowing Vector Badges)
-      • Hybrid Fluent UI Library + Native Glassmorphic ScreenGui
-      • Up-to-Date Blox Fruits Data (Kitsune, Dragon West/East, T-Rex, Mammoth, Gas, Yeti, Blade, Rocket, Ghost, Pain, Tiki Outpost)
+      • PvP & Players Tab      : Auto Kill Selected / PvP Hunt / Skill Aimbot Lock / Spectate / Tween to Player
+      • Player Inspector + ESP : PvP status (PVP ON vs SAFE), Devil Fruit, Fighting Style, Sword, Gun, Level, Bounty
+      • Undetected Bypass Fly  : invisible client float-pad + smooth delta CFrame stepping (no PlatformStand flag)
+      • Fixed Sea Detection    : expanded PlaceId tables + live Workspace landmark/mob/level detection (never wrong Sea 1)
+      • Fixed Fighting Styles  : reliable Melee/Fighting-Style detection + Humanoid:EquipTool fallback + full V1/V2/V3 switcher
+      • Fruit Magnet + Gacha   : firetouchinterest fruit pull, Zioles roller with OriginalName auto-store, rarity Fruit ESP
+      • Unique Utilities       : Walk on Water, Infinite Geppo, Infinite Energy, Dash No-CD, Mirage/Kitsune/Sea-Event tracker
+      • Triple-Layer Fast Attack, Kill Aura, Hitbox Expander & Blox Fruits Anti-Cheat Disabler
     Repository: https://github.com/ameksi-web/Skill-Hub
 ]]
 
@@ -46,38 +51,233 @@ local CustomIcons = {
     Layers      = "rbxassetid://10723397898", -- Combo Sequencer
     Search      = "rbxassetid://10734943674", -- Filter Search
     RadialGlow  = "rbxassetid://5028857084",  -- Soft Neon Backlight
+    -- New v3.0 tab / feature icons
+    PvP         = "rbxassetid://10734962068", -- Skull (PvP Hunter)
+    Players     = "rbxassetid://10709782497", -- Analytics (Player Inspector)
+    Aim         = "rbxassetid://10709818626", -- Compass (AimLock)
+    Fly         = "rbxassetid://10747384394", -- Lightning (Undetected Fly)
+    Water       = "rbxassetid://10723346959", -- Eye (Walk on Water)
+    Magnet      = "rbxassetid://10734982144", -- Burst (Fruit Magnet)
+    Server      = "rbxassetid://10734950309", -- Crest (Server Status)
 }
 
 -- ═══════════════════════════════════════════════════════════════════════════
 --  UP-TO-DATE BLOX FRUITS DATA (UPDATE 24+ / DRAGON REWORK / TIKI OUTPOST)
---  Outdated names (Kilo, Revive, Paw, Door, String, Chop, Soul) replaced.
+--  Full current roster incl. Chop, Door, String, Paw, Revive, Kilo, Yeti, Kitsune
+--  and both Dragon reworks, grouped by rarity tier for the Fruit ESP colours.
 -- ═══════════════════════════════════════════════════════════════════════════
 
-local PLACE_IDS = {
-    FirstSea  = 2753915549,
-    SecondSea = 4442272183,
-    ThirdSea  = 7449423635,
+-- ═══════════════════════════════════════════════════════════════════════════
+--  SEA DETECTION ENGINE  (FIXED — never wrongly reports Sea 1 any more)
+--  Layer 1 : expanded PlaceId tables (all public + known alias place IDs)
+--  Layer 2 : live Workspace landmark scan (islands / _WorldOrigin.Locations)
+--  Layer 3 : live enemy & NPC name scan (Workspace.Enemies / NPCs)
+--  Layer 4 : level heuristic (Second Sea = Lv 700+, Third Sea = Lv 1500+)
+--  Layer 5 : manual override from the UI (Teleport & Seas tab)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local SEA_PLACE_IDS = {
+    [1] = { [2753915549] = true },
+    [2] = { [4442272183] = true },
+    [3] = { [7449423635] = true },
 }
 
+-- Landmark names are matched as SUBSTRINGS, mob names are matched EXACTLY.
+local SEA_SIGNATURES = {
+    [1] = {
+        Locations = {
+            ["middle town"] = 6, ["starter pirate island"] = 6, ["starter marine island"] = 6,
+            ["pirate village"] = 6, ["jungle"] = 6, ["fountain city"] = 5,
+            ["magma village"] = 5, ["underwater city"] = 5, ["upper skylands"] = 5,
+            ["lower skylands"] = 5, ["marine fortress"] = 5, ["frozen village"] = 5,
+            ["desert"] = 4, ["starter island"] = 4,
+        },
+        Mobs = { ["bandit"] = 2, ["monkey"] = 2, ["brute"] = 2, ["fishman"] = 2, ["pirate"] = 2, ["trainee"] = 2 },
+    },
+    [2] = {
+        Locations = {
+            ["kingdom of rose"] = 6, ["green zone"] = 6, ["graveyard"] = 6,
+            ["cursed ship"] = 6, ["ice castle"] = 6, ["forgotten island"] = 6,
+            ["dark arena"] = 5, ["hot and cold"] = 5, ["snow mountain"] = 5,
+            ["cafe"] = 5, ["café"] = 5,
+        },
+        Mobs = { ["swan pirate"] = 2, ["mercenary"] = 2, ["cyborg"] = 3, ["fajita"] = 3, ["jeremy"] = 3, ["snow trooper"] = 2, ["winter warrior"] = 2 },
+    },
+    [3] = {
+        Locations = {
+            ["port town"] = 6, ["hydra island"] = 6, ["great tree"] = 6,
+            ["floating turtle"] = 6, ["castle on the sea"] = 6, ["haunted castle"] = 6,
+            ["tiki outpost"] = 6, ["temple of time"] = 5, ["kitsune island"] = 6,
+            ["prehistoric island"] = 6, ["iceborn island"] = 5, ["sea of treats"] = 5,
+        },
+        Mobs = { ["pirate millionaire"] = 3, ["reborn skeleton"] = 3, ["living zombie"] = 3, ["demonic soul"] = 3, ["fishman raider"] = 3, ["isle outlaw"] = 3, ["forest pirate"] = 3, ["sun-kissed warrior"] = 3, ["cookie crafter"] = 3 },
+    },
+}
+
+local SEA_LABELS = { [1] = "First Sea", [2] = "Second Sea", [3] = "Third Sea" }
+local CONFIG_SEA_OVERRIDE = "Auto"
+local SEA_DETECT_SOURCE = "place"
 local CURRENT_SEA = 1
-if game.PlaceId == PLACE_IDS.SecondSea then
-    CURRENT_SEA = 2
-elseif game.PlaceId == PLACE_IDS.ThirdSea then
-    CURRENT_SEA = 3
+
+local function readRawLevel()
+    local d = LocalPlayer:FindFirstChild("Data")
+    local lv = d and d:FindFirstChild("Level")
+    return (lv and lv.Value) or 0
 end
 
-local FRUITS_LIST = {
-    -- Common
-    "Rocket", "Spin", "Blade", "Spring", "Bomb", "Smoke", "Spike",
-    -- Uncommon
-    "Flame", "Falcon", "Ice", "Sand", "Dark", "Diamond",
-    -- Rare
-    "Light", "Rubber", "Barrier", "Ghost", "Magma",
-    -- Legendary
-    "Quake", "Buddha", "Love", "Spider", "Sound", "Phoenix", "Portal", "Rumble", "Pain", "Blizzard",
-    -- Mythical
-    "Gravity", "Mammoth", "T-Rex", "Dough", "Shadow", "Venom", "Control", "Gas", "Spirit", "Leopard", "Yeti", "Kitsune", "Dragon (West)", "Dragon (East)",
+-- Collect every island / mob / NPC name currently replicated to this client
+local function scanWorldNames()
+    local locNames, exactNames = {}, {}
+    local function addName(name, isLocation)
+        if type(name) ~= "string" or name == "" then return end
+        local lower = name:lower()
+        exactNames[lower] = true
+        if isLocation then table.insert(locNames, lower) end
+    end
+
+    pcall(function()
+        for _, child in ipairs(Workspace:GetChildren()) do
+            addName(child.Name, true)
+            local locs = child:FindFirstChild("Locations") or child:FindFirstChild("Islands")
+            if locs then
+                for _, loc in ipairs(locs:GetChildren()) do addName(loc.Name, true) end
+            end
+        end
+        for _, folderName in ipairs({ "Enemies", "NPCs", "Quest NPCs", "QuestNPCs", "Characters", "Locations", "Islands" }) do
+            local folder = Workspace:FindFirstChild(folderName)
+            if folder then
+                for _, child in ipairs(folder:GetChildren()) do
+                    addName(child.Name, folderName == "Locations" or folderName == "Islands")
+                end
+            end
+        end
+    end)
+
+    return locNames, exactNames
+end
+
+local function computeSeaScores()
+    local locNames, exactNames = scanWorldNames()
+    local scores = { [1] = 0, [2] = 0, [3] = 0 }
+
+    for sea = 1, 3 do
+        local sig = SEA_SIGNATURES[sea]
+        for key, weight in pairs(sig.Locations) do
+            for _, name in ipairs(locNames) do
+                if name:find(key, 1, true) then
+                    scores[sea] += weight
+                    break
+                end
+            end
+        end
+        for key, weight in pairs(sig.Mobs) do
+            if exactNames[key] then scores[sea] += weight end
+        end
+    end
+    return scores
+end
+
+local function bestScoredSea(scores)
+    local best, bestScore, tied = nil, 0, false
+    for sea = 1, 3 do
+        local sc = scores[sea] or 0
+        if sc > bestScore then
+            best, bestScore, tied = sea, sc, false
+        elseif sc == bestScore and sc > 0 then
+            tied = true
+        end
+    end
+    return (not tied) and best or nil, bestScore
+end
+
+local function detectSeaFromPlaceId()
+    for sea = 1, 3 do
+        if SEA_PLACE_IDS[sea][game.PlaceId] then return sea end
+    end
+    return nil
+end
+
+-- Master resolver: returns sea, source, scores
+local function resolveSea()
+    local scores = computeSeaScores()
+    local mapSea, mapScore = bestScoredSea(scores)
+    local placeSea = detectSeaFromPlaceId()
+
+    -- Strong map evidence always wins over the PlaceId table
+    if mapSea and mapScore >= 12 then return mapSea, "map", scores end
+    if placeSea then return placeSea, "place", scores end
+    if mapSea then return mapSea, "map", scores end
+
+    -- Level fallback (Sea 2 requires Lv 700, Sea 3 requires Lv 1500)
+    local lv = readRawLevel()
+    if lv >= 1500 then return 3, "level", scores end
+    if lv >= 700 then return 2, "level", scores end
+    return 1, "level", scores
+end
+
+-- Refresh CURRENT_SEA (called on load, on a short retry loop and by the UI)
+local function refreshSea()
+    if CONFIG_SEA_OVERRIDE ~= "Auto" then
+        local forced = tonumber(CONFIG_SEA_OVERRIDE)
+        if forced then
+            CURRENT_SEA = forced
+            SEA_DETECT_SOURCE = "manual"
+        end
+        return CURRENT_SEA
+    end
+    local sea, source = resolveSea()
+    if sea then
+        CURRENT_SEA = sea
+        SEA_DETECT_SOURCE = source
+    end
+    return CURRENT_SEA
+end
+
+refreshSea()
+
+-- Full current roster (Update 24+) grouped into rarity tiers for Fruit ESP colours
+local FRUIT_RARITY = {
+    { name = "Common",    color = Color3.fromRGB(148, 163, 184), fruits = {
+        "Rocket", "Spin", "Blade", "Kilo", "Chop", "Spring", "Bomb", "Smoke", "Spike",
+    } },
+    { name = "Uncommon",  color = Color3.fromRGB(74, 222, 128), fruits = {
+        "Flame", "Falcon", "Ice", "Sand", "Dark", "Diamond", "Door", "String", "Rubber", "Barrier",
+    } },
+    { name = "Rare",      color = Color3.fromRGB(56, 189, 248), fruits = {
+        "Light", "Ghost", "Magma", "Quake", "Buddha", "Love", "Spider", "Sound", "Paw", "Revive",
+    } },
+    { name = "Legendary", color = Color3.fromRGB(250, 204, 21), fruits = {
+        "Phoenix", "Portal", "Rumble", "Pain", "Blizzard", "Gravity",
+    } },
+    { name = "Mythical",  color = Color3.fromRGB(244, 114, 182), fruits = {
+        "Mammoth", "T-Rex", "Dough", "Shadow", "Venom", "Control", "Gas",
+        "Spirit", "Leopard", "Yeti", "Kitsune", "Dragon (West)", "Dragon (East)",
+    } },
 }
+
+local FRUITS_LIST = {}
+local FRUIT_RARITY_OF = {}
+for _, tier in ipairs(FRUIT_RARITY) do
+    for _, fName in ipairs(tier.fruits) do
+        table.insert(FRUITS_LIST, fName)
+        FRUIT_RARITY_OF[fName] = tier
+    end
+end
+-- aliases so short / renamed inventory names still resolve to a rarity tier
+FRUIT_RARITY_OF["Dragon"] = FRUIT_RARITY_OF["Dragon (West)"] or FRUIT_RARITY_OF["Mythical"]
+FRUIT_RARITY_OF["Dough King"] = FRUIT_RARITY_OF["Dough"]
+FRUIT_RARITY_OF["Kitsune Fruit"] = FRUIT_RARITY_OF["Kitsune"]
+table.sort(FRUITS_LIST)
+
+local function getFruitTier(fruitName)
+    if not fruitName then return { name = "Unknown", color = Color3.fromRGB(167, 139, 250) } end
+    local clean = tostring(fruitName):gsub(" Fruit", ""):gsub("fruit", "")
+    clean = clean:gsub("^%s+", ""):gsub("%s+$", "")
+    for name, tier in pairs(FRUIT_RARITY_OF) do
+        if clean == name or clean:find(name, 1, true) then return tier end
+    end
+    return { name = "Unknown", color = Color3.fromRGB(167, 139, 250) }
+end
 
 local FRUIT_STORE_CODES = {}
 for _, fName in ipairs(FRUITS_LIST) do
@@ -89,15 +289,91 @@ local RAID_CHIPS = {
     "Rumble", "Magma", "Buddha", "Sand", "Phoenix", "Dough",
 }
 
+-- Ordered Fighting Style database (V1 + V2 + V3). `remote` = CommF_ purchase remote,
+-- `tool` = the Melee tool name the game equips for that style.
 local FIGHTING_STYLES = {
-    ["Sanguine Art"]    = "BuySanguineArt",
-    ["Godhuman"]        = "BuyGodhuman",
-    ["Dragon Talon"]    = "BuyDragonTalon",
-    ["Electric Claw"]   = "BuyElectricClaw",
-    ["Sharkman Karate"] = "BuySharkmanKarate",
-    ["Death Step"]      = "BuyDeathStep",
-    ["Superhuman"]      = "BuySuperhuman",
+    { name = "Combat",          remote = "BuyCombat",        tier = "V1 · Base",    tool = "Combat" },
+    { name = "Black Leg",       remote = "BuyBlackLeg",      tier = "V1",           tool = "Black Leg" },
+    { name = "Electro",         remote = "BuyElectro",       tier = "V1",           tool = "Electro" },
+    { name = "Fishman Karate",  remote = "BuyFishmanKarate", tier = "V1",           tool = "Fishman Karate" },
+    { name = "Dragon Breath",   remote = "BuyDragonBreath",  tier = "V1",           tool = "Dragon Breath" },
+    { name = "Superhuman",      remote = "BuySuperhuman",    tier = "V2",           tool = "Superhuman" },
+    { name = "Death Step",      remote = "BuyDeathStep",     tier = "V2",           tool = "Death Step" },
+    { name = "Sharkman Karate", remote = "BuySharkmanKarate",tier = "V2",           tool = "Sharkman Karate" },
+    { name = "Electric Claw",   remote = "BuyElectricClaw",  tier = "V2",           tool = "Electric Claw" },
+    { name = "Dragon Talon",    remote = "BuyDragonTalon",   tier = "V2",           tool = "Dragon Talon" },
+    { name = "Godhuman",        remote = "BuyGodhuman",      tier = "V3 · Endgame", tool = "Godhuman" },
+    { name = "Sanguine Art",    remote = "BuySanguineArt",   tier = "V3 · Endgame", tool = "Sanguine Art" },
 }
+
+local FIGHTING_STYLE_TOOLS   = {}   -- lowercased tool/tooltip name -> canonical style name
+local FIGHTING_STYLE_REMOTES = {}   -- canonical style name -> CommF_ remote
+local FIGHTING_STYLE_ORDER   = {}   -- dropdown labels
+
+for _, style in ipairs(FIGHTING_STYLES) do
+    FIGHTING_STYLE_TOOLS[style.name:lower()] = style.name
+    FIGHTING_STYLE_TOOLS[style.tool:lower()] = style.name
+    FIGHTING_STYLE_TOOLS[style.name:lower():gsub("%s", "")] = style.name
+    FIGHTING_STYLE_TOOLS[style.tool:lower():gsub("%s", "")] = style.name
+    FIGHTING_STYLE_REMOTES[style.name] = style.remote
+    table.insert(FIGHTING_STYLE_ORDER, string.format("%s  [%s]", style.name, style.tier))
+end
+
+-- ToolTip values the game (or localized clients) may report for a Fighting Style
+local FIGHTING_STYLE_TIPS = {
+    ["melee"] = true, ["fighting style"] = true, ["style"] = true, ["combat"] = true,
+    ["black leg"] = true, ["electro"] = true, ["fishman karate"] = true, ["dragon breath"] = true,
+    ["dragon claw"] = true, ["superhuman"] = true, ["death step"] = true, ["sharkman karate"] = true,
+    ["electric claw"] = true, ["dragon talon"] = true, ["godhuman"] = true, ["sanguine art"] = true,
+    ["rokushiki"] = true, ["haki"] = false,
+}
+
+-- Weapon category keyword fallbacks (used when ToolTip is nil / localized / renamed)
+local SWORD_KEYWORDS = {
+    "sword", "blade", "saber", "katana", "cutlass", "scythe", "trident", "spear",
+    "hammer", "dual", "yoru", "dainsleif", "dark blade", "pole", "axe", "sais", "dagger", "rapier",
+}
+local GUN_KEYWORDS = {
+    "slingshot", "flintlock", "cannon", "rifle", "bazooka", "musket", "pistol", "shotgun", "gun",
+}
+local FRUIT_KEYWORDS = { "fruit", "dough", "kitsune", "dragon", "leopard", "venom", "control", "spirit" }
+
+local function isMeleeTool(tool)
+    if not tool or not tool:IsA("Tool") then return false end
+    local tip = tostring(tool.ToolTip or ""):lower()
+    if FIGHTING_STYLE_TIPS[tip] then return true end
+    if FIGHTING_STYLE_TOOLS[tool.Name:lower()] then return true end
+    if FIGHTING_STYLE_TOOLS[tool.Name:lower():gsub("%s", "")] then return true end
+    local attr = tool:GetAttribute("WeaponType") or tool:GetAttribute("Type") or tool:GetAttribute("Style")
+    if type(attr) == "string" and FIGHTING_STYLE_TIPS[attr:lower()] then return true end
+    return false
+end
+
+local function toolMatchesCategory(tool, weaponType)
+    if not tool or not tool:IsA("Tool") then return false end
+    local tip = tostring(tool.ToolTip or ""):lower()
+    local name = tool.Name:lower()
+    local want = tostring(weaponType or "Melee"):lower()
+
+    if want == "melee" then
+        return isMeleeTool(tool)
+    elseif want == "sword" then
+        if tip == "sword" or tip == "swords" then return true end
+        if tool:GetAttribute("IsSword") then return true end
+        for _, kw in ipairs(SWORD_KEYWORDS) do if name:find(kw, 1, true) then return true end end
+        return false
+    elseif want == "gun" or want == "guns" then
+        if tip == "gun" or tip == "guns" then return true end
+        if tool:GetAttribute("IsGun") then return true end
+        for _, kw in ipairs(GUN_KEYWORDS) do if name:find(kw, 1, true) then return true end end
+        return false
+    else -- Blox Fruit
+        if tip == "blox fruit" or tip == "fruit" then return true end
+        if tool:GetAttribute("IsFruit") or tool:GetAttribute("OriginalName") then return true end
+        for _, kw in ipairs(FRUIT_KEYWORDS) do if name:find(kw, 1, true) then return true end end
+        return false
+    end
+end
 
 local BOSSES_BY_SEA = {
     [1] = {
@@ -161,6 +437,42 @@ local ISLAND_TELEPORTS = {
     },
 }
 
+-- Sea-agnostic lookup tables so teleports & boss hunting work even if the Sea
+-- detector, a sub-place ID or a custom server reports an unexpected value.
+local ISLAND_TELEPORTS_ALL = {}
+for sea = 1, 3 do
+    local list = ISLAND_TELEPORTS[sea]
+    if list then
+        for islandName, cf in pairs(list) do
+            ISLAND_TELEPORTS_ALL[string.format("S%d • %s", sea, islandName)] = cf
+        end
+    end
+end
+
+local ISLAND_LIST_ALL = {}
+for label in pairs(ISLAND_TELEPORTS_ALL) do table.insert(ISLAND_LIST_ALL, label) end
+table.sort(ISLAND_LIST_ALL)
+
+local BOSS_LIST_ALL = {}
+for sea = 1, 3 do
+    for _, bossName in ipairs(BOSSES_BY_SEA[sea] or {}) do
+        table.insert(BOSS_LIST_ALL, string.format("S%d • %s", sea, bossName))
+    end
+end
+
+-- Sea events / special landmarks tracked by the Sea Event & Mirage utilities
+local SEA_EVENT_SIGNATURES = {
+    { Name = "Terror Shark",      Keys = { "terror shark" },                 Color = Color3.fromRGB(239, 68, 68) },
+    { Name = "Leviathan",         Keys = { "leviathan" },                    Color = Color3.fromRGB(56, 189, 248) },
+    { Name = "Sea Beast",         Keys = { "sea beast" },                    Color = Color3.fromRGB(248, 113, 113) },
+    { Name = "Kraken",            Keys = { "kraken" },                        Color = Color3.fromRGB(168, 85, 247) },
+    { Name = "Mirage Island",     Keys = { "mirage" },                        Color = Color3.fromRGB(244, 114, 182) },
+    { Name = "Kitsune Shrine",    Keys = { "kitsune shrine", "kitsune island" }, Color = Color3.fromRGB(250, 204, 21) },
+    { Name = "Prehistoric Island",Keys = { "prehistoric" },                   Color = Color3.fromRGB(74, 222, 128) },
+    { Name = "Cursed Ship Raid",  Keys = { "cursed ship" },                   Color = Color3.fromRGB(148, 163, 184) },
+    { Name = "Blue Gear / Mystic",Keys = { "mystic", "blue gear" },           Color = Color3.fromRGB(125, 211, 252) },
+}
+
 local QUEST_DATABASE = {
     [1] = {
         {MinLv = 1,   MaxLv = 9,   Mob = "Bandit",              Quest = "BanditQuest1",      QNum = 1, QPos = CFrame.new(1059, 16, 1549),   MPos = CFrame.new(1145, 17, 1634)},
@@ -217,7 +529,7 @@ local Config = {
     AutoFarmAllBosses   = false,
     AutoFarmChests      = false,
     SelectedWeaponType  = "Melee",
-    SelectedBoss        = BOSSES_BY_SEA[CURRENT_SEA][1],
+    SelectedBoss        = string.format("S%d • %s", CURRENT_SEA, BOSSES_BY_SEA[CURRENT_SEA][1]),
     FarmDistance        = 18,
     TweenSpeed          = 260,
     BringMobs           = true,
@@ -243,13 +555,56 @@ local Config = {
     AutoRaidAura        = false,
     AutoAwaken          = false,
 
-    SelectedIsland      = next(ISLAND_TELEPORTS[CURRENT_SEA]) or "Middle Town",
+    SelectedIsland      = ISLAND_LIST_ALL[1] or "Middle Town",
+    SelectedFightingStyle = FIGHTING_STYLE_ORDER[1],
 
     ESPPlayers          = false,
     ESPFruits           = false,
     ESPChests           = false,
     ESPIslands          = false,
     ESPBosses           = false,
+    ESPPlayerLoadout    = true,
+    ESPFruitRarity      = true,
+    ESPTracers          = false,
+
+    -- PvP & Players
+    SelectedPlayer      = "",
+    AutoKillSelected    = false,
+    AutoKillPvP         = false,
+    AimLock             = false,
+    AimLockSmoothness   = 0.28,
+    AimLockFOV          = 300,
+    SpectatePlayer      = false,
+    PlayerHitbox        = false,
+    PlayerHitboxSize    = 14,
+    IgnoreFriendsPvP    = true,
+    PvPSkills           = true,
+    PvPTweenDistance    = 12,
+    DashInterval        = 0.32,
+
+    -- Undetected Fly
+    FlyEnabled          = false,
+    FlySpeed            = 55,
+    FlyBypassMode       = true,
+    FlyAntiVoid         = true,
+
+    -- Fruit utilities
+    FruitMagnet         = false,
+    FruitMagnetRadius   = 600,
+    AutoStoreRolled     = true,
+    RolledFruitName     = "",
+
+    -- Unique utilities
+    WalkOnWater         = false,
+    InfiniteGeppo       = false,
+    InfiniteEnergy      = false,
+    NoDashCooldown      = false,
+    MirageFinder        = false,
+    SeaEventTracker     = false,
+    AutoCollectDrops    = false,
+    NoFallDamage        = true,
+    ServerStatusHUD     = true,
+    SovereignHakiAura   = true,
 
     -- Combat, Fast Attack & Anti-Cheat Bypass
     AutoAttackAlways    = false,
@@ -273,6 +628,22 @@ local Config = {
     ShowWatermarkHUD    = true,
     PreferExternalFluent = false,
 }
+
+-- Forward-declared hooks (the UI/engine blocks below fill these in later, so every
+-- background loop can safely raise notifications and draw ESP tags).
+local Hooks = {
+    notify    = function() end,
+    clearESP  = function() end,
+    espTag    = function() end,
+}
+
+-- Detections produced by the Sea Event / Mirage scanners, rendered by the ESP loop
+local SeaEventState = {
+    events = {},
+    mirage = {},
+    lastNotify = {},
+}
+
 
 -- ═══════════════════════════════════════════════════════════════════════════
 --  BLOX FRUITS ANTI-CHEAT DISABLER, SIMRADIUS & ANTI-STUN ENGINE
@@ -389,6 +760,9 @@ RunService.Heartbeat:Connect(function()
         if hum then
             hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
             hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+            if Config.NoFallDamage then
+                pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
+            end
         end
 
         if Config.AutoFarmLevel or Config.AutoFarmNearest or Config.AutoFarmBoss or Config.AutoFarmAllBosses then
@@ -495,22 +869,289 @@ local function tweenTo(targetCFrame)
     activeTween:Play()
 end
 
-local function equipWeaponByType(weaponType)
+-- ─── FIXED WEAPON & FIGHTING STYLE EQUIP SYSTEM ─────────────────────────────
+-- Old version only compared Tool.ToolTip, so Melee / Fighting Style tools that
+-- report a nil, localized or renamed ToolTip ("Black Leg", "Godhuman", ...) were
+-- never equipped. This version resolves by ToolTip + known style/sword/gun names
+-- + attributes + keyword heuristics, and equips with Humanoid:EquipTool() with a
+-- `tool.Parent = character` fallback.
+
+local function isToolEquipped(toolName)
+    local char = getCharacter()
+    return char and char:FindFirstChild(toolName) ~= nil
+end
+
+local function collectTools()
+    local list = {}
     local char = getCharacter()
     local backpack = LocalPlayer:FindFirstChild("Backpack")
-    if not char or not backpack then return end
-
-    local targetTooltip = weaponType or "Melee"
-    for _, tool in ipairs(char:GetChildren()) do
-        if tool:IsA("Tool") and tool.ToolTip == targetTooltip then return end
-    end
-    for _, tool in ipairs(backpack:GetChildren()) do
-        if tool:IsA("Tool") and tool.ToolTip == targetTooltip then
-            local hum = getHumanoid()
-            if hum then hum:EquipTool(tool) end
-            return
+    for _, container in ipairs({ char, backpack }) do
+        if container then
+            for _, tool in ipairs(container:GetChildren()) do
+                if tool:IsA("Tool") then table.insert(list, tool) end
+            end
         end
     end
+    return list
+end
+
+local function equipTool(tool)
+    if not tool or not tool:IsA("Tool") then return false end
+    local char = getCharacter()
+    local hum = getHumanoid()
+    if not char then return false end
+    if char:FindFirstChild(tool.Name) then return true end
+
+    pcall(function()
+        if hum then hum:EquipTool(tool) end
+    end)
+    if char:FindFirstChild(tool.Name) then return true end
+
+    -- Fallback: parent straight into the character (works on executors where the
+    -- Humanoid equip method is sandboxed / blocked by the game's Tool handler)
+    pcall(function() tool.Parent = char end)
+    return char:FindFirstChild(tool.Name) ~= nil
+end
+
+local function findToolByCategory(weaponType)
+    -- Prefer an already equipped matching tool, then the Backpack
+    local char = getCharacter()
+    local equipped = char and char:FindFirstChildOfClass("Tool")
+    if equipped and toolMatchesCategory(equipped, weaponType) then return equipped end
+
+    for _, tool in ipairs(collectTools()) do
+        if toolMatchesCategory(tool, weaponType) then
+            if not char or not char:FindFirstChild(tool.Name) then return tool end
+        end
+    end
+    return nil
+end
+
+local function equipWeaponByType(weaponType)
+    if not getCharacter() then return false end
+    local tool = findToolByCategory(weaponType)
+    if not tool then return false end
+    return equipTool(tool)
+end
+
+-- Equip a specific Fighting Style (name or tool name). Blox Fruits equips the
+-- style tool when the purchase remote is fired with the "already owned" flag, so
+-- we send both forms and then force-equip the Melee tool as a guarantee.
+local function equipFightingStyle(styleQuery)
+    if not styleQuery then return false end
+    local key = tostring(styleQuery):lower():gsub("%s*%[.*%]$", ""):gsub("^%s+", ""):gsub("%s+$", "")
+    local canonical = FIGHTING_STYLE_TOOLS[key] or FIGHTING_STYLE_TOOLS[key:gsub("%s", "")]
+    if not canonical then return false end
+    local remote = FIGHTING_STYLE_REMOTES[canonical]
+
+    if remote then
+        pcall(function() invokeCommF(remote, true) end)
+        task.wait(0.3)
+        pcall(function() invokeCommF(remote) end)
+        task.wait(0.7)
+    end
+
+    -- Guarantee the Melee/Fighting-Style tool ends up in the character
+    local char = getCharacter()
+    local target = nil
+    for _, tool in ipairs(collectTools()) do
+        local n = tool.Name:lower()
+        if n == canonical:lower() or FIGHTING_STYLE_TOOLS[n] == canonical then target = tool break end
+    end
+    if not target then target = findToolByCategory("Melee") end
+    if target and char and not char:FindFirstChild(target.Name) then
+        equipTool(target)
+        task.wait(0.15)
+        if not char:FindFirstChild(target.Name) then equipTool(target) end
+    end
+    return char ~= nil and char:FindFirstChildOfClass("Tool") ~= nil
+end
+
+-- ─── PLAYER PVP / LOADOUT INSPECTOR ─────────────────────────────────────────
+
+local PVP_FLAG_NAMES = {
+    "PVP", "Pvp", "pvp", "PvpEnabled", "PVPEnabled", "PVPEnabled", "InPvp", "InPVP",
+    "PvpMode", "PVPMode", "IsPvp", "PvpOn", "PVPOn", "EnablePvp", "PvpStatus",
+}
+
+local function findPvpFlag(container)
+    if not container then return nil, nil end
+    for _, name in ipairs(PVP_FLAG_NAMES) do
+        local v = container:FindFirstChild(name)
+        if v and (v:IsA("BoolValue") or v:IsA("IntValue") or v:IsA("NumberValue") or v:IsA("StringValue")) then
+            return v, name
+        end
+    end
+    return nil, nil
+end
+
+-- Cached safe-zone parts (Blox Fruits marks towns / spawn islands with regions)
+local cachedSafeParts, safeCacheStamp = nil, 0
+local function getSafeZoneParts()
+    if cachedSafeParts and (os.clock() - safeCacheStamp) < 20 then return cachedSafeParts end
+    local parts = {}
+    pcall(function()
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj:IsA("BasePart") and obj.Name:lower():find("safe", 1, true) then
+                table.insert(parts, obj)
+            end
+        end
+    end)
+    cachedSafeParts, safeCacheStamp = parts, os.clock()
+    return parts
+end
+
+local function isInsideSafeZone(char)
+    if not char then return false end
+    local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+    if not root then return false end
+    local pos = root.Position
+    for _, part in ipairs(getSafeZoneParts()) do
+        if part and part.Parent then
+            local rel = part.CFrame:PointToObjectSpace(pos)
+            local size = part.Size
+            if math.abs(rel.X) <= size.X / 2 + 1 and math.abs(rel.Y) <= size.Y / 2 + 4 and math.abs(rel.Z) <= size.Z / 2 + 1 then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- Returns attackable (bool), status text, colour
+local function getPvPStatus(plr)
+    local grey, green, red, blue = Color3.fromRGB(148, 163, 184), Color3.fromRGB(34, 197, 94), Color3.fromRGB(239, 68, 68), Color3.fromRGB(56, 189, 248)
+    if not plr then return false, "UNKNOWN", grey end
+    local char = plr.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not char or not hum then return false, "LOADING / DEAD", grey end
+    if hum.Health <= 0 then return false, "DEAD", grey end
+
+    if char:FindFirstChild("ForceField") or char:FindFirstChild("ForceField") then
+        return false, "SAFE · FORCEFIELD", blue
+    end
+
+    -- Explicit replicated flags first
+    local flag, flagName = findPvpFlag(char)
+    if not flag then flag, flagName = findPvpFlag(plr:FindFirstChild("Data")) end
+    if not flag then flag, flagName = findPvpFlag(plr) end
+    if not flag and plr.PlayerGui then
+        local main = plr.PlayerGui:FindFirstChild("Main")
+        if main then flag, flagName = findPvpFlag(main) end
+    end
+    if flag then
+        if flag.Value == true then return true, "PVP ON · " .. tostring(flagName), red end
+        if flag.Value == false then return false, "PVP OFF · " .. tostring(flagName), green end
+    end
+
+    -- Attribute form (some executor-friendly builds export it as an attribute)
+    for _, attr in ipairs({ "PVP", "Pvp", "PvpEnabled", "InPvp" }) do
+        local v = (pcall(function() return plr:GetAttribute(attr) end)) and plr:GetAttribute(attr) or nil
+        if v ~= nil then
+            return v and true or false, (v and "PVP ON · attr" or "PVP OFF · attr"), (v and red or green)
+        end
+    end
+
+    if isInsideSafeZone(char) then return false, "SAFE ZONE", blue end
+
+    -- No replicated flag exists for this player: outside a safe zone in Blox Fruits
+    -- everybody is damageable, so treat them as PvP-able.
+    return true, "PVP ON · outside safe zone", red
+end
+
+local function canAttackPlayer(plr)
+    local ok = getPvPStatus(plr)
+    return ok
+end
+
+local function getPlayerBounty(plr)
+    local data = plr and plr:FindFirstChild("Data")
+    if data then
+        for _, n in ipairs({ "Bounty", "BountyValue", "BountyAmount" }) do
+            local v = data:FindFirstChild(n)
+            if v and v:IsA("ValueBase") then return tostring(v.Value) end
+        end
+    end
+    return "-"
+end
+
+-- Full loadout snapshot used by Player ESP + the in-UI Player Scanner
+local function getPlayerLoadout(plr)
+    local out = {
+        fruit = "None", style = "Combat", sword = "-", gun = "-",
+        level = "?", bounty = "-", total = "-", hp = 0, maxHp = 0,
+    }
+    if not plr then return out end
+    local data = plr:FindFirstChild("Data")
+    local function readData(...)
+        if not data then return nil end
+        for _, n in ipairs({ ... }) do
+            local v = data:FindFirstChild(n)
+            if v and v:IsA("ValueBase") then return tostring(v.Value) end
+        end
+        return nil
+    end
+    out.level  = readData("Level") or "?"
+    out.bounty = getPlayerBounty(plr)
+    out.total  = readData("Beli") or "-"
+    out.fruit  = readData("DevilFruit", "Fruit", "DevilFruitValue") or "None"
+
+    local char = plr.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        out.hp = math.floor(hum.Health)
+        out.maxHp = math.floor(hum.MaxHealth)
+    end
+
+    for _, container in ipairs({ char, plr:FindFirstChild("Backpack") }) do
+        if container then
+            for _, tool in ipairs(container:GetChildren()) do
+                if tool:IsA("Tool") then
+                    local isFruit = toolMatchesCategory(tool, "Blox Fruit")
+                    if isFruit and (out.fruit == "None" or out.fruit == "") then
+                        out.fruit = tool.Name
+                    elseif isMeleeTool(tool) and out.style == "Combat" then
+                        out.style = tool.Name
+                    elseif toolMatchesCategory(tool, "Sword") and out.sword == "-" then
+                        out.sword = tool.Name
+                    elseif toolMatchesCategory(tool, "Gun") and out.gun == "-" then
+                        out.gun = tool.Name
+                    end
+                end
+            end
+        end
+    end
+    out.fruit = tostring(out.fruit):gsub(" Fruit", "")
+    out.style = tostring(out.style):gsub(" Fruit", "")
+    return out
+end
+
+local function getPlayerByName(query)
+    if not query or query == "" then return nil end
+    local q = tostring(query):lower():gsub("^%s+", ""):gsub("%s+$", "")
+    if q == "" then return nil end
+    local exact, partial
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            local nm = plr.Name:lower()
+            local dn = plr.DisplayName:lower()
+            if nm == q or dn == q then
+                exact = plr
+            elseif not partial and (nm:find(q, 1, true) or dn:find(q, 1, true)) then
+                partial = plr
+            end
+        end
+    end
+    return exact or partial
+end
+
+local function getPlayerList()
+    local list = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then table.insert(list, plr.Name) end
+    end
+    table.sort(list)
+    return list
 end
 
 -- Gather all valid enemy targets in range for Multi-Target Fast Attack
@@ -582,14 +1223,16 @@ local function getActiveCombatController()
     return nil
 end
 
-local function triggerFastAttack()
+-- Fires the Triple-Layer attack packet stack at an explicit target list.
+-- Used by Fast Attack, Kill Aura and the PvP hunter.
+local function fireAttackPackets(primaryPart, bladeHits, rawParts)
     local char = getCharacter()
-    if not char then return end
-
-    local primaryPart, bladeHits, rawParts = getBladeHitTargets(Config.AttackRange)
+    if not char or not primaryPart then return end
+    bladeHits = bladeHits or {}
+    rawParts = rawParts or {}
 
     -- Layer 1: Update 20-24+ Modules.Net Multi-Target Packet (RE/RegisterAttack + RE/RegisterHit)
-    if primaryPart and #bladeHits > 0 then
+    if #bladeHits > 0 then
         pcall(function()
             local modules = ReplicatedStorage:FindFirstChild("Modules")
             local net = modules and modules:FindFirstChild("Net")
@@ -649,6 +1292,13 @@ local function triggerFastAttack()
     end)
 end
 
+local function triggerFastAttack()
+    local primaryPart, bladeHits, rawParts = getBladeHitTargets(Config.AttackRange)
+    if primaryPart then
+        fireAttackPackets(primaryPart, bladeHits, rawParts)
+    end
+end
+
 -- Dedicated High-Speed Fast Attack Thread (runs during Farm OR when AutoAttackAlways is ON)
 task.spawn(function()
     while true do
@@ -706,6 +1356,705 @@ local function getQuestForLevel(lv)
     end
     return chosen
 end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  PLAYER PVP HUNTER ENGINE  (kill selected / kill PvP-enabled / aimlock / spectate)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local PvPState = {
+    target = nil,
+    targetName = "",
+    lastAttack = 0,
+    lastSkill = 0,
+    hitboxOriginals = {},
+}
+
+local function getCharacterCombatParts(char)
+    if not char or char == LocalPlayer.Character then return nil end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local head = char:FindFirstChild("Head") or hrp
+    if not hum or not hrp or not head or hum.Health <= 0 then return nil end
+    return { char = char, hum = hum, hrp = hrp, head = head }
+end
+
+local function castCombatSkills()
+    local now = os.clock()
+    if now - (PvPState.lastSkill or 0) < 0.4 then return end
+    PvPState.lastSkill = now
+    for _, key in ipairs({ Enum.KeyCode.Z, Enum.KeyCode.X, Enum.KeyCode.C, Enum.KeyCode.V }) do
+        pcall(function()
+            VirtualInputManager:SendKeyEvent(true, key, false, game)
+            task.wait(0.05)
+            VirtualInputManager:SendKeyEvent(false, key, false, game)
+        end)
+    end
+end
+
+-- Attack one specific player (used by Auto Kill Selected / Auto Kill PvP / aimlock)
+local function attackCharacter(char)
+    local info = getCharacterCombatParts(char)
+    if not info then return false end
+
+    local bladeHits = { { info.char, info.head } }
+    local rawParts = { info.head }
+
+    -- merge in everything else inside Attack Range for extra packet coverage
+    local _, extraBlade, extraRaw = getBladeHitTargets(Config.AttackRange)
+    if extraBlade then
+        for idx, entry in ipairs(extraBlade) do
+            if entry[1] ~= info.char then table.insert(bladeHits, entry) end
+        end
+    end
+    if extraRaw then
+        for _, part in ipairs(extraRaw) do
+            if part ~= info.head then table.insert(rawParts, part) end
+        end
+    end
+
+    fireAttackPackets(info.head, bladeHits, rawParts)
+    return true
+end
+
+local function tweenToPlayer(plr, distance)
+    local info = getCharacterCombatParts(plr and plr.Character)
+    if not info then return false end
+    tweenTo(info.hrp.CFrame * CFrame.new(0, distance or Config.PvPTweenDistance or 12, 0))
+    return true
+end
+
+local function setPlayerHitbox(plr, expand)
+    local char = plr and plr.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    local key = plr.Name
+    if expand then
+        if not PvPState.hitboxOriginals[key] then
+            PvPState.hitboxOriginals[key] = { size = hrp.Size, transparency = hrp.Transparency, collide = hrp.CanCollide }
+        end
+        local size = math.clamp(Config.PlayerHitboxSize or 14, 4, 40)
+        pcall(function()
+            hrp.Size = Vector3.new(size, size, size)
+            hrp.Transparency = 1
+            hrp.CanCollide = false
+        end)
+    else
+        local orig = PvPState.hitboxOriginals[key]
+        if orig then
+            pcall(function()
+                hrp.Size = orig.size
+                hrp.Transparency = orig.transparency
+                hrp.CanCollide = orig.collide
+            end)
+            PvPState.hitboxOriginals[key] = nil
+        end
+    end
+end
+
+local function isFriend(plr)
+    if not Config.IgnoreFriendsPvP then return false end
+    local ok, res = pcall(function() return LocalPlayer:IsFriendsWith(plr.UserId) end)
+    return ok and res == true
+end
+
+-- Nearest player that is actually damageable (PvP ON / outside safe zone)
+local function pickAutoKillTarget()
+    local myRoot = getRoot()
+    if not myRoot then return nil end
+    local best, bestDist = nil, math.huge
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            local info = getCharacterCombatParts(plr.Character)
+            if info and canAttackPlayer(plr) and not isFriend(plr) then
+                local dist = (info.hrp.Position - myRoot.Position).Magnitude
+                if dist < bestDist then bestDist, best = dist, plr end
+            end
+        end
+    end
+    return best, bestDist
+end
+
+-- Spectate controller
+local SpectateState = { active = false, originalType = nil, originalSubject = nil }
+local function setSpectate(plr)
+    local cam = Workspace.CurrentCamera
+    if not cam then return end
+    local char = plr and plr.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        if not SpectateState.active then
+            SpectateState.originalType = cam.CameraType
+            SpectateState.originalSubject = cam.CameraSubject
+            SpectateState.active = true
+        end
+        cam.CameraType = Enum.CameraType.Custom
+        cam.CameraSubject = hum
+    elseif SpectateState.active then
+        pcall(function()
+            if SpectateState.originalSubject and SpectateState.originalSubject.Parent then
+                cam.CameraSubject = SpectateState.originalSubject
+            end
+            if SpectateState.originalType then cam.CameraType = SpectateState.originalType end
+        end)
+        SpectateState.active = false
+    end
+end
+
+-- Main PvP tick: target selection, kill automation, hitbox control
+task.spawn(function()
+    while task.wait(0.09) do
+        pcall(function()
+            local target = nil
+
+            if Config.AutoKillSelected then
+                target = getPlayerByName(Config.SelectedPlayer)
+                if not target then target = pickAutoKillTarget() end
+            end
+            if not target and Config.AutoKillPvP then
+                target = pickAutoKillTarget()
+            end
+            if not target and (Config.AimLock or Config.PlayerHitbox or Config.SpectatePlayer) then
+                target = getPlayerByName(Config.SelectedPlayer)
+            end
+
+            PvPState.target = target
+            PvPState.targetName = target and target.Name or ""
+
+            if target then
+                local info = getCharacterCombatParts(target.Character)
+                if info then
+                    local shouldFight = Config.AutoKillSelected or Config.AutoKillPvP
+                    if shouldFight then
+                        local now = os.clock()
+                        local myRoot = getRoot()
+                        -- stay glued to the target (tweens only when far away)
+                        if not myRoot or (info.hrp.Position - myRoot.Position).Magnitude > (Config.PvPTweenDistance or 12) then
+                            tweenToPlayer(target)
+                        end
+                        if now - (PvPState.lastAttack or 0) >= 0.11 then
+                            PvPState.lastAttack = now
+                            attackCharacter(target.Character)
+                            if Config.PvPSkills ~= false then castCombatSkills() end
+                        end
+                    end
+                    if Config.SpectatePlayer then setSpectate(target) end
+                    if Config.PlayerHitbox then setPlayerHitbox(target, true) end
+                end
+            elseif Config.SpectatePlayer then
+                setSpectate(nil)
+            end
+
+            -- restore hitboxes of players no longer targeted
+            if next(PvPState.hitboxOriginals) then
+                for name in pairs(PvPState.hitboxOriginals) do
+                    if not (target and target.Name == name) or not Config.PlayerHitbox then
+                        local plr = getPlayerByName(name)
+                        if plr then setPlayerHitbox(plr, false) else PvPState.hitboxOriginals[name] = nil end
+                    end
+                end
+            end
+        end)
+    end
+end)
+
+-- Skill Aimbot / AimLock camera controller
+RunService.RenderStepped:Connect(function(dt)
+    if not Config.AimLock then return end
+    pcall(function()
+        local cam = Workspace.CurrentCamera
+        local target = PvPState.target
+        local info = getCharacterCombatParts(target and target.Character)
+        local myRoot = getRoot()
+        if not cam or not info or not myRoot then return end
+        local fov = Config.AimLockFOV or 300
+        if fov > 0 and (info.hrp.Position - myRoot.Position).Magnitude > fov then return end
+
+        local goal = CFrame.lookAt(cam.CFrame.Position, info.head.Position)
+        local alpha = math.clamp(Config.AimLockSmoothness or 0.3, 0.05, 1)
+        cam.CFrame = cam.CFrame:Lerp(goal, alpha)
+    end)
+end)
+
+-- Skill Aimbot · __namecall ray-redirect hook.
+-- While AimLock is engaged every mouse-hit / raycast the game performs for M1s is
+-- re-aimed at the locked target head (the returned result stays a real engine
+-- raycast, so hit registration is genuine instead of faked).
+local aimHookInstalled = false
+local function installAimRayHook()
+    if aimHookInstalled then return end
+    if not hookmetamethod or not getnamecallmethod then return end
+    aimHookInstalled = true
+    pcall(function()
+        local oldNamecall
+        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+            local method = getnamecallmethod()
+            if Config.AimLock and method then
+                local targetChar = PvPState.target and PvPState.target.Character
+                local info = getCharacterCombatParts(targetChar)
+                if info then
+                    local args = { ... }
+                    if method == "FindPartOnRayWithIgnoreList" and args[1] then
+                        local ray = args[1]
+                        local dir = info.head.Position - ray.Origin
+                        if dir.Magnitude > 0.1 then
+                            local newRay = Ray.new(ray.Origin, dir.Unit * math.clamp(dir.Magnitude + 6, 1, 400))
+                            return oldNamecall(self, newRay, args[2], select(3, ...))
+                        end
+                    elseif method == "FindPartOnRay" and args[1] then
+                        local ray = args[1]
+                        local dir = info.head.Position - ray.Origin
+                        if dir.Magnitude > 0.1 then
+                            local newRay = Ray.new(ray.Origin, dir.Unit * math.clamp(dir.Magnitude + 6, 1, 400))
+                            return oldNamecall(self, newRay, select(2, ...))
+                        end
+                    elseif method == "Raycast" and args[1] and args[2] then
+                        local origin = args[1]
+                        local dir = info.head.Position - origin
+                        if dir.Magnitude > 0.1 then
+                            return oldNamecall(self, origin, dir, select(3, ...))
+                        end
+                    end
+                end
+            end
+            return oldNamecall(self, ...)
+        end)
+    end)
+end
+installAimRayHook()
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  UNDETECTED BYPASS FLY  (invisible client floor pad + smooth delta stepping)
+--  · a client-only collidable pad is kept under the feet, so the Humanoid always
+--    believes it is standing on the ground (no Freefall / no PlatformStand flag)
+--  · movement is applied in small safe deltas (max ~2 studs per frame) instead of
+--    teleport jumps, and AssemlyLinearVelocity is zeroed every frame
+--  · WASD steer, Space = up, LeftShift = down
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local FloorPad = { part = nil }
+
+local function ensureFloorPad(offsetY)
+    local root = getRoot()
+    if not root then return nil end
+    if not FloorPad.part or not FloorPad.part.Parent then
+        local pad = Instance.new("Part")
+        pad.Name = "SkillHubClientFloorPad"
+        pad.Size = Vector3.new(7, 0.5, 7)
+        pad.Anchored = true
+        pad.CanCollide = true
+        pad.CanQuery = false
+        pad.CanTouch = false
+        pad.CastShadow = false
+        pad.Massless = true
+        pad.Transparency = 1
+        pad.Material = Enum.Material.Plastic
+        pad.Parent = Workspace
+        FloorPad.part = pad
+    end
+    FloorPad.part.CFrame = CFrame.new(root.Position - Vector3.new(0, offsetY or 3.05, 0))
+    return FloorPad.part
+end
+
+local function removeFloorPad()
+    if FloorPad.part then
+        pcall(function() FloorPad.part:Destroy() end)
+        FloorPad.part = nil
+    end
+end
+
+local function readFlyDirection()
+    local cam = Workspace.CurrentCamera
+    local dir = Vector3.zero
+    if not cam then return dir end
+    local look = cam.CFrame.LookVector
+    local right = cam.CFrame.RightVector
+    if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir += Vector3.new(look.X, 0, look.Z) end
+    if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir -= Vector3.new(look.X, 0, look.Z) end
+    if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir += Vector3.new(right.X, 0, right.Z) end
+    if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir -= Vector3.new(right.X, 0, right.Z) end
+    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir += Vector3.new(0, 1, 0) end
+    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then dir -= Vector3.new(0, 1, 0) end
+    if dir.Magnitude > 0 then dir = dir.Unit end
+    return dir
+end
+
+local Fly = { conn = nil, active = false }
+
+local function flyDisable()
+    if Fly.conn then
+        pcall(function() Fly.conn:Disconnect() end)
+        Fly.conn = nil
+    end
+    Fly.active = false
+    if not Config.WalkOnWater then removeFloorPad() end
+end
+
+local function flyStep(dt)
+    local root, hum = getRoot(), getHumanoid()
+    if not root or not hum or hum.Health <= 0 then flyDisable() return end
+    local pad = ensureFloorPad(3.05)
+    if not pad then return end
+
+    local speed = math.clamp(Config.FlySpeed or 55, 8, 400)
+    local move = readFlyDirection() * speed * math.min(dt, 0.08)
+
+    if Config.FlyBypassMode then
+        -- hard cap the per-frame delta so the jump never looks like a teleport
+        local maxStep = math.min(math.max(speed * 0.03, 1.1), 2.2)
+        if move.Magnitude > maxStep then move = move.Unit * maxStep end
+    end
+
+    local newPos = pad.CFrame.Position + move
+    if Config.FlyAntiVoid and newPos.Y < -120 then
+        newPos = Vector3.new(newPos.X, 45, newPos.Z)
+    end
+
+    pad.CFrame = CFrame.new(newPos)
+    local target = newPos + Vector3.new(0, 3.05, 0)
+    root.CFrame = CFrame.lookAt(target, target + root.CFrame.LookVector)
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
+    hum.PlatformStand = false
+    pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+end
+
+local function flyEnable()
+    if Fly.active then return end
+    Fly.active = true
+    Fly.conn = RunService.RenderStepped:Connect(function(dt)
+        if not Config.FlyEnabled then flyDisable() return end
+        pcall(function() flyStep(dt) end)
+    end)
+end
+
+local function setFlyState(enabled)
+    Config.FlyEnabled = enabled
+    if enabled then
+        flyEnable()
+        Hooks.notify("Undetected Fly", "Bypass flight enabled — WASD + Space / LeftShift", 3, CustomIcons.Teleport)
+    else
+        flyDisable()
+    end
+end
+
+-- Walk on Water / pad lifecycle loop
+task.spawn(function()
+    while task.wait(0.12) do
+        pcall(function()
+            local hum, root = getHumanoid(), getRoot()
+            local used = false
+            if Config.WalkOnWater and hum and root then
+                if hum.FloorMaterial == Enum.Material.Water or hum:GetState() == Enum.HumanoidStateType.Swimming then
+                    ensureFloorPad(3.02)
+                    pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+                    used = true
+                end
+            end
+            if not used and not Config.FlyEnabled and FloorPad.part then removeFloorPad() end
+        end)
+    end
+end)
+
+-- Infinite Geppo / Skyjump (uses the game's own skyjump first, physics fallback after)
+task.spawn(function()
+    local lastGeppo = 0
+    UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe or not Config.InfiniteGeppo then return end
+        if input.KeyCode ~= Enum.KeyCode.Space and input.KeyCode ~= Enum.KeyCode.ButtonA then return end
+        local hum, root = getHumanoid(), getRoot()
+        if not hum or not root then return end
+        if hum:GetState() ~= Enum.HumanoidStateType.Freefall then return end
+        local now = os.clock()
+        if now - lastGeppo < 0.1 then return end
+        lastGeppo = now
+        pcall(function()
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+            task.wait(0.05)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+            root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 68, root.AssemblyLinearVelocity.Z)
+        end)
+    end)
+end)
+
+-- Infinite Energy (keeps Aura / Buso / Ken topped up — those drain Energy in Blox Fruits)
+task.spawn(function()
+    while task.wait(0.4) do
+        if Config.InfiniteEnergy then
+            pcall(function()
+                local data = LocalPlayer:FindFirstChild("Data")
+                if data then
+                    for _, n in ipairs({ "Energy", "MaxEnergy", "AuraEnergy" }) do
+                        local v = data:FindFirstChild(n)
+                        if v and v:IsA("NumberValue") then v.Value = 1000000 end
+                    end
+                end
+                local char = getCharacter()
+                local energy = char and char:FindFirstChild("Energy")
+                if energy and energy:IsA("NumberValue") then energy.Value = 1000000 end
+                if Config.InfiniteEnergy then
+                    invokeCommF("Buso")
+                    if Config.AutoKen then invokeCommF("Ken", true) end
+                end
+            end)
+        end
+    end
+end)
+
+-- Dash cooldown removal
+task.spawn(function()
+    local lastDash = 0
+    while task.wait(0.05) do
+        pcall(function()
+            if not Config.NoDashCooldown then return end
+            local hum, root = getHumanoid(), getRoot()
+            if not hum or not root then return end
+            if hum.MoveDirection.Magnitude < 0.1 then return end
+            if hum:GetState() == Enum.HumanoidStateType.Freefall then return end
+            local now = os.clock()
+            if now - lastDash < (Config.DashInterval or 0.32) then return end
+            lastDash = now
+            local kick = hum.MoveDirection * 46
+            root.AssemblyLinearVelocity = Vector3.new(kick.X, root.AssemblyLinearVelocity.Y, kick.Z)
+            pcall(function()
+                local rem = ReplicatedStorage:FindFirstChild("Remotes")
+                local commE = rem and rem:FindFirstChild("CommE")
+                if commE then commE:FireServer("Dash") end
+            end)
+        end)
+    end
+end)
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  FRUIT MAGNET & DROP COLLECTOR (firetouchinterest + Handle pull + tween fallback)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local function magnetPart(handle, tweenFallback)
+    local root = getRoot()
+    if not handle or not root then return end
+    if firetouchinterest then
+        pcall(function()
+            firetouchinterest(root, handle, 0)
+            firetouchinterest(root, handle, 1)
+        end)
+        pcall(function()
+            firetouchinterest(handle, root, 0)
+            firetouchinterest(handle, root, 1)
+        end)
+    end
+    pcall(function()
+        handle.CanCollide = false
+        handle.AssemblyLinearVelocity = Vector3.zero
+        handle.CFrame = root.CFrame * CFrame.new(0, -1.2, 0)
+    end)
+    if tweenFallback then tweenTo(root.CFrame) end
+end
+
+local function findFruitHandles(radius)
+    local root = getRoot()
+    local found = {}
+    if not root then return found end
+    local maxDist = radius or Config.FruitMagnetRadius or 600
+    for _, obj in ipairs(Workspace:GetChildren()) do
+        if obj:IsA("Tool") or obj:IsA("Model") or obj.Name:lower():find("fruit", 1, true) then
+            local handle = obj:FindFirstChild("Handle") or obj:FindFirstChildWhichIsA("BasePart")
+            if handle and (handle.Position - root.Position).Magnitude <= maxDist then
+                table.insert(found, { obj = obj, handle = handle, dist = (handle.Position - root.Position).Magnitude })
+            end
+        end
+    end
+    return found
+end
+
+task.spawn(function()
+    while task.wait(0.05) do
+        if Config.FruitMagnet then
+            pcall(function()
+                for _, entry in ipairs(findFruitHandles()) do
+                    magnetPart(entry.handle, false)
+                end
+            end)
+        end
+    end
+end)
+
+-- Auto Collect Drops (dropped weapons / tool loot on the ground)
+task.spawn(function()
+    while task.wait(0.3) do
+        if Config.AutoCollectDrops then
+            pcall(function()
+                local root = getRoot()
+                if not root then return end
+                for _, obj in ipairs(Workspace:GetChildren()) do
+                    if obj:IsA("Tool") then
+                        local handle = obj:FindFirstChild("Handle")
+                        if handle and (handle.Position - root.Position).Magnitude <= 900 then magnetPart(handle, false) end
+                    elseif obj:IsA("Model") then
+                        local name = obj.Name:lower()
+                        if name:find("drop", 1, true) or name:find("reward", 1, true) or name:find("chest", 1, true) then
+                            local handle = obj:FindFirstChildWhichIsA("BasePart")
+                            if handle and (handle.Position - root.Position).Magnitude <= 250 then magnetPart(handle, false) end
+                        end
+                    end
+                end
+            end)
+        end
+    end
+end)
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  RANDOM FRUIT ROLLER + AUTO-STORE (Zioles gacha, OriginalName aware)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local watchedContainers = {}
+local function bindFruitWatcher(container)
+    if not container or watchedContainers[container] then return end
+    watchedContainers[container] = true
+    container.ChildAdded:Connect(function(tool)
+        task.wait(0.15)
+        if not tool:IsA("Tool") then return end
+        local original = tool:GetAttribute("OriginalName")
+        local isFruit = original ~= nil or toolMatchesCategory(tool, "Blox Fruit") or tool:FindFirstChild("Handle") and tool.Name:lower():find("fruit", 1, true)
+        if not isFruit then return end
+
+        local fruitName = tostring(original or tool.Name):gsub(" Fruit", "")
+        Config.RolledFruitName = fruitName
+        Hooks.notify("Fruit Rolled / Obtained", fruitName .. "  •  rarity: " .. getFruitTier(fruitName).name, 4, CustomIcons.Fruits)
+
+        if Config.AutoStoreRolled and Config.AutoStoreFruits ~= false then
+            local code = FRUIT_STORE_CODES[fruitName] or (fruitName .. "-" .. fruitName)
+            task.wait(0.35)
+            invokeCommF("StoreFruit", code, tool)
+        end
+    end)
+end
+
+local function bindAllFruitWatchers()
+    bindFruitWatcher(LocalPlayer:FindFirstChild("Backpack"))
+    bindFruitWatcher(LocalPlayer.Character)
+end
+bindAllFruitWatchers()
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(0.5)
+    bindFruitWatcher(LocalPlayer:FindFirstChild("Backpack"))
+    bindFruitWatcher(char)
+end)
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  SEA EVENT / MIRAGE / KITSUNE / MYSTIC GEAR TRACKER
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local function scanSeaEvents()
+    local myRoot = getRoot()
+    local found = {}
+    local scanRoots = {}
+    for _, child in ipairs(Workspace:GetChildren()) do table.insert(scanRoots, child) end
+    for _, folderName in ipairs({ "Enemies", "Characters", "NPCs", "Map", "Islands", "_WorldOrigin" }) do
+        local folder = Workspace:FindFirstChild(folderName)
+        if folder then table.insert(scanRoots, folder) end
+    end
+
+    local visited = {}
+    local function inspect(obj)
+        if visited[obj] then return end
+        visited[obj] = true
+        local name = obj.Name
+        if type(name) ~= "string" or #name < 4 then return end
+        local lower = name:lower()
+        for _, sig in ipairs(SEA_EVENT_SIGNATURES) do
+            for _, key in ipairs(sig.Keys) do
+                if lower:find(key, 1, true) then
+                    local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
+                    if part then
+                        table.insert(found, {
+                            name = sig.Name, color = sig.Color, pos = part.Position,
+                            obj = part, dist = myRoot and math.floor((part.Position - myRoot.Position).Magnitude) or 0,
+                        })
+                    end
+                    return
+                end
+            end
+        end
+    end
+
+    pcall(function()
+        for _, top in ipairs(scanRoots) do
+            inspect(top)
+            for _, child in ipairs(top:GetChildren()) do
+                inspect(child)
+                for _, grand in ipairs(child:GetChildren()) do inspect(grand) end
+            end
+        end
+    end)
+    return found
+end
+
+task.spawn(function()
+    while task.wait(3.5) do
+        pcall(function()
+            if not Config.SeaEventTracker and not Config.MirageFinder then return end
+            local events = scanSeaEvents()
+            SeaEventState.events = events
+            local mirage = {}
+            for _, ev in ipairs(events) do
+                if ev.name == "Mirage Island" or ev.name == "Kitsune Shrine" or ev.name == "Blue Gear / Mystic" or ev.name == "Prehistoric Island" then
+                    table.insert(mirage, ev)
+                end
+            end
+            SeaEventState.mirage = mirage
+
+            if Config.SeaEventTracker then
+                for _, ev in ipairs(events) do
+                    local key = ev.name .. math.floor(ev.pos.X / 500) .. math.floor(ev.pos.Z / 500)
+                    if not SeaEventState.lastNotify[key] then
+                        SeaEventState.lastNotify[key] = true
+                        local isSpecial = ev.name ~= "Cursed Ship Raid"
+                        if isSpecial or Config.MirageFinder then
+                            Hooks.notify(ev.name .. " detected", string.format("%d studs away • %.0f, %.0f", ev.dist, ev.pos.X, ev.pos.Z), 4, CustomIcons.Teleport)
+                        end
+                    end
+                end
+            end
+        end)
+    end
+end)
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  SERVER STATUS SNAPSHOT (rendered by the Server Status HUD)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local function getServerStatus()
+    local ping = 0
+    pcall(function() ping = math.floor(StatsService.Network.ServerStatsItem["Data Ping"]:GetValue()) end)
+    local region = "?"
+    pcall(function() region = tostring(game:GetService("LocalizationService").RobloxLocaleId) end)
+    return {
+        jobId = (game.JobId ~= "" and game.JobId:sub(1, 8)) or "PRIVATE",
+        players = #Players:GetPlayers(),
+        maxPlayers = Players.MaxPlayers,
+        ping = ping,
+        region = region,
+        sea = CURRENT_SEA,
+        source = SEA_DETECT_SOURCE,
+        events = #(SeaEventState.events or {}),
+        up = math.floor(time() - (game:GetService("RunService"):IsStudio() and time() or 0)),
+    }
+end
+
+-- Sea auto-correction loop: re-detect for the first minute (map parts stream in late)
+task.spawn(function()
+    for _ = 1, 40 do
+        task.wait(1.5)
+        pcall(function()
+            local before = CURRENT_SEA
+            refreshSea()
+            if CURRENT_SEA ~= before then
+                LocalPlayer:SetAttribute("SkillHubSea", CURRENT_SEA)
+            else
+                LocalPlayer:SetAttribute("SkillHubSea", CURRENT_SEA)
+            end
+        end)
+    end
+end)
 
 -- ═══════════════════════════════════════════════════════════════════════════
 --  BACKGROUND FEATURE LOOPS
@@ -788,16 +2137,21 @@ task.spawn(function()
                 local targetBoss = nil
                 local seaBosses = BOSSES_BY_SEA[CURRENT_SEA] or {}
 
+                local selectedBossName = tostring(Config.SelectedBoss):gsub("^S%d%s•%s", "")
                 if enemies then
                     for _, mob in ipairs(enemies:GetChildren()) do
                         local mHum = mob:FindFirstChildOfClass("Humanoid")
                         local mHrp = mob:FindFirstChild("HumanoidRootPart")
                         if mHum and mHum.Health > 0 and mHrp then
-                            if Config.AutoFarmBoss and mob.Name:find(Config.SelectedBoss, 1, true) then
+                            if Config.AutoFarmBoss and mob.Name:find(selectedBossName, 1, true) then
                                 targetBoss = mob
                                 break
                             elseif Config.AutoFarmAllBosses then
-                                for _, bName in ipairs(seaBosses) do
+                                local allBossNames = {}
+                                for seaIdx = 1, 3 do
+                                    for _, bName in ipairs(BOSSES_BY_SEA[seaIdx] or {}) do table.insert(allBossNames, bName) end
+                                end
+                                for _, bName in ipairs(allBossNames) do
                                     if mob.Name:find(bName, 1, true) then
                                         targetBoss = mob
                                         break
@@ -999,18 +2353,18 @@ local function clearESP()
     ESPFolder:ClearAllChildren()
 end
 
-local function createESPBillboard(adornee, titleText, subText, color)
-    if not adornee then return end
+local function createESPBillboard(adornee, titleText, subText, color, bodyText, height)
+    if not adornee then return nil end
     local bb = Instance.new("BillboardGui")
     bb.Name = "ESP_Tag"
     bb.Adornee = adornee
-    bb.Size = UDim2.new(0, 180, 0, 42)
-    bb.StudsOffset = Vector3.new(0, 3.5, 0)
+    bb.Size = UDim2.new(0, 200, 0, height or (bodyText and 72 or 42))
+    bb.StudsOffset = Vector3.new(0, 3.6, 0)
     bb.AlwaysOnTop = true
     bb.Parent = ESPFolder
 
     local mainLbl = Instance.new("TextLabel", bb)
-    mainLbl.Size = UDim2.new(1, 0, 0.55, 0)
+    mainLbl.Size = UDim2.new(1, 0, 0, bodyText and 20 or 22)
     mainLbl.BackgroundTransparency = 1
     mainLbl.Font = Enum.Font.GothamBold
     mainLbl.TextSize = 13
@@ -1019,73 +2373,163 @@ local function createESPBillboard(adornee, titleText, subText, color)
     mainLbl.Text = titleText
 
     local subLbl = Instance.new("TextLabel", bb)
-    subLbl.Size = UDim2.new(1, 0, 0.45, 0)
-    subLbl.Position = UDim2.new(0, 0, 0.55, 0)
+    subLbl.Size = UDim2.new(1, 0, 0, bodyText and 16 or 18)
+    subLbl.Position = UDim2.new(0, 0, 0, bodyText and 20 or 23)
     subLbl.BackgroundTransparency = 1
     subLbl.Font = Enum.Font.GothamMedium
     subLbl.TextSize = 11
-    subLbl.TextColor3 = Color3.fromRGB(220, 230, 255)
+    subLbl.TextColor3 = Color3.fromRGB(226, 232, 240)
     subLbl.TextStrokeTransparency = 0.35
     subLbl.Text = subText or ""
+
+    if bodyText then
+        local bodyLbl = Instance.new("TextLabel", bb)
+        bodyLbl.Size = UDim2.new(1, 0, 0, 36)
+        bodyLbl.Position = UDim2.new(0, 0, 0, 36)
+        bodyLbl.BackgroundTransparency = 1
+        bodyLbl.Font = Enum.Font.Gotham
+        bodyLbl.TextSize = 10
+        bodyLbl.TextWrapped = true
+        bodyLbl.TextYAlignment = Enum.TextYAlignment.Top
+        bodyLbl.TextColor3 = Color3.fromRGB(203, 213, 225)
+        bodyLbl.TextStrokeTransparency = 0.45
+        bodyLbl.Text = bodyText
+    end
+
+    return bb
+end
+
+-- Lightweight tracer lines (Drawing API — silently skipped on executors without it)
+local tracerCache = {}
+local function updateTracer(key, fromPos, toPos, color, visible)
+    if not Drawing or not Drawing.new then return end
+    local line = tracerCache[key]
+    if not line then
+        local ok, created = pcall(function() return Drawing.new("Line") end)
+        if not ok or not created then return end
+        created.Thickness = 1
+        created.Transparency = 0.65
+        tracerCache[key] = created
+        line = created
+    end
+    line.From = fromPos
+    line.To = toPos
+    line.Color = color
+    line.Visible = visible and true or false
+end
+
+local function clearTracers()
+    for key, line in pairs(tracerCache) do
+        pcall(function() line:Remove() end)
+        tracerCache[key] = nil
+    end
 end
 
 task.spawn(function()
-    while task.wait(1.0) do
+    while task.wait(0.9) do
         pcall(function()
             clearESP()
             local myRoot = getRoot()
+            local cam = Workspace.CurrentCamera
             if not myRoot then return end
 
+            if not Config.ESPTracers then
+                for _, line in pairs(tracerCache) do pcall(function() line.Visible = false end) end
+            end
+
+            -- ── PLAYER ESP with full PvP + loadout readout ──────────────────
             if Config.ESPPlayers then
                 for _, plr in ipairs(Players:GetPlayers()) do
                     if plr ~= LocalPlayer and plr.Character then
                         local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
                         local hum = plr.Character:FindFirstChildOfClass("Humanoid")
-                        if hrp and hum then
+                        if hrp and hum and hum.Health > 0 then
                             local dist = math.floor((hrp.Position - myRoot.Position).Magnitude)
-                            local lv = (plr:FindFirstChild("Data") and plr.Data:FindFirstChild("Level") and plr.Data.Level.Value) or "?"
-                            createESPBillboard(hrp, string.format("%s [Lv.%s]", plr.DisplayName, tostring(lv)), string.format("HP: %d/%d • %dm", math.floor(hum.Health), math.floor(hum.MaxHealth), dist), Color3.fromRGB(56, 189, 248))
+                            local attackable, statusText, statusColor = getPvPStatus(plr)
+                            local loadout = getPlayerLoadout(plr)
+                            local title = string.format("%s  [%s]", plr.DisplayName, tostring(loadout.level))
+                            local sub = string.format("%s  •  %dm", statusText, dist)
+
+                            local body = nil
+                            if Config.ESPPlayerLoadout then
+                                body = string.format(
+                                    "Fruit: %s (%s)\nStyle: %s  •  Sword: %s  •  Gun: %s\nHP: %d/%d  •  Bounty: %s",
+                                    loadout.fruit, getFruitTier(loadout.fruit).name,
+                                    loadout.style, loadout.sword, loadout.gun,
+                                    math.floor(hum.Health), math.floor(hum.MaxHealth), loadout.bounty
+                                )
+                            end
+
+                            createESPBillboard(hrp, title, sub, statusColor, body)
+                            if Config.ESPTracers and cam then
+                                updateTracer("plr_" .. plr.Name, cam.ViewportSize / 2, (hrp.Position - myRoot.Position), statusColor, true)
+                            end
                         end
                     end
                 end
             end
 
+            -- ── DEVIL FRUIT ESP with rarity tiers ──────────────────────────
             if Config.ESPFruits then
                 for _, obj in ipairs(Workspace:GetChildren()) do
-                    if obj:IsA("Tool") or obj.Name:find("Fruit") then
+                    if obj:IsA("Tool") or obj.Name:lower():find("fruit", 1, true) then
                         local handle = obj:FindFirstChild("Handle") or obj:FindFirstChildWhichIsA("BasePart")
                         if handle then
                             local dist = math.floor((handle.Position - myRoot.Position).Magnitude)
-                            createESPBillboard(handle, obj.Name, string.format("%d studs away", dist), Color3.fromRGB(250, 204, 21))
+                            local fruitName = tostring(obj:GetAttribute("OriginalName") or obj.Name):gsub(" Fruit", "")
+                            local tier = getFruitTier(fruitName)
+                            local color = Config.ESPFruitRarity and tier.color or Color3.fromRGB(250, 204, 21)
+                            createESPBillboard(handle, fruitName .. " Fruit", string.format("%s rarity  •  %d studs", tier.name, dist), color)
                         end
                     end
                 end
             end
 
+            -- ── CHEST ESP ──────────────────────────────────────────────────
             if Config.ESPChests then
                 for _, obj in ipairs(Workspace:GetDescendants()) do
                     if obj:IsA("BasePart") and (obj.Name == "Chest1" or obj.Name == "Chest2" or obj.Name == "Chest3") then
                         local dist = math.floor((obj.Position - myRoot.Position).Magnitude)
                         if dist < 2500 then
-                            createESPBillboard(obj, obj.Name, string.format("%d studs", dist), Color3.fromRGB(74, 222, 128))
+                            local label = obj.Name == "Chest3" and "Diamond Chest" or (obj.Name == "Chest2" and "Gold Chest" or "Silver Chest")
+                            createESPBillboard(obj, label, string.format("%d studs", dist), Color3.fromRGB(74, 222, 128))
                         end
                     end
                 end
             end
 
+            -- ── ISLAND / MIRAGE / KITSUNE ESP ──────────────────────────────
             if Config.ESPIslands then
                 local map = Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("Locations")
                 if map then
                     for _, loc in ipairs(map:GetChildren()) do
                         if loc:IsA("BasePart") then
                             local dist = math.floor((loc.Position - myRoot.Position).Magnitude)
-                            local isSpecial = loc.Name:find("Mirage") or loc.Name:find("Kitsune") or loc.Name:find("Prehistoric")
-                            createESPBillboard(loc, loc.Name, string.format("%d studs", dist), isSpecial and Color3.fromRGB(244, 114, 182) or Color3.fromRGB(167, 139, 250))
+                            local lower = loc.Name:lower()
+                            local color, tag = Color3.fromRGB(167, 139, 250), "Island"
+                            if lower:find("mirage") then color, tag = Color3.fromRGB(244, 114, 182), "MIRAGE"
+                            elseif lower:find("kitsune") then color, tag = Color3.fromRGB(250, 204, 21), "KITSUNE"
+                            elseif lower:find("prehistoric") then color, tag = Color3.fromRGB(74, 222, 128), "PREHISTORIC"
+                            elseif lower:find("tiki") then color, tag = Color3.fromRGB(56, 189, 248), "TIKI OUTPOST" end
+                            createESPBillboard(loc, loc.Name, string.format("%s  •  %d studs", tag, dist), color)
                         end
                     end
                 end
             end
 
+            -- ── SEA EVENTS / LEVIATHAN / TERROR SHARK / MYSTIC GEAR ───────
+            if (Config.SeaEventTracker or Config.MirageFinder) and #(SeaEventState.events or {}) > 0 then
+                for idx, ev in ipairs(SeaEventState.events) do
+                    if ev.obj and ev.obj.Parent then
+                        local dist = math.floor((ev.obj.Position - myRoot.Position).Magnitude)
+                        if dist < 4000 then
+                            createESPBillboard(ev.obj, ev.name, string.format("EVENT  •  %d studs", dist), ev.color)
+                        end
+                    end
+                end
+            end
+
+            -- ── BOSS ESP ───────────────────────────────────────────────────
             if Config.ESPBosses then
                 local enemies = Workspace:FindFirstChild("Enemies")
                 if enemies then
@@ -1094,7 +2538,7 @@ task.spawn(function()
                         local hum = mob:FindFirstChildOfClass("Humanoid")
                         if hrp and hum and hum.Health > 0 then
                             local dist = math.floor((hrp.Position - myRoot.Position).Magnitude)
-                            createESPBillboard(hrp, mob.Name, string.format("HP: %d • %dm", math.floor(hum.Health), dist), Color3.fromRGB(248, 113, 113))
+                            createESPBillboard(hrp, mob.Name, string.format("HP: %d  •  %dm", math.floor(hum.Health), dist), Color3.fromRGB(248, 113, 113))
                         end
                     end
                 end
@@ -1102,6 +2546,12 @@ task.spawn(function()
         end)
     end
 end)
+
+Hooks.clearESP = function()
+    clearESP()
+    clearTracers()
+end
+Hooks.espTag = createESPBillboard
 
 -- ═══════════════════════════════════════════════════════════════════════════
 --  CUSTOM VECTOR ICON & GLASSMORPHIC SCREENGUI ENGINE
@@ -1129,6 +2579,11 @@ local Theme = {
     Success         = Color3.fromRGB(34, 197, 94),
     Warning         = Color3.fromRGB(250, 204, 21),
     Danger          = Color3.fromRGB(239, 68, 68),
+    -- Neo-Glassmorphic extras
+    Glass           = Color3.fromRGB(23, 31, 51),
+    GlassLight      = Color3.fromRGB(33, 43, 68),
+    Neon            = Color3.fromRGB(125, 211, 252),
+    OnGold          = Color3.fromRGB(15, 20, 34),
 }
 
 local guiParent = LocalPlayer:WaitForChild("PlayerGui")
@@ -1182,6 +2637,46 @@ local function createVectorIconBadge(parent, iconAssetId, accentColor, sizePx, p
     return holder, iconImg
 end
 
+-- Glass finish: adds the Neo-Glassmorphic stroke + inner gradient to any card
+local function addGlassFinish(target, accent)
+    if not target then return end
+    local stroke = Instance.new("UIStroke", target)
+    stroke.Color = accent or Theme.Border
+    stroke.Thickness = 1
+    stroke.Transparency = 0.62
+
+    local grad = Instance.new("UIGradient", target)
+    grad.Rotation = 90
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Theme.GlassLight),
+        ColorSequenceKeypoint.new(1, Theme.BgCard),
+    })
+    grad.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.86),
+        NumberSequenceKeypoint.new(1, 0.62),
+    })
+    return stroke
+end
+
+-- Hover / press feedback used by every interactive card & button
+local function addHoverFx(frame, accent, baseColor)
+    if not frame then return end
+    baseColor = baseColor or frame.BackgroundColor3
+    local lift = Instance.new("UIStroke", frame)
+    lift.Color = accent or Theme.Accent
+    lift.Thickness = 1.2
+    lift.Transparency = 1
+
+    frame.MouseEnter:Connect(function()
+        TweenService:Create(lift, TweenInfo.new(0.14), {Transparency = 0.25}):Play()
+        TweenService:Create(frame, TweenInfo.new(0.14), {BackgroundColor3 = (accent or Theme.Accent):Lerp(baseColor, 0.86)}):Play()
+    end)
+    frame.MouseLeave:Connect(function()
+        TweenService:Create(lift, TweenInfo.new(0.18), {Transparency = 1}):Play()
+        TweenService:Create(frame, TweenInfo.new(0.18), {BackgroundColor3 = baseColor}):Play()
+    end)
+end
+
 -- Responsive UIScale
 local UIScale = Instance.new("UIScale", ScreenGui)
 local function updateScale()
@@ -1195,11 +2690,11 @@ if Workspace.CurrentCamera then
     Workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(updateScale)
 end
 
--- Top Live Watermark HUD Pill
+-- Top Live Watermark HUD Pill + Server Status HUD
 local WatermarkBar = Instance.new("Frame", ScreenGui)
 WatermarkBar.Name = "WatermarkHUD"
-WatermarkBar.Size = UDim2.new(0, 450, 0, 32)
-WatermarkBar.Position = UDim2.new(0.5, -225, 0, 10)
+WatermarkBar.Size = UDim2.new(0, 470, 0, 30)
+WatermarkBar.Position = UDim2.new(0.5, -235, 0, 8)
 WatermarkBar.BackgroundColor3 = Theme.BgSidebar
 WatermarkBar.BackgroundTransparency = 0.08
 WatermarkBar.BorderSizePixel = 0
@@ -1211,18 +2706,52 @@ wmStroke.Color = Theme.Accent
 wmStroke.Thickness = 1.2
 wmStroke.Transparency = 0.3
 
-createVectorIconBadge(WatermarkBar, CustomIcons.HubCrest, Theme.Accent, 22, UDim2.new(0, 6, 0.5, -11), 86)
+local wmGrad = Instance.new("UIGradient", WatermarkBar)
+wmGrad.Transparency = NumberSequence.new({
+    NumberSequenceKeypoint.new(0, 0),
+    NumberSequenceKeypoint.new(0.5, 0.25),
+    NumberSequenceKeypoint.new(1, 0),
+})
+
+createVectorIconBadge(WatermarkBar, CustomIcons.HubCrest, Theme.Accent, 20, UDim2.new(0, 6, 0.5, -10), 86)
 
 local WatermarkText = Instance.new("TextLabel", WatermarkBar)
 WatermarkText.Size = UDim2.new(1, -40, 1, 0)
-WatermarkText.Position = UDim2.new(0, 34, 0, 0)
+WatermarkText.Position = UDim2.new(0, 32, 0, 0)
 WatermarkText.BackgroundTransparency = 1
 WatermarkText.Font = Enum.Font.GothamBold
 WatermarkText.TextSize = 11
 WatermarkText.TextColor3 = Theme.TextPrimary
 WatermarkText.TextXAlignment = Enum.TextXAlignment.Left
-WatermarkText.Text = "SKILL HUB v2.5 ULTRA  •  Sea " .. CURRENT_SEA .. "  •  FPS: 60"
+WatermarkText.Text = "SKILL HUB v3.0 ULTRA  •  Sea " .. CURRENT_SEA
 WatermarkText.ZIndex = 87
+
+-- Second pill: live server / PvP / fly status
+local StatusBar = Instance.new("Frame", ScreenGui)
+StatusBar.Name = "ServerStatusHUD"
+StatusBar.Size = UDim2.new(0, 470, 0, 24)
+StatusBar.Position = UDim2.new(0.5, -235, 0, 42)
+StatusBar.BackgroundColor3 = Theme.Glass
+StatusBar.BackgroundTransparency = 0.18
+StatusBar.BorderSizePixel = 0
+StatusBar.ZIndex = 84
+Instance.new("UICorner", StatusBar).CornerRadius = UDim.new(1, 0)
+
+local statusStroke = Instance.new("UIStroke", StatusBar)
+statusStroke.Color = Theme.Border
+statusStroke.Thickness = 1
+statusStroke.Transparency = 0.45
+
+local StatusText = Instance.new("TextLabel", StatusBar)
+StatusText.Size = UDim2.new(1, -20, 1, 0)
+StatusText.Position = UDim2.new(0, 10, 0, 0)
+StatusText.BackgroundTransparency = 1
+StatusText.Font = Enum.Font.GothamMedium
+StatusText.TextSize = 10
+StatusText.TextColor3 = Theme.TextSecondary
+StatusText.TextXAlignment = Enum.TextXAlignment.Center
+StatusText.Text = "SERVER STATUS"
+StatusText.ZIndex = 86
 
 task.spawn(function()
     local lastTick = tick()
@@ -1232,19 +2761,31 @@ task.spawn(function()
     end)
     while task.wait(1.0) do
         if not ScreenGui.Parent then break end
-        local now = tick()
-        local fps = math.floor(frames / math.max(now - lastTick, 0.01))
-        frames = 0
-        lastTick = now
-        local ping = 0
         pcall(function()
-            ping = math.floor(StatsService.Network.ServerStatsItem["Data Ping"]:GetValue())
+            local now = tick()
+            local fps = math.floor(frames / math.max(now - lastTick, 0.01))
+            frames = 0
+            lastTick = now
+            local status = getServerStatus()
+
+            WatermarkBar.Visible = Config.ShowWatermarkHUD
+            WatermarkText.Text = string.format(
+                "SKILL HUB v3.0  •  Sea %d [%s]  •  Lv.%d  •  %d FPS  •  %dms",
+                CURRENT_SEA, SEA_DETECT_SOURCE, getPlayerLevel(), fps, status.ping
+            )
+
+            StatusBar.Visible = Config.ServerStatusHUD and Config.ShowWatermarkHUD
+            local pvpTag = PvPState and PvPState.target and ("PVP ▶ " .. tostring(PvPState.targetName)) or "PVP idle"
+            StatusText.Text = string.format(
+                "Job %s  •  %d/%d players  •  Sea %d/%s  •  %s  •  %s  •  Fly %s  •  Events %d",
+                status.jobId, status.players, status.maxPlayers, status.sea, tostring(status.source),
+                Config.AimLock and "AIMLOCK ON" or pvpTag,
+                (Config.AutoKillSelected or Config.AutoKillPvP) and "KILL ON" or "kill idle",
+                Config.FlyEnabled and "ON" or "off",
+                status.events
+            )
+            StatusText.TextColor3 = (Config.AutoKillSelected or Config.AutoKillPvP) and Theme.Danger or Theme.TextSecondary
         end)
-        WatermarkBar.Visible = Config.ShowWatermarkHUD
-        WatermarkText.Text = string.format(
-            "SKILL HUB v2.5  •  Sea %d  •  Lv.%d  •  %d FPS  •  %dms",
-            CURRENT_SEA, getPlayerLevel(), fps, ping
-        )
     end
 end)
 
@@ -1312,6 +2853,10 @@ local function notify(title, message, duration, iconAsset)
     end)
 end
 
+Hooks.notify = function(title, message, duration, iconAsset)
+    pcall(function() notify(title, message, duration, iconAsset) end)
+end
+
 -- Floating Quick-Toggle Pill with Custom Vector Icon
 local FloatBtn = Instance.new("TextButton", ScreenGui)
 FloatBtn.Size = UDim2.new(0, 146, 0, 40)
@@ -1351,6 +2896,39 @@ Instance.new("UICorner", MainWindow).CornerRadius = UDim.new(0, 14)
 local winStroke = Instance.new("UIStroke", MainWindow)
 winStroke.Color = Theme.Border
 winStroke.Thickness = 1.5
+
+-- Neo-Glassmorphic depth: vertical glass gradient + top light sheen + neon pulse
+local winGrad = Instance.new("UIGradient", MainWindow)
+winGrad.Rotation = 90
+winGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Theme.GlassLight),
+    ColorSequenceKeypoint.new(0.45, Theme.BgPrimary),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(6, 9, 16)),
+})
+
+local winSheen = Instance.new("Frame", MainWindow)
+winSheen.Name = "GlassSheen"
+winSheen.Size = UDim2.new(1, 0, 0, 90)
+winSheen.BackgroundColor3 = Theme.Neon
+winSheen.BackgroundTransparency = 0.94
+winSheen.BorderSizePixel = 0
+winSheen.ZIndex = 1
+Instance.new("UICorner", winSheen).CornerRadius = UDim.new(0, 14)
+local sheenGrad = Instance.new("UIGradient", winSheen)
+sheenGrad.Rotation = 90
+sheenGrad.Transparency = NumberSequence.new({
+    NumberSequenceKeypoint.new(0, 0.35),
+    NumberSequenceKeypoint.new(1, 1),
+})
+
+task.spawn(function()
+    while task.wait(0.05) do
+        if not ScreenGui.Parent or not MainWindow.Parent then break end
+        local pulse = (math.sin(tick() * 1.5) + 1) / 2
+        winStroke.Transparency = 0.62 - pulse * 0.42
+        winStroke.Color = Theme.Accent:Lerp(Theme.AccentPurple, pulse)
+    end
+end)
 
 local TopAccent = Instance.new("Frame", MainWindow)
 TopAccent.Size = UDim2.new(1, 0, 0, 2)
@@ -1472,6 +3050,7 @@ task.spawn(function()
         pcall(function()
             FooterLvLbl.Text = string.format("Lv. %s  |  ƒ %s", tostring(getPlayerLevel()), formatNumber(getPlayerFragments()))
             FooterBeliLbl.Text = "$ " .. formatNumber(getPlayerBeli())
+            BrandSub.Text = string.format("Blox Fruits • Sea %d (%s)", CURRENT_SEA, tostring(SEA_DETECT_SOURCE))
         end)
     end
 end)
@@ -1643,6 +3222,20 @@ local function createTab(iconAsset, name, accentOverride)
         sLbl.TextColor3 = self.color
         sLbl.TextXAlignment = Enum.TextXAlignment.Left
         sLbl.Text = "◆  " .. string.upper(title)
+
+        local divider = Instance.new("Frame", sec)
+        divider.Size = UDim2.new(1, 0, 0, 1)
+        divider.Position = UDim2.new(0, 0, 1, -2)
+        divider.BackgroundColor3 = self.color
+        divider.BackgroundTransparency = 0.72
+        divider.BorderSizePixel = 0
+        divider.ZIndex = 3
+        local divGrad = Instance.new("UIGradient", divider)
+        divGrad.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0),
+            NumberSequenceKeypoint.new(0.7, 0.35),
+            NumberSequenceKeypoint.new(1, 1),
+        })
     end
 
     function tabObj:AddToggle(title, desc, defaultValue, callback, itemIcon)
@@ -1653,6 +3246,8 @@ local function createTab(iconAsset, name, accentOverride)
         card.BorderSizePixel = 0
         card.LayoutOrder = self.order
         Instance.new("UICorner", card).CornerRadius = UDim.new(0, 9)
+        addGlassFinish(card, self.color)
+        addHoverFx(card, self.color)
 
         createVectorIconBadge(card, itemIcon or self.icon, self.color, 32, UDim2.new(0, 12, 0.5, -16), 4)
 
@@ -1714,6 +3309,8 @@ local function createTab(iconAsset, name, accentOverride)
         card.BorderSizePixel = 0
         card.LayoutOrder = self.order
         Instance.new("UICorner", card).CornerRadius = UDim.new(0, 9)
+        addGlassFinish(card, self.color)
+        addHoverFx(card, self.color)
 
         createVectorIconBadge(card, itemIcon or self.icon, self.color, 32, UDim2.new(0, 12, 0.5, -16), 4)
 
@@ -1747,6 +3344,7 @@ local function createTab(iconAsset, name, accentOverride)
         actBtn.Text = btnText or "Execute"
         actBtn.BorderSizePixel = 0
         Instance.new("UICorner", actBtn).CornerRadius = UDim.new(0, 7)
+        addHoverFx(actBtn, Color3.new(1, 1, 1), self.color)
 
         actBtn.MouseButton1Click:Connect(function()
             task.spawn(function() if callback then callback() end end)
@@ -1763,6 +3361,8 @@ local function createTab(iconAsset, name, accentOverride)
         card.BorderSizePixel = 0
         card.LayoutOrder = self.order
         Instance.new("UICorner", card).CornerRadius = UDim.new(0, 9)
+        addGlassFinish(card, self.color)
+        addHoverFx(card, self.color)
 
         createVectorIconBadge(card, itemIcon or CustomIcons.Lightning, self.color, 32, UDim2.new(0, 12, 0, 12), 4)
 
@@ -1849,6 +3449,8 @@ local function createTab(iconAsset, name, accentOverride)
         card.ClipsDescendants = true
         card.LayoutOrder = self.order
         Instance.new("UICorner", card).CornerRadius = UDim.new(0, 9)
+        addGlassFinish(card, self.color)
+        addHoverFx(card, self.color)
 
         createVectorIconBadge(card, itemIcon or self.icon, self.color, 32, UDim2.new(0, 12, 0, 11), 4)
 
@@ -1925,6 +3527,133 @@ local function createTab(iconAsset, name, accentOverride)
         table.insert(allSearchables, {frame = card, label = title .. " " .. desc})
     end
 
+    -- Live multi-line readout panel (used by the Player Scanner & Server Status)
+    function tabObj:AddLabel(title, desc, height, itemIcon)
+        self.order += 1
+        local card = Instance.new("Frame", self.page)
+        card.Size = UDim2.new(1, 0, 0, height or 96)
+        card.BackgroundColor3 = Theme.BgCard
+        card.BorderSizePixel = 0
+        card.LayoutOrder = self.order
+        Instance.new("UICorner", card).CornerRadius = UDim.new(0, 9)
+        addGlassFinish(card, self.color)
+
+        createVectorIconBadge(card, itemIcon or CustomIcons.Players, self.color, 26, UDim2.new(0, 10, 0, 10), 4)
+
+        local tLbl = Instance.new("TextLabel", card)
+        tLbl.Size = UDim2.new(1, -50, 0, 20)
+        tLbl.Position = UDim2.new(0, 44, 0, 8)
+        tLbl.BackgroundTransparency = 1
+        tLbl.Font = Enum.Font.GothamBold
+        tLbl.TextSize = 12
+        tLbl.TextColor3 = Theme.TextPrimary
+        tLbl.TextXAlignment = Enum.TextXAlignment.Left
+        tLbl.Text = title
+
+        local dLbl = Instance.new("TextLabel", card)
+        dLbl.Size = UDim2.new(1, -50, 0, 14)
+        dLbl.Position = UDim2.new(0, 44, 0, 26)
+        dLbl.BackgroundTransparency = 1
+        dLbl.Font = Enum.Font.Gotham
+        dLbl.TextSize = 10
+        dLbl.TextColor3 = Theme.TextMuted
+        dLbl.TextXAlignment = Enum.TextXAlignment.Left
+        dLbl.Text = desc or ""
+
+        local bodyLbl = Instance.new("TextLabel", card)
+        bodyLbl.Size = UDim2.new(1, -20, 1, -48)
+        bodyLbl.Position = UDim2.new(0, 10, 0, 44)
+        bodyLbl.BackgroundTransparency = 1
+        bodyLbl.Font = Enum.Font.Code
+        bodyLbl.TextSize = 10
+        bodyLbl.TextWrapped = true
+        bodyLbl.TextYAlignment = Enum.TextYAlignment.Top
+        bodyLbl.TextXAlignment = Enum.TextXAlignment.Left
+        bodyLbl.TextColor3 = Color3.fromRGB(203, 213, 225)
+        bodyLbl.Text = "No data yet."
+
+        table.insert(allSearchables, {frame = card, label = title .. " " .. (desc or "")})
+
+        return {
+            card = card,
+            label = bodyLbl,
+            SetText = function(_, txt) bodyLbl.Text = txt end,
+            SetColor = function(_, c) bodyLbl.TextColor3 = c end,
+            SetVisible = function(_, v) card.Visible = v end,
+        }
+    end
+
+    -- Auto-refreshing variant: updater() returns the text every `interval` seconds
+    function tabObj:AddLivePanel(title, desc, interval, updater, height, itemIcon)
+        local panel = self:AddLabel(title, desc, height, itemIcon)
+        task.spawn(function()
+            while true do
+                task.wait(interval or 1)
+                if not panel.card or not panel.card.Parent then break end
+                local ok, txt = pcall(updater)
+                if ok and type(txt) == "string" then panel.label.Text = txt end
+            end
+        end)
+        return panel
+    end
+
+    -- Text input (used for the PvP target player name)
+    function tabObj:AddInput(title, desc, placeholder, defaultValue, callback, itemIcon)
+        self.order += 1
+        local card = Instance.new("Frame", self.page)
+        card.Size = UDim2.new(1, 0, 0, 56)
+        card.BackgroundColor3 = Theme.BgCard
+        card.BorderSizePixel = 0
+        card.LayoutOrder = self.order
+        Instance.new("UICorner", card).CornerRadius = UDim.new(0, 9)
+        addGlassFinish(card, self.color)
+
+        createVectorIconBadge(card, itemIcon or CustomIcons.Search, self.color, 30, UDim2.new(0, 12, 0.5, -15), 4)
+
+        local tLbl = Instance.new("TextLabel", card)
+        tLbl.Size = UDim2.new(0.5, 0, 0, 20)
+        tLbl.Position = UDim2.new(0, 52, 0, 8)
+        tLbl.BackgroundTransparency = 1
+        tLbl.Font = Enum.Font.GothamBold
+        tLbl.TextSize = 12
+        tLbl.TextColor3 = Theme.TextPrimary
+        tLbl.TextXAlignment = Enum.TextXAlignment.Left
+        tLbl.Text = title
+
+        local dLbl = Instance.new("TextLabel", card)
+        dLbl.Size = UDim2.new(0.5, 0, 0, 16)
+        dLbl.Position = UDim2.new(0, 52, 0, 28)
+        dLbl.BackgroundTransparency = 1
+        dLbl.Font = Enum.Font.Gotham
+        dLbl.TextSize = 10
+        dLbl.TextColor3 = Theme.TextMuted
+        dLbl.TextXAlignment = Enum.TextXAlignment.Left
+        dLbl.Text = desc or ""
+
+        local box = Instance.new("TextBox", card)
+        box.Size = UDim2.new(0, 168, 0, 30)
+        box.Position = UDim2.new(1, -180, 0.5, -15)
+        box.BackgroundColor3 = Theme.BgControl
+        box.Font = Enum.Font.GothamMedium
+        box.TextSize = 11
+        box.TextColor3 = Theme.TextPrimary
+        box.PlaceholderText = placeholder or "type here..."
+        box.PlaceholderColor3 = Theme.TextMuted
+        box.Text = defaultValue or ""
+        box.ClearTextOnFocus = false
+        box.BorderSizePixel = 0
+        Instance.new("UICorner", box).CornerRadius = UDim.new(0, 7)
+
+        local function commit()
+            if callback then callback(box.Text) end
+        end
+        box.FocusLost:Connect(commit)
+        box.ReturnPressedFromOnScreenKeyboard:Connect(commit)
+
+        table.insert(allSearchables, {frame = card, label = title .. " " .. (desc or "")})
+        return box
+    end
+
     return tabObj
 end
 
@@ -1933,6 +3662,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local TabFarm     = createTab(CustomIcons.AutoFarm, "Auto Farm",      Color3.fromRGB(56, 189, 248))
+local TabPvP      = createTab(CustomIcons.PvP,      "PvP & Players",  Color3.fromRGB(248, 113, 113))
 local TabStats    = createTab(CustomIcons.Stats,    "Stats & Combat", Color3.fromRGB(99, 102, 241))
 local TabFruits   = createTab(CustomIcons.Fruits,   "Fruits & Raids", Color3.fromRGB(250, 204, 21))
 local TabTeleport = createTab(CustomIcons.Teleport, "Teleport & Seas",Color3.fromRGB(34, 197, 94))
@@ -1976,8 +3706,8 @@ TabFarm:AddToggle("Auto Farm Chests", "Tween to spawned Silver, Gold & Diamond c
     if not v then stopTween() end
 end, CustomIcons.HubCrest)
 
-TabFarm:AddSection("Boss Hunter (Sea " .. CURRENT_SEA .. ")")
-TabFarm:AddDropdown("Select Target Boss", "Up-to-date bosses for Current Sea", BOSSES_BY_SEA[CURRENT_SEA], Config.SelectedBoss, function(val)
+TabFarm:AddSection("Boss Hunter (all seas — Sea " .. CURRENT_SEA .. " detected)")
+TabFarm:AddDropdown("Select Target Boss", "Every boss of every sea (S1/S2/S3 prefix)", BOSS_LIST_ALL, Config.SelectedBoss, function(val)
     Config.SelectedBoss = val
 end, CustomIcons.Boss)
 TabFarm:AddToggle("Auto Farm Selected Boss", "Automatically tween to and eliminate chosen boss", Config.AutoFarmBoss, function(v)
@@ -2007,12 +3737,162 @@ TabStats:AddToggle("Auto Cast Skill [V]", "Automatically trigger V awakening/tra
 TabStats:AddSection("Haki, Race & Fighting Styles")
 TabStats:AddToggle("Auto Instinct (Ken Haki)", "Keep Observation Haki active automatically", Config.AutoKen, function(v) Config.AutoKen = v end, CustomIcons.ESP)
 TabStats:AddToggle("Auto Race V3 Ability", "Automatically fire Race V3 skill on cooldown", Config.AutoRaceV3, function(v) Config.AutoRaceV3 = v end, CustomIcons.Lightning)
-for styleName, remoteArg in pairs(FIGHTING_STYLES) do
-    TabStats:AddButton("Equip " .. styleName, "Switch to " .. styleName .. " via CommF_ remote", "Switch", function()
-        invokeCommF(remoteArg)
-        notify("Fighting Style", "Switched to " .. styleName, 2.5, CustomIcons.AutoFarm)
+TabStats:AddSection("Combat Aura & Cosmetics")
+TabStats:AddToggle("Kill Aura (Auto Attack Always)", "Triple-layer Fast Attack runs even when Auto Farm is OFF", Config.AutoAttackAlways, function(v) Config.AutoAttackAlways = v end, CustomIcons.Lightning)
+TabStats:AddToggle("Sovereign Haki Aura VFX", "Client-side neon aura sparks around your character", Config.SovereignHakiAura, function(v) Config.SovereignHakiAura = v end, CustomIcons.Wand)
+TabStats:AddSlider("Attack Reach (Studs)", "Multi-target blade hit radius used by every attack layer", 25, 90, Config.AttackRange, function(v) Config.AttackRange = v end, CustomIcons.AutoFarm)
+TabStats:AddDropdown("Fighting Style Database", "V1 · V2 · V3 styles — switching also force-equips the Melee tool", FIGHTING_STYLE_ORDER, Config.SelectedFightingStyle or FIGHTING_STYLE_ORDER[1], function(val)
+    Config.SelectedFightingStyle = val
+end, CustomIcons.AutoFarm)
+TabStats:AddButton("Switch & Auto-Equip Style", "Buys/switches the style, then guarantees the Fighting Style tool is equipped", "Equip Now", function()
+    local style = Config.SelectedFightingStyle or FIGHTING_STYLE_ORDER[1]
+    local ok = equipFightingStyle(style)
+    notify("Fighting Style", string.format("%s %s", ok and "Equipped" or "Requested", tostring(style):gsub("%s*%[.*%]$", "")), 3, CustomIcons.AutoFarm)
+end, CustomIcons.AutoFarm)
+TabStats:AddButton("Force Equip Melee / Style Tool", "Uses ToolTip + known style names + Humanoid:EquipTool + parent fallback", "Force Melee", function()
+    local ok = equipWeaponByType("Melee")
+    if not ok and getHumanoid() then
+        local char = getCharacter()
+        local hum = getHumanoid()
+        if char and hum then
+            local tool = char:FindFirstChildOfClass("Tool")
+            if tool then hum:UnequipTools() task.wait(0.1) hum:EquipTool(tool) ok = true end
+        end
+    end
+    notify("Melee Equip", ok and "Fighting Style tool equipped" or "No Fighting Style tool found", 3, CustomIcons.AutoFarm)
+end, CustomIcons.AutoFarm)
+for _, style in ipairs(FIGHTING_STYLES) do
+    TabStats:AddButton("Equip " .. style.name, style.tier .. "  •  " .. style.remote .. "  +  instant Melee tool equip", "Switch", function()
+        equipFightingStyle(style.name)
+        notify("Fighting Style", "Switched to " .. style.name, 2.5, CustomIcons.AutoFarm)
     end, CustomIcons.AutoFarm)
 end
+
+-- ─── TAB 3: PVP & PLAYERS ───
+TabPvP:AddSection("Hotkeys")
+TabPvP:AddLivePanel("PvP Hotkeys", "quick controls available anywhere in the game", 30, function()
+    return "RightShift  →  toggle Skill Aimbot / AimLock\n" ..
+           "RightAlt    →  toggle Undetected Bypass Fly\n" ..
+           "RightCtrl / F9  →  show / hide the Skill Hub window\n" ..
+           "Space (mid-air)  →  Infinite Geppo jump (when enabled)"
+end, 96, CustomIcons.Aim)
+
+TabPvP:AddSection("Target Player")
+TabPvP:AddInput("Target Player Name", "Type a username (exact or partial) and press Enter", "Username...", Config.SelectedPlayer, function(txt)
+    Config.SelectedPlayer = txt
+    local plr = getPlayerByName(txt)
+    if plr then
+        notify("Target Locked", plr.DisplayName .. " is now your PvP target", 2.5, CustomIcons.PvP)
+    elseif txt ~= "" then
+        notify("Target", "No player matched: " .. tostring(txt), 2.5, CustomIcons.Stop)
+    end
+end, CustomIcons.Search)
+TabPvP:AddButton("Lock Nearest Player", "Selects the closest player in the server as target", "Lock Nearest", function()
+    local myRoot = getRoot()
+    local best, bestDist = nil, math.huge
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+            if hrp and myRoot then
+                local d = (hrp.Position - myRoot.Position).Magnitude
+                if d < bestDist then bestDist, best = d, plr end
+            end
+        end
+    end
+    if best then
+        Config.SelectedPlayer = best.Name
+        notify("Target Locked", string.format("%s · %d studs", best.DisplayName, math.floor(bestDist)), 3, CustomIcons.PvP)
+    else
+        notify("Target", "No other players found", 2.5, CustomIcons.Stop)
+    end
+end, CustomIcons.Play)
+TabPvP:AddButton("Tween / Teleport to Target", "Anti-cheat safe tween flight straight to the target", "Tween To", function()
+    local plr = getPlayerByName(Config.SelectedPlayer)
+    if tweenToPlayer(plr) then
+        notify("Teleport", "Tweening to " .. plr.Name, 2.5, CustomIcons.Teleport)
+    else
+        notify("Teleport", "Target has no character right now", 2.5, CustomIcons.Stop)
+    end
+end, CustomIcons.Teleport)
+TabPvP:AddButton("Spectate Target", "Locks the camera onto the selected player", "Spectate", function()
+    Config.SpectatePlayer = true
+    setSpectate(getPlayerByName(Config.SelectedPlayer))
+end, CustomIcons.ESP)
+TabPvP:AddButton("Stop Spectating", "Returns the camera to your own character", "Stop", function()
+    Config.SpectatePlayer = false
+    setSpectate(nil)
+end, CustomIcons.Stop)
+
+TabPvP:AddSection("PvP Hunter · Kill Players")
+TabPvP:AddToggle("Auto Kill Selected Player", "Non-stop triple-layer Fast Attack + skill combo (Z/X/C/V) on the locked target", Config.AutoKillSelected, function(v)
+    Config.AutoKillSelected = v
+    notify("PvP Hunter", v and ("Hunting " .. tostring(Config.SelectedPlayer ~= "" and Config.SelectedPlayer or "nearest")) or "Selected-player hunting stopped", 3, CustomIcons.PvP)
+end, CustomIcons.PvP)
+TabPvP:AddToggle("Auto Kill PvP-Enabled Players", "Automatically hunts every damageable player (PVP ON / outside safe zones)", Config.AutoKillPvP, function(v)
+    Config.AutoKillPvP = v
+    notify("PvP Hunter", v and "Hunting all PvP-enabled players" or "PvP hunt stopped", 3, CustomIcons.PvP)
+end, CustomIcons.PvP)
+TabPvP:AddToggle("Ignore Friends", "Skips Roblox friends while auto-killing", Config.IgnoreFriendsPvP, function(v) Config.IgnoreFriendsPvP = v end, CustomIcons.Shield)
+TabPvP:AddToggle("Auto Cast Skills on Target (Z/X/C/V)", "Fires mastery skills during the PvP combo", Config.PvPSkills, function(v) Config.PvPSkills = v end, CustomIcons.Layers)
+
+TabPvP:AddSection("Skill Aimbot / AimLock")
+TabPvP:AddToggle("AimLock (Camera + Auto Attack)", "Smooth camera lock onto the target and keep firing attack packets", Config.AimLock, function(v)
+    Config.AimLock = v
+    notify("Skill Aimbot", v and "AimLock ENGAGED (RightShift toggles)" or "AimLock released", 3, CustomIcons.Aim)
+end, CustomIcons.Aim)
+TabPvP:AddSlider("AimLock Smoothness", "8 = instant snap · 100 = very smooth tracking", 8, 100, math.floor((Config.AimLockSmoothness or 0.28) * 100), function(v) Config.AimLockSmoothness = v / 100 end, CustomIcons.Aim)
+TabPvP:AddSlider("AimLock FOV (Studs)", "Ignore targets further away than this", 0, 2000, Config.AimLockFOV, function(v) Config.AimLockFOV = v end, CustomIcons.ESP)
+TabPvP:AddToggle("Player Hitbox Expander", "Inflates the target's HumanoidRootPart so every M1 and skill lands", Config.PlayerHitbox, function(v)
+    Config.PlayerHitbox = v
+    if not v then
+        for name in pairs(PvPState.hitboxOriginals) do
+            local plr = getPlayerByName(name)
+            if plr then setPlayerHitbox(plr, false) else PvPState.hitboxOriginals[name] = nil end
+        end
+    end
+end, CustomIcons.Layers)
+TabPvP:AddSlider("Hitbox Size (Studs)", "Expanded HumanoidRootPart size", 6, 40, Config.PlayerHitboxSize, function(v) Config.PlayerHitboxSize = v end, CustomIcons.Layers)
+TabPvP:AddToggle("Attack Range includes players", "Fast Attack / Kill Aura also hits players in range", Config.AttackPlayers, function(v) Config.AttackPlayers = v end, CustomIcons.AutoFarm)
+
+TabPvP:AddSection("Player Inspector · who is PvP + their loadout")
+TabPvP:AddLivePanel("Player Scanner", "live PvP status · Devil Fruit · Fighting Style · Sword · Gun · Level · Bounty", 1.2, function()
+    local lines = {}
+    local myRoot = getRoot()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            local _, statusText = getPvPStatus(plr)
+            local lo = getPlayerLoadout(plr)
+            local dist = "-"
+            local hrp = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
+            if hrp and myRoot then dist = math.floor((hrp.Position - myRoot.Position).Magnitude) .. "m" end
+            table.insert(lines, string.format("%s [Lv.%s] %s | Fruit: %s | Style: %s | Sword: %s | Gun: %s | Bounty: %s | %s",
+                plr.DisplayName, tostring(lo.level), statusText, lo.fruit, lo.style, lo.sword, lo.gun, lo.bounty, dist))
+        end
+    end
+    if #lines == 0 then return "No other players in this server." end
+    return table.concat(lines, "\n")
+end, 200, CustomIcons.Players)
+TabPvP:AddButton("Print Full Loadout Report", "Writes every player's PvP status + loadout to the console", "Report", function()
+    print("══════ SKILL HUB PLAYER REPORT ══════")
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            local attackable, statusText = getPvPStatus(plr)
+            local lo = getPlayerLoadout(plr)
+            print(string.format("[%s] Lv.%s | %s (attackable=%s) | Fruit: %s | Style: %s | Sword: %s | Gun: %s | Bounty: %s | HP %d/%d",
+                plr.Name, tostring(lo.level), statusText, tostring(attackable), lo.fruit, lo.style, lo.sword, lo.gun, lo.bounty, lo.hp, lo.maxHp))
+        end
+    end
+    notify("Player Report", "Full loadout report printed to the console (F9)", 3, CustomIcons.Players)
+end, CustomIcons.Search)
+TabPvP:AddButton("Copy Target Loadout Summary", "Prints the locked target's loadout into the console", "Print Target", function()
+    local plr = getPlayerByName(Config.SelectedPlayer)
+    if not plr then notify("Player Report", "No target locked", 2.5, CustomIcons.Stop) return end
+    local _, statusText = getPvPStatus(plr)
+    local lo = getPlayerLoadout(plr)
+    print(string.format("[TARGET] %s | %s | Fruit: %s (%s) | Style: %s | Sword: %s | Gun: %s | Lv.%s | Bounty: %s | HP %d/%d",
+        plr.Name, statusText, lo.fruit, getFruitTier(lo.fruit).name, lo.style, lo.sword, lo.gun, tostring(lo.level), lo.bounty, lo.hp, lo.maxHp))
+    notify("Target Loadout", statusText .. " · " .. lo.fruit, 3.5, CustomIcons.PvP)
+end, CustomIcons.Players)
 
 -- ─── TAB 4: FRUITS & RAIDS ───
 TabFruits:AddSection("Devil Fruit Sniper (Update 24+ Roster)")
@@ -2025,11 +3905,45 @@ TabFruits:AddToggle("Auto Grab Spawned Map Fruits", "Tween to natural or dropped
     if not v then stopTween() end
 end, CustomIcons.Teleport)
 TabFruits:AddToggle("Auto Store Fruits in Inventory", "Automatically store any fruit in Backpack/Character", Config.AutoStoreFruits, function(v) Config.AutoStoreFruits = v end, CustomIcons.Layers)
-TabFruits:AddToggle("Auto Roll Gacha (Zioles)", "Automatically roll random fruit from Blox Fruit Gacha", Config.AutoRandomFruit, function(v) Config.AutoRandomFruit = v end, CustomIcons.HubCrest)
-TabFruits:AddButton("Roll Random Fruit Now", "Single instant purchase from Zioles Gacha NPC", "Roll Now", function()
+TabFruits:AddToggle("Auto Roll Gacha (Zioles)", "Rolls a random fruit and reports the exact name via OriginalName", Config.AutoRandomFruit, function(v) Config.AutoRandomFruit = v end, CustomIcons.HubCrest)
+TabFruits:AddButton("Roll Random Fruit Now", "Instant Zioles roll — the result is detected and auto-stored", "Roll Now", function()
     invokeCommF("Cousin", "Buy")
-    notify("Blox Fruit Gacha", "Rolled random fruit from Zioles", 2.5, CustomIcons.Fruits)
+    task.wait(0.4)
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    local char = getCharacter()
+    local fruitName = nil
+    for _, container in ipairs({ char, backpack }) do
+        if container then
+            for _, tool in ipairs(container:GetChildren()) do
+                if tool:IsA("Tool") and toolMatchesCategory(tool, "Blox Fruit") then
+                    fruitName = tostring(tool:GetAttribute("OriginalName") or tool.Name):gsub(" Fruit", "")
+                end
+            end
+        end
+    end
+    if fruitName then
+        notify("Blox Fruit Gacha", fruitName .. "  •  rarity: " .. getFruitTier(fruitName).name, 4, CustomIcons.Fruits)
+    else
+        notify("Blox Fruit Gacha", "Roll requested — result appears in your inventory", 3, CustomIcons.Fruits)
+    end
 end, CustomIcons.Fruits)
+TabFruits:AddToggle("Auto Store Rolled / Obtained Fruits", "Stores every new fruit (including gacha rolls) using OriginalName", Config.AutoStoreRolled, function(v) Config.AutoStoreRolled = v end, CustomIcons.Layers)
+
+TabFruits:AddSection("Fruit Magnet (Update 24+ instant pull)")
+TabFruits:AddToggle("Fruit Magnet", "firetouchinterest + Handle pull on every spawned or dropped fruit", Config.FruitMagnet, function(v)
+    Config.FruitMagnet = v
+    notify("Fruit Magnet", v and "Magnetising fruits..." or "Fruit Magnet off", 2.5, CustomIcons.Magnet)
+end, CustomIcons.Magnet)
+TabFruits:AddSlider("Magnet Radius (Studs)", "Fruits within this radius are pulled instantly", 50, 5000, Config.FruitMagnetRadius, function(v) Config.FruitMagnetRadius = v end, CustomIcons.Magnet)
+TabFruits:AddButton("Magnet Now (single pulse)", "Instantly pull every fruit inside the magnet radius", "Pull", function()
+    for _, entry in ipairs(findFruitHandles(Config.FruitMagnetRadius)) do magnetPart(entry.handle, false) end
+    notify("Fruit Magnet", "Pulled nearby fruits", 2.5, CustomIcons.Magnet)
+end, CustomIcons.Magnet)
+TabFruits:AddButton("Grab Closest Fruit (Tween)", "Tween-flight to the nearest fruit on the map", "Grab", function()
+    local list = findFruitHandles(9000)
+    table.sort(list, function(a, b) return a.dist < b.dist end)
+    if list[1] then tweenTo(list[1].handle.CFrame) end
+end, CustomIcons.Teleport)
 
 TabFruits:AddSection("Raids & Awakening")
 TabFruits:AddDropdown("Raid Microchip", "Select normal or advanced raid chip", RAID_CHIPS, Config.SelectedRaidChip, function(val)
@@ -2045,28 +3959,55 @@ TabTeleport:AddButton("Travel to First Sea", "Teleport to Old World (PlaceId 275
 TabTeleport:AddButton("Travel to Second Sea", "Teleport to Dressrosa / Kingdom of Rose", "Travel", function() invokeCommF("TravelDressrosa") end, CustomIcons.Teleport)
 TabTeleport:AddButton("Travel to Third Sea", "Teleport to Zou / Port Town (PlaceId 7449423635)", "Travel", function() invokeCommF("TravelZou") end, CustomIcons.Teleport)
 
-TabTeleport:AddSection("Island Tween Teleport (Sea " .. CURRENT_SEA .. ")")
-local currentSeaIslands = {}
-for islandName in pairs(ISLAND_TELEPORTS[CURRENT_SEA]) do table.insert(currentSeaIslands, islandName) end
-table.sort(currentSeaIslands)
-
+TabTeleport:AddSection("Island Tween Teleport (every sea — works from any PlaceId)")
 TabTeleport:AddSlider("Tween Flight Speed", "Studs per second (250-300 recommended)", 120, 360, Config.TweenSpeed, function(v) Config.TweenSpeed = v end, CustomIcons.Lightning)
-TabTeleport:AddDropdown("Destination Island", "Choose island in current sea", currentSeaIslands, currentSeaIslands[1], function(val)
+TabTeleport:AddDropdown("Destination Island", "S1/S2/S3 prefixed island list — never blocked by a wrong Sea detection", ISLAND_LIST_ALL, Config.SelectedIsland, function(val)
     Config.SelectedIsland = val
 end, CustomIcons.Teleport)
-TabTeleport:AddButton("Tween to Selected Island", "Smooth anti-cheat safe flight to selected island", "Tween Go", function()
-    local targetCF = ISLAND_TELEPORTS[CURRENT_SEA][Config.SelectedIsland]
-    if targetCF then tweenTo(targetCF) end
+TabTeleport:AddButton("Tween to Selected Island", "Smooth anti-cheat safe flight to the selected island", "Tween Go", function()
+    local targetCF = ISLAND_TELEPORTS_ALL[Config.SelectedIsland]
+    if targetCF then
+        tweenTo(targetCF)
+        notify("Teleport", "Tweening to " .. tostring(Config.SelectedIsland), 2.5, CustomIcons.Teleport)
+    else
+        notify("Teleport", "Unknown island: " .. tostring(Config.SelectedIsland), 3, CustomIcons.Stop)
+    end
 end, CustomIcons.Play)
 TabTeleport:AddButton("Stop Active Tween", "Immediately cancel current flight path", "Stop", stopTween, CustomIcons.Stop)
 
+TabTeleport:AddSection("Sea Detection Control (fixed)")
+TabTeleport:AddDropdown("Sea Override", "Auto = PlaceId + live map scan · or force Sea 1 / 2 / 3 manually", { "Auto", "1", "2", "3" }, CONFIG_SEA_OVERRIDE, function(val)
+    CONFIG_SEA_OVERRIDE = val
+    CURRENT_SEA = refreshSea()
+    notify("Sea Detection", string.format("Sea %d via %s", CURRENT_SEA, tostring(SEA_DETECT_SOURCE)), 3, CustomIcons.Teleport)
+end, CustomIcons.Server)
+TabTeleport:AddButton("Re-detect Sea Now", "Re-scans PlaceId, islands, mobs and level to resolve the sea", "Re-scan", function()
+    CONFIG_SEA_OVERRIDE = "Auto"
+    CURRENT_SEA = refreshSea()
+    notify("Sea Detection", string.format("Sea %d (%s)", CURRENT_SEA, tostring(SEA_DETECT_SOURCE)), 3, CustomIcons.Teleport)
+end, CustomIcons.Search)
+TabTeleport:AddLivePanel("Sea Report", "live detection breakdown", 2, function()
+    local scores = computeSeaScores()
+    return string.format(
+        "PlaceId: %d\nDetected: Sea %d (%s)\nScores  S1=%d  S2=%d  S3=%d\nOverride: %s",
+        game.PlaceId, CURRENT_SEA, tostring(SEA_DETECT_SOURCE),
+        scores[1] or 0, scores[2] or 0, scores[3] or 0, tostring(CONFIG_SEA_OVERRIDE)
+    )
+end, 110, CustomIcons.Server)
+
 -- ─── TAB 6: ESP & VISUALS ───
 TabESP:AddSection("World & Entity ESP")
-TabESP:AddToggle("Player ESP", "Display player names, levels, HP and distance", Config.ESPPlayers, function(v) Config.ESPPlayers = v; if not v then clearESP() end end, CustomIcons.ESP)
+TabESP:AddToggle("Player ESP", "Name, Level, PvP status, HP, distance + full loadout (Fruit / Style / Sword / Gun / Bounty)", Config.ESPPlayers, function(v) Config.ESPPlayers = v; if not v then clearESP() end end, CustomIcons.ESP)
 TabESP:AddToggle("Devil Fruit ESP", "Highlight spawned & dropped Devil Fruits across the map", Config.ESPFruits, function(v) Config.ESPFruits = v; if not v then clearESP() end end, CustomIcons.Fruits)
 TabESP:AddToggle("Chest ESP", "Highlight Silver, Gold & Diamond chests", Config.ESPChests, function(v) Config.ESPChests = v; if not v then clearESP() end end, CustomIcons.HubCrest)
 TabESP:AddToggle("Mirage / Kitsune / Island ESP", "Track Mirage Island, Kitsune Shrine, Prehistoric & all islands", Config.ESPIslands, function(v) Config.ESPIslands = v; if not v then clearESP() end end, CustomIcons.Teleport)
 TabESP:AddToggle("Boss ESP", "Display active bosses with live health and distance", Config.ESPBosses, function(v) Config.ESPBosses = v; if not v then clearESP() end end, CustomIcons.Boss)
+TabESP:AddToggle("Player Loadout ESP", "Show each player's Fruit, Fighting Style, Sword & Gun above their head", Config.ESPPlayerLoadout, function(v) Config.ESPPlayerLoadout = v end, CustomIcons.Players)
+TabESP:AddToggle("Fruit Rarity Colours", "Colour fruit ESP by rarity tier (Common → Mythical)", Config.ESPFruitRarity, function(v) Config.ESPFruitRarity = v end, CustomIcons.Fruits)
+TabESP:AddToggle("Tracer Lines", "Draw lines from the crosshair to each player (needs Drawing API)", Config.ESPTracers, function(v)
+    Config.ESPTracers = v
+    if not v then Hooks.clearESP() end
+end, CustomIcons.Aim)
 
 -- ─── TAB 7: MISC & SETTINGS ───
 TabMisc:AddSection("Blox Fruits Anti-Cheat Disabler")
@@ -2089,6 +4030,47 @@ TabMisc:AddToggle(
     end,
     CustomIcons.Lightning
 )
+
+TabMisc:AddSection("Undetected Bypass Fly (no flag)")
+TabMisc:AddToggle("Enable Fly", "Invisible client floor pad + smooth delta stepping · WASD + Space / LeftShift", Config.FlyEnabled, function(v)
+    setFlyState(v)
+end, CustomIcons.Fly)
+TabMisc:AddSlider("Fly Speed", "Studs per second (Bypass Mode caps the per-frame delta)", 20, 300, Config.FlySpeed, function(v) Config.FlySpeed = v end, CustomIcons.Fly)
+TabMisc:AddToggle("Bypass Mode (anti-flag)", "Keeps the Humanoid grounded on the invisible pad, zero velocity spikes, no PlatformStand", Config.FlyBypassMode, function(v) Config.FlyBypassMode = v end, CustomIcons.Shield)
+TabMisc:AddToggle("Anti-Void", "Teleports you back up if you ever fall under the map", Config.FlyAntiVoid, function(v) Config.FlyAntiVoid = v end, CustomIcons.Lightning)
+
+TabMisc:AddSection("Unique Utilities")
+TabMisc:AddToggle("Walk on Water", "Spawns an invisible client platform so you walk instead of swimming", Config.WalkOnWater, function(v)
+    Config.WalkOnWater = v
+    if not v then removeFloorPad() end
+end, CustomIcons.Water)
+TabMisc:AddToggle("Infinite Geppo / Skyjump", "Press Space in mid-air for endless sky jumps", Config.InfiniteGeppo, function(v) Config.InfiniteGeppo = v end, CustomIcons.Fly)
+TabMisc:AddToggle("Infinite Energy", "Keeps Energy / Aura topped up so Buso & Ken never drop", Config.InfiniteEnergy, function(v) Config.InfiniteEnergy = v end, CustomIcons.Lightning)
+TabMisc:AddToggle("No Dash Cooldown", "Spams the dash without waiting for the client cooldown", Config.NoDashCooldown, function(v) Config.NoDashCooldown = v end, CustomIcons.Lightning)
+TabMisc:AddSlider("Dash Interval", "Delay between dash bursts (seconds × 100)", 5, 120, math.floor((Config.DashInterval or 0.32) * 100), function(v) Config.DashInterval = v / 100 end, CustomIcons.Lightning)
+TabMisc:AddToggle("Auto Collect Drops", "Magnetises dropped weapons / loot on the ground", Config.AutoCollectDrops, function(v) Config.AutoCollectDrops = v end, CustomIcons.Magnet)
+TabMisc:AddToggle("Sea Event Tracker", "Alerts + ESP for Terror Shark, Leviathan, Kraken, Sea Beast & Cursed Ship raids", Config.SeaEventTracker, function(v)
+    Config.SeaEventTracker = v
+    if not v then SeaEventState.events = {} end
+end, CustomIcons.Server)
+TabMisc:AddToggle("Mirage / Mystic Gear Finder", "Tracks Mirage Island, Kitsune Shrine, Prehistoric Island & Mystic (blue) gear", Config.MirageFinder, function(v) Config.MirageFinder = v end, CustomIcons.Magnet)
+TabMisc:AddButton("Scan Sea Events Now", "Force an immediate scan of the whole map", "Scan", function()
+    SeaEventState.events = scanSeaEvents()
+    notify("Sea Event Scan", string.format("%d event marker(s) found", #SeaEventState.events), 3, CustomIcons.Server)
+end, CustomIcons.Search)
+TabMisc:AddToggle("Server Status HUD", "Second top pill: JobId, players, sea source, kill/aimlock state, events", Config.ServerStatusHUD, function(v)
+    Config.ServerStatusHUD = v
+    StatusBar.Visible = v
+end, CustomIcons.Server)
+TabMisc:AddToggle("No Fall Damage / Anti Void Death", "Prevents fall damage and ragdoll while flying or farming", Config.NoFallDamage, function(v) Config.NoFallDamage = v end, CustomIcons.Shield)
+TabMisc:AddLivePanel("Server Report", "live server snapshot", 1.5, function()
+    local st = getServerStatus()
+    return string.format(
+        "Job: %s   Players: %d/%d   Ping: %dms\nSea: %d (%s)   Locale: %s\nSea events tracked: %d   Fly: %s   AimLock: %s",
+        st.jobId, st.players, st.maxPlayers, st.ping, st.sea, tostring(st.source), tostring(st.region), st.events,
+        Config.FlyEnabled and "ON" or "off", Config.AimLock and "ON" or "off"
+    )
+end, 104, CustomIcons.Server)
 
 TabMisc:AddSection("Team & Character")
 TabMisc:AddButton("Join Pirates Team", "Switch allegiance to Pirates via CommF_", "Pirates", function() invokeCommF("SetTeam", "Pirates") end, CustomIcons.AutoFarm)
@@ -2148,7 +4130,9 @@ MinBtn.MouseButton1Click:Connect(toggleWindow)
 FloatBtn.MouseButton1Click:Connect(toggleWindow)
 CloseBtn.MouseButton1Click:Connect(function()
     stopTween()
-    clearESP()
+    Hooks.clearESP()
+    flyDisable()
+    removeFloorPad()
     ESPFolder:Destroy()
     ScreenGui:Destroy()
 end)
@@ -2160,4 +4144,21 @@ UserInputService.InputBegan:Connect(function(input, gpe)
     end
 end)
 
-notify("Skill Hub v2.5 Ultra", string.format("Blox Fruits Update 24+ Ready (Sea %d) • RightCtrl to toggle", CURRENT_SEA), 4, CustomIcons.HubCrest)
+-- PvP quick hotkeys (RightCtrl / F9 = toggle window)
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.RightShift then
+        Config.AimLock = not Config.AimLock
+        Hooks.notify("Skill Aimbot / AimLock", Config.AimLock and "ENGAGED" or "released", 2.5, CustomIcons.Aim)
+    elseif input.KeyCode == Enum.KeyCode.RightAlt then
+        Config.FlyEnabled = not Config.FlyEnabled
+        setFlyState(Config.FlyEnabled)
+    end
+end)
+
+notify(
+    "Skill Hub v3.0 Ultra",
+    string.format("Blox Fruits Update 24+ • Sea %d (%s) • PvP & Players tab added • RightCtrl = toggle, RightShift = AimLock, RightAlt = Fly", CURRENT_SEA, tostring(SEA_DETECT_SOURCE)),
+    5,
+    CustomIcons.HubCrest
+)

@@ -5,8 +5,8 @@ Two fully separated products live in this repository:
 | File | What it is | Where it runs |
 |------|------------|---------------|
 | `release/skillhub.release.lua` | **the build the world gets** — not Lua at all: a hex blob XOR-ed against a per-16-byte-block stream seeded from the current key. Without the key it unlocks to noise | Downloaded by `loader.lua` |
-| `loader.lua` | **the only entry point** — takes the key (argument → `skillhub.key` → clipboard), unlocks, verifies the pinned checksum, refuses wrong keys and modified builds | **the link you hand out** |
-| `tools/` | `build_release.py` (seal + lock + checksum), `seal_secret.py` (per-machine endpoint sealing) | Run before each release |
+| `loader.lua` | **the only entry point** — opens the in-game **key window** when no key was supplied (key sources: argument → `skillhub.key` → clipboard → window), unlocks, verifies the pinned checksum, refuses wrong keys and modified builds | **the link you hand out** |
+| `tools/` | `build_release.py` (seal + lock + checksum), `seal_secret.py` (per-machine endpoint sealing), `loader_test.py` (17 automated checks of the loader and its key window in a mocked Roblox) | Run before each release |
 | `SkillAnimator/init.lua` | **Skill Animator Studio** — Moon Animator 2 style keyframe/rig editor | Roblox **Studio plugin** (no pre-made animations) |
 | `main.lua` | the readable **source of truth** — deliberately **NOT published** (`.gitignore`, kept private/local) | Only you |
 
@@ -17,22 +17,26 @@ Two fully separated products live in this repository:
 **One link for everybody, one key to enter:**
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/loader.lua"))("<key>")
+loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/loader.lua"))()
+-- opens the key window: type the key into the field, press Enter (or the ВОЙТИ button)
 ```
 
 Current key: **`UPDATE 2026`** — replaced with every update (`tools/build_release.py --pass "<new key>"`).
 
-Users who do not want to paste the key into the line can pick any of these:
+The key window is part of the loader: a card with the title `Skill Hub · Введите ключ доступа`, one focused text field, a `ВОЙТИ` button and a status line (`Ключ нужен для запуска` / `Неверный ключ — попробуй ещё раз` / `Проверяю ключ…`). Nothing is downloaded or executed until a key is actually accepted; a wrong key only re-prints the status line. On success the key is written to `skillhub.key` in the executor workspace, the window disappears, and every later injection boots straight into the hub without asking again.
+
+Power users can still skip the window entirely:
 
 ```lua
--- once, saved in the executor workspace:
-writefile("skillhub.key", "UPDATE 2026")
+-- the key as an argument:
+loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/loader.lua"))("UPDATE 2026")
 
--- or just copy the key to the clipboard and run the plain loader:
+-- or save it once, then a plain run never asks:
+writefile("skillhub.key", "UPDATE 2026")
 loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/loader.lua"))()
 ```
 
-What the loader does: reads the key → downloads the locked blob → unlocks it → checks the plaintext really is a Skill Hub build → verifies the pinned FNV-1a-32 checksum (a modified blob is refused, not executed) → prints build + hash + key hash → unloads any previous instance → runs the hub. A wrong key prints *WRONG KEY — nothing was executed*.
+What the loader does after the key is accepted: downloads the locked blob → unlocks it → checks the plaintext really is a Skill Hub build → verifies the pinned FNV-1a-32 checksum (a modified blob is refused, not executed) → prints build + hash + key hash → unloads any previous instance → runs the hub.
 
 **The readable source is private.** `main.lua` is not in this repository (GitHub returns 404 for it) — the published artefact is only the locked blob, and the sealed Lua inside it has its comments blanked and every string literal encrypted. Nobody who has the repository can read the script.
 
@@ -83,12 +87,22 @@ python3 tools/build_release.py --unseal   # local readable copy (git-ignored, ne
 * **Auto Player List** — live in-UI roster that refreshes every second: PvP status lamp, level, fruit, style, HP, distance, plus one-click `TGT` / `KILL` / `TP` / `CAM` buttons per player.
 * **Fly Status panel** — live velocity, altitude and who currently owns movement (manual / autopilot / tween).
 
+### v3.13 — the key is typed in a window, and the icon set is redrawn
+
+* **The key is entered in a GUI menu, not on the command line.** `loader.lua` now builds `SkillHubKeyGate`: a centred card (`DisplayOrder = 2147483647`, `IgnoreGuiInset`, drop shadow, accent bar) with the title `Skill Hub`, the line `Введите ключ доступа`, one focused `TextBox` with a placeholder, a soft-filled `ВОЙТИ` button and a status line. Enter submits, a wrong key shows `Неверный ключ — попробуй ещё раз` and stays open, a correct key shows `Проверяю ключ…`, saves itself to `skillhub.key` and the window destroys itself before the hub boots. The loader is a plain `loadstring(...)()` call again — no key in the line, no CLI dance.
+* **Icons are actually drawn now — a real set, not placeholder bars.** The old glyph routine drew flat coloured rectangles; every icon is now built from one `put(px, py, w, h, rotation, radius, fill, stroke, alpha)` primitive that can **fill**, **outline** (`UIStroke` instead of a fill) and **fade** a part, so shapes have outlines, holes (`Theme.BgApp` cut-outs) and dimmed secondary parts. 18 glyphs: crossed swords, skull with eye sockets, a toothed jaw and a nasal cut, a 3-bar chart, a fruit with a stem and two leaves, an eye with a lens outline and catchlight, a compass with N/S needles, a 6-tooth gear, a connected lightning bolt, a shield outline with a cross, a closed play triangle, a stop square, a loop ring with an arrow head, layers, a magnifier, a horseshoe magnet with pole faces, a user silhouette (now used by the player list) and the crest.
+* **Unchanged on purpose:** the author credit in the welcome toast and every protection layer from v3.10 (GUARD, sealed exports, request watermark) plus the anti-theft diagnostics (CoreGui watchdog, `LogService.MessageOut` + `ScriptContext.Error` reporters).
+* **`tools/loader_test.py` runs the loader for real** in a mocked Roblox — `python3 tools/loader_test.py` → **17/17 checks passed**: no key anywhere opens the window with `Ключ нужен для запуска`; a wrong key typed in the box prints `Неверный ключ — попробуй ещё раз` and executes nothing; a correct key (with stray spaces) is trimmed, saved to `skillhub.key`, destroys the window and boots the hub; a saved key, a clipboard key and a key passed as the argument all boot with no window.
+* **Fixed while writing that test:** the plain no-argument call `loadstring(game:HttpGet(...))()` used to die in `type(...)` (`bad argument #1 to 'type' (value expected)`) — the varargs are now read into a local first, which is why the keyless recipe above really opens the window.
+* **Verified:** `BUILD CHECK OK`, `LOCK SELFTEST OK`, `SEAL SELFTEST OK`, a direct end-to-end unlock of the published blob through the loader's own code with `UPDATE 2026` (414 693 bytes, hash `1e757e73`, matching the loader pin; wrong key refused), the sealed build through the mocked-Roblox harness (`LOAD OK`, zero errors after clicking every tab and the self-test), the fruit-ledger regression test, `tools/loader_test.py` (17/17), and a geometry render of all 18 glyphs to confirm every icon reads as an icon before the build went out.
+* **Rebuilt artefacts:** published `release/skillhub.release.lua` 829 494 bytes (inner hash `1e757e73`), loader re-pinned, sealed local copy 414 693 bytes.
+
 ### v3.12.1 — closed build with a human key (`UPDATE 2026`)
 
 * **The distribution is closed again, with a key system instead of a secret key**: `loader.lua` asks for the key, the current one is announced with the update (now `UPDATE 2026`). Users can pass it as an argument, keep it in `skillhub.key`, or simply copy it to the clipboard — the loader finds it either way.
 * **One link, one key, no readable source**: the repository publishes a single locked blob (`release/skillhub.release.lua`); the sealed Lua inside it has comments blanked and every literal encrypted, and `main.lua` is not published at all.
 * **Author credit in the interface**: the welcome toast now reads `Skill Hub v3.12 Ultra · by ameksi-web` (`Config.Author`, disable with `Config.ShowAuthor = false`), so every copy of your build carries your name.
-* **Key hygiene, honestly:** a short human key such as `UPDATE 2026` is *guessable* — it gates casual sharing, not a determined attacker. For a build only your inner circle can open, use a longer key (`UPDATE 2026 · 7f3a91`) and rotate it every update; that costs one command.
+* **Rotation is the revoke button:** a new key cuts off every copy that had the old one — one command (`--pass`) plus a push.
 * **One source of truth, one build step.** `tools/build_release.py` seals the current `main.lua` into both artefacts, re-pins both checksums, prints the stats, and refuses to publish anything with a leftover plaintext marker (`rbxassetid`, urls, webhooks).
 * **Honest limits:** whoever holds the key can read what runs on their own machine (that is inherent to client-side scripts) — which is why access is a key you can rotate rather than a promise, and why the hub also fingerprints the machine it runs on.
 * **Verified:** `BUILD CHECK OK`, `LOCK SELFTEST OK`, `SEAL SELFTEST OK`, a direct end-to-end unlock of the published blob with the key (411 377 bytes, hash `bc3eefe5`, matching the loader pin; a wrong key is refused), and the same build runs through the mocked-Roblox harness — `LOAD OK`, zero errors after clicking every tab and the self-test.

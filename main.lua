@@ -1,5 +1,5 @@
 --[[
-    Skill Hub v3.7.3 Ultra — Blox Fruits Edition (Update 24+)
+    Skill Hub v3.8 Ultra — Blox Fruits Edition (Update 30)
     Architecture: the engine layer and the interface each run inside their own
                   factory function (see "ENGINES FACTORY" / "INTERFACE FACTORY").
                   Lua allows only 200 *active* local variables per function and
@@ -345,7 +345,7 @@ end
 
 refreshSea()
 
--- Full current roster (Update 24+) grouped into rarity tiers for Fruit ESP colours
+-- Full current roster (Update 30) grouped into rarity tiers for Fruit ESP colours
 local FRUIT_RARITY = {
     { name = "Common",    color = Color3.fromRGB(148, 163, 184), fruits = {
         "Rocket", "Spin", "Blade", "Kilo", "Chop", "Spring", "Bomb", "Smoke", "Spike",
@@ -361,7 +361,7 @@ local FRUIT_RARITY = {
     } },
     { name = "Mythical",  color = Color3.fromRGB(244, 114, 182), fruits = {
         "Mammoth", "T-Rex", "Dough", "Shadow", "Venom", "Control", "Gas",
-        "Spirit", "Leopard", "Yeti", "Kitsune", "Dragon (West)", "Dragon (East)",
+        "Spirit", "Leopard", "Yeti", "Kitsune", "Magnet", "Dragon (West)", "Dragon (East)",
     } },
 }
 
@@ -377,14 +377,26 @@ end
 FRUIT_RARITY_OF["Dragon"] = FRUIT_RARITY_OF["Dragon (West)"] or FRUIT_RARITY_OF["Mythical"]
 FRUIT_RARITY_OF["Dough King"] = FRUIT_RARITY_OF["Dough"]
 FRUIT_RARITY_OF["Kitsune Fruit"] = FRUIT_RARITY_OF["Kitsune"]
+-- Update 30 chromatic skins (Magnet Gacha). A skinned fruit keeps the rarity of
+-- the fruit it is a skin for, so it gets the same colour and value in the hub.
+FRUIT_RARITY_OF["Lime Blade"]        = FRUIT_RARITY_OF["Blade"]
+FRUIT_RARITY_OF["Topaz Diamond"]     = FRUIT_RARITY_OF["Diamond"]
+FRUIT_RARITY_OF["Scarlet Ghost"]     = FRUIT_RARITY_OF["Ghost"]
+FRUIT_RARITY_OF["Yellow Lightning"]  = FRUIT_RARITY_OF["Rumble"]
+FRUIT_RARITY_OF["Starlight Gravity"] = FRUIT_RARITY_OF["Gravity"]
+FRUIT_RARITY_OF["Runic Fiend"]       = FRUIT_RARITY_OF["Yeti"]
+FRUIT_RARITY_OF["Arcsteel Magnet"]   = FRUIT_RARITY_OF["Magnet"]
 table.sort(FRUITS_LIST)
 
 local function getFruitTier(fruitName)
     if not fruitName then return { name = "Unknown", color = Color3.fromRGB(167, 139, 250) } end
     local clean = tostring(fruitName):gsub(" Fruit", ""):gsub("fruit", "")
     clean = clean:gsub("^%s+", ""):gsub("%s+$", "")
+    -- exact match first, so "Yellow Lightning" is not caught by "Light"
+    local exact = FRUIT_RARITY_OF[clean]
+    if exact then return exact end
     for name, tier in pairs(FRUIT_RARITY_OF) do
-        if clean == name or clean:find(name, 1, true) then return tier end
+        if clean:find(name, 1, true) then return tier end
     end
     return { name = "Unknown", color = Color3.fromRGB(167, 139, 250) }
 end
@@ -402,7 +414,8 @@ local RAID_CHIPS = {
 -- Ordered Fighting Style database (V1 + V2 + V3). `remote` = CommF_ purchase remote,
 -- `tool` = the Melee tool name the game equips for that style.
 local FIGHTING_STYLES = {
-    { name = "Combat",          remote = "BuyCombat",        tier = "V1 · Base",    tool = "Combat" },
+    { name = "Combat",          remote = "BuyCombat",         tier = "V1 · Base",   tool = "Combat" },
+    { name = "Advanced Combat", remote = "BuyAdvancedCombat", tier = "Update 30",   tool = "Advanced Combat" },
     { name = "Black Leg",       remote = "BuyBlackLeg",      tier = "V1",           tool = "Black Leg" },
     { name = "Electro",         remote = "BuyElectro",       tier = "V1",           tool = "Electro" },
     { name = "Fishman Karate",  remote = "BuyFishmanKarate", tier = "V1",           tool = "Fishman Karate" },
@@ -559,6 +572,32 @@ for sea = 1, 3 do
     end
 end
 
+-- Update 30 rebuilt all sixteen First Sea islands, so the stored coordinates can
+-- be stale: when the game still has a model with that name, its live position
+-- wins over the hard-coded CFrame.
+local function resolveIslandCFrame(islandName)
+    if not islandName or islandName == "" then return nil end
+    local roots = { Workspace }
+    for _, folderName in ipairs({ "Map", "Islands", "Locations", "World" }) do
+        local folder = Workspace:FindFirstChild(folderName)
+        if folder then table.insert(roots, folder) end
+    end
+    local wanted = { islandName, islandName .. " Island", islandName .. "Island" }
+    for _, root in ipairs(roots) do
+        for _, candidate in ipairs(wanted) do
+            local model = root:FindFirstChild(candidate)
+            if model and (model:IsA("Model") or model:IsA("BasePart")) then
+                local ok, cf = pcall(function()
+                    local boxCF, size = model:GetBoundingBox()
+                    return CFrame.new(boxCF.Position + Vector3.new(0, size.Y / 2 + 14, 0))
+                end)
+                if ok and cf then return cf end
+            end
+        end
+    end
+    return nil
+end
+
 local ISLAND_LIST_ALL = {}
 for label in pairs(ISLAND_TELEPORTS_ALL) do table.insert(ISLAND_LIST_ALL, label) end
 table.sort(ISLAND_LIST_ALL)
@@ -580,6 +619,8 @@ local SEA_EVENT_SIGNATURES = {
     { Name = "Kitsune Shrine",    Keys = { "kitsune shrine", "kitsune island" }, Color = Color3.fromRGB(250, 204, 21) },
     { Name = "Prehistoric Island",Keys = { "prehistoric" },                   Color = Color3.fromRGB(74, 222, 128) },
     { Name = "Cursed Ship Raid",  Keys = { "cursed ship" },                   Color = Color3.fromRGB(148, 163, 184) },
+    { Name = "Magnet Event",      Keys = { "magnetized", "magnet event" },    Color = Color3.fromRGB(136, 170, 203) },
+    { Name = "Island Secret",     Keys = { "island secret" },                 Color = Color3.fromRGB(223, 181, 133) },
     { Name = "Blue Gear / Mystic",Keys = { "mystic", "blue gear" },           Color = Color3.fromRGB(125, 211, 252) },
 }
 
@@ -727,6 +768,7 @@ local Config = {
     FruitMagnetRadius   = 600,
     AutoStoreRolled     = true,
     RolledFruitName     = "",
+    FruitNotify         = true,    -- announce fruits; hotbar moves and equips never count
 
     -- Unique utilities
     WalkOnWater         = false,
@@ -964,8 +1006,9 @@ do
             return
         end
         print("[Skill Hub] " .. tostring(reason))
-        print(string.format("    hub alive for %.1fs · a real error inside this hub is labelled like: %s",
-            os.clock() - SkillHubEvidence.boot, identitySample()))
+        print(string.format("    hub alive for %.1fs · synthetic input %s · hookEngine %s · a real error inside this hub is labelled like: %s",
+            os.clock() - SkillHubEvidence.boot, Config.UseVirtualInput and "ON" or "off",
+            tostring(Config.HookEngine), identitySample()))
         print("    our last tracked actions:")
         if #ActionTrace.items == 0 then
             print("        · (none — the hub had not performed a single tracked action yet)")
@@ -996,13 +1039,20 @@ do
         pcall(function()
             LogService.MessageOut:Connect(function(message, msgType)
                 if type(message) ~= "string" then return end
-                if not (string.find(message, "CoreGui", 1, true) or string.find(message, "Locales", 1, true)) then return end
-                if not string.find(message, "nil value", 1, true) then return end
+                if string.sub(message, 1, 11) == "[Skill Hub]" then return end   -- never react to our own dump
+                -- The executor may hand us the line WITHOUT the "CoreGui" /
+                -- "Locales" prefix (the script name is formatted by Roblox, not
+                -- carried in the message). Requiring that prefix is exactly why
+                -- a screenshot could show the red line and no [Skill Hub] block.
+                local mentionsNil = string.find(message, "nil value", 1, true) ~= nil
+                if not (mentionsNil
+                    or string.find(message, "CoreGui", 1, true)
+                    or string.find(message, "Locales", 1, true)) then return end
                 if msgType ~= Enum.MessageType.MessageError then return end
                 local now = os.clock()
                 if now - lastDump < 5 then return end
                 lastDump = now
-                print("[Skill Hub] engine reported a CoreGui/Locales error (LogService): " .. message)
+                print("[Skill Hub] engine error via LogService: " .. message)
                 pcall(function() SkillHubEvidence.report("what this hub was doing at that exact moment:") end)
             end)
         end)
@@ -1061,6 +1111,7 @@ pcall(function()
         #SkillHubEvidence.names,
         #SkillHubEvidence.numeric > 0 and table.concat(SkillHubEvidence.numeric, ", ") or "none"))
     print("[Skill Hub] identity sample · a real error inside this hub is labelled like: " .. SkillHubEvidence.identity())
+    print("[Skill Hub] console watchlist armed · LogService.MessageOut + ScriptContext.Error · every \"attempt to call a nil value\" now prints our action trace, the CoreGui snapshot and the failing instance name")
 end)
 
 -- ─── SAFE TWEEN ────────────────────────────────────────────────────────────
@@ -2996,38 +3047,91 @@ end)
 --  RANDOM FRUIT ROLLER + AUTO-STORE (Zioles gacha, OriginalName aware)
 -- ═══════════════════════════════════════════════════════════════════════════
 
+-- ─── FRUIT ACQUISITION LEDGER ───────────────────────────────────────────────
+-- Blox Fruits re-parents tools when you move a hotbar slot onto a fruit, equip
+-- one, or take one out of storage. The old watcher treated every such re-parent
+-- as "you rolled a <fruit>", which is exactly the false report this fixes:
+--   · only a tool first seen inside the BACKPACK counts (that is where ground
+--     pick-ups, gacha rolls and dealer purchases land);
+--   · the same instance is never announced twice;
+--   · the same fruit name is never announced twice inside a short window;
+--   · a fruit that was just removed from a container (slot move / retrieve) is
+--     never announced when it comes back.
 local watchedContainers = {}
-local function bindFruitWatcher(container)
+local FRUIT_SEEN = setmetatable({}, { __mode = "k" })
+local FRUIT_LAST_NAME = {}
+local FRUIT_LAST_REMOVED = {}
+local FRUIT_REPEAT_WINDOW = 60
+local FRUIT_MOVE_WINDOW = 8
+
+local function fruitToolName(tool)
+    local original = tool:GetAttribute("OriginalName")
+    local name = tostring(original or tool.Name or "?")
+    name = name:gsub(" Fruit", "")
+    name = name:gsub("^%s+", ""):gsub("%s+$", "")
+    return name
+end
+
+local function isFruitTool(tool)
+    if not tool or not tool:IsA("Tool") then return false end
+    if tool:GetAttribute("OriginalName") ~= nil then return true end
+    if tool:GetAttribute("IsFruit") == true then return true end
+    if tool:FindFirstChild("Handle") == nil then return false end
+    if toolMatchesCategory(tool, "Blox Fruit") then return true end
+    if FRUIT_RARITY_OF[tool.Name] ~= nil then return true end
+    return tool.Name:lower():find("fruit", 1, true) ~= nil
+end
+
+-- returns true only when this really is a new fruit
+local function announceFruit(tool, containerLabel)
+    local name = fruitToolName(tool)
+    local now = os.clock()
+    local known = FRUIT_SEEN[tool] == true
+    FRUIT_SEEN[tool] = true
+    if known then return false end
+    if containerLabel ~= "Backpack" then return false end
+    if FRUIT_LAST_REMOVED[name] and (now - FRUIT_LAST_REMOVED[name]) < FRUIT_MOVE_WINDOW then return false end
+    local previous = FRUIT_LAST_NAME[name]
+    if previous and (now - previous) < FRUIT_REPEAT_WINDOW then return false end
+    FRUIT_LAST_NAME[name] = now
+    Config.RolledFruitName = name
+    if Config.FruitNotify == false then return true end
+    Hooks.notify("Fruit Obtained", name .. "  •  rarity: " .. getFruitTier(name).name, 4, CustomIcons.Fruits)
+    return true
+end
+
+local function bindFruitWatcher(container, label)
     if not container or watchedContainers[container] then return end
     watchedContainers[container] = true
     container.ChildAdded:Connect(function(tool)
         task.wait(0.15)
-        if not tool:IsA("Tool") then return end
-        local original = tool:GetAttribute("OriginalName")
-        local isFruit = original ~= nil or toolMatchesCategory(tool, "Blox Fruit") or tool:FindFirstChild("Handle") and tool.Name:lower():find("fruit", 1, true)
-        if not isFruit then return end
-
-        local fruitName = tostring(original or tool.Name):gsub(" Fruit", "")
-        Config.RolledFruitName = fruitName
-        Hooks.notify("Fruit Rolled / Obtained", fruitName .. "  •  rarity: " .. getFruitTier(fruitName).name, 4, CustomIcons.Fruits)
-
-        if Config.AutoStoreRolled and Config.AutoStoreFruits ~= false then
-            local code = FRUIT_STORE_CODES[fruitName] or (fruitName .. "-" .. fruitName)
-            task.wait(0.35)
-            invokeCommF("StoreFruit", code, tool)
+        pcall(function()
+            if not isFruitTool(tool) then return end
+            if not announceFruit(tool, label) then return end
+            if Config.AutoStoreRolled and Config.AutoStoreFruits ~= false and label == "Backpack" then
+                local fruitName = fruitToolName(tool)
+                local code = FRUIT_STORE_CODES[fruitName] or (fruitName .. "-" .. fruitName)
+                task.wait(0.35)
+                invokeCommF("StoreFruit", code, tool)
+            end
+        end)
+    end)
+    container.ChildRemoved:Connect(function(tool)
+        if tool and tool:IsA("Tool") then
+            FRUIT_LAST_REMOVED[fruitToolName(tool)] = os.clock()
         end
     end)
 end
 
 local function bindAllFruitWatchers()
-    bindFruitWatcher(LocalPlayer:FindFirstChild("Backpack"))
-    bindFruitWatcher(LocalPlayer.Character)
+    bindFruitWatcher(LocalPlayer:FindFirstChild("Backpack"), "Backpack")
+    bindFruitWatcher(LocalPlayer.Character, "Character")
 end
 bindAllFruitWatchers()
 LocalPlayer.CharacterAdded:Connect(function(char)
     task.wait(0.5)
-    bindFruitWatcher(LocalPlayer:FindFirstChild("Backpack"))
-    bindFruitWatcher(char)
+    bindFruitWatcher(LocalPlayer:FindFirstChild("Backpack"), "Backpack")
+    bindFruitWatcher(char, "Character")
 end)
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -4153,7 +4257,7 @@ hairline(VersionChip, Theme.StrokeSoft, 1, 0.4)
 new("TextLabel", {
     BackgroundTransparency = 1,
     Font = UIFontMono,
-    Text = "v3.7.3",
+    Text = "v3.8",
     TextColor3 = Theme.TextMuted,
     TextSize = 9,
     Size = UDim2.new(1, 0, 1, 0),
@@ -4502,7 +4606,7 @@ local ActiveTabTitle = new("TextLabel", {
 local ActiveTabSub = new("TextLabel", {
     BackgroundTransparency = 1,
     Font = UIFont,
-    Text = "Blox Fruits · Update 24+",
+    Text = "Blox Fruits · Update 30",
     TextColor3 = Theme.TextMuted,
     TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -4753,7 +4857,7 @@ local WatermarkText = new("TextLabel", {
     Font = UIFontMono,
     Position = UDim2.new(0, 32, 0, 0),
     Size = UDim2.new(1, -40, 1, 0),
-    Text = "SKILL HUB 3.7.3 · SEA 1",
+    Text = "SKILL HUB 3.8 · SEA 1",
     TextColor3 = Theme.TextSecondary,
     TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -4798,7 +4902,7 @@ task.spawn(function()
             local status = getServerStatus()
 
             WatermarkBar.Visible = Config.ShowWatermarkHUD
-            WatermarkText.Text = string.format("SKILL HUB 3.7.3 · SEA %d [%s] · LV %d · %d FPS · %d MS",
+            WatermarkText.Text = string.format("SKILL HUB 3.8 · SEA %d [%s] · LV %d · %d FPS · %d MS",
                 CURRENT_SEA, string.upper(tostring(SEA_DETECT_SOURCE)), getPlayerLevel(), fps, status.ping)
 
             StatusBar.Visible = Config.ServerStatusHUD and Config.ShowWatermarkHUD
@@ -4987,7 +5091,7 @@ local function createTab(iconAsset, name, accentOverride)
 
         trace("tab switch -> " .. tostring(name))
         ActiveTabTitle.Text = name
-        ActiveTabSub.Text = string.format("Blox Fruits · Update 24+ · Sea %d", CURRENT_SEA)
+        ActiveTabSub.Text = string.format("Blox Fruits · Update 30 · Sea %d", CURRENT_SEA)
         ActiveTabIconImg.Image = iconAsset
         ActiveTabIconImg.ImageColor3 = tabColor
 
@@ -6473,7 +6577,7 @@ TabPvP:AddButton("Copy Target Loadout Summary", "Prints the locked target's load
 end, CustomIcons.Players)
 
 -- ─── TAB 4: FRUITS & RAIDS ───
-TabFruits:AddSection("Devil Fruit Sniper (Update 24+ Roster)")
+TabFruits:AddSection("Devil Fruit Sniper (Update 30 Roster)")
 TabFruits:AddDropdown("Target Devil Fruit", "Select up-to-date fruit for Stock Sniper", FRUITS_LIST, Config.SelectedFruit, function(val)
     Config.SelectedFruit = val
 end, CustomIcons.Fruits)
@@ -6505,9 +6609,10 @@ TabFruits:AddButton("Roll Random Fruit Now", "Instant Zioles roll — the result
         notify("Blox Fruit Gacha", "Roll requested — result appears in your inventory", 3, CustomIcons.Fruits)
     end
 end, CustomIcons.Fruits)
+TabFruits:AddToggle("Fruit Obtained Notifications", "Announces a fruit only when it is genuinely new — moving a hotbar slot onto a fruit you already own, equipping it or taking it out of storage is never announced", Config.FruitNotify, function(v) Config.FruitNotify = v end, CustomIcons.Fruits)
 TabFruits:AddToggle("Auto Store Rolled / Obtained Fruits", "Stores every new fruit (including gacha rolls) using OriginalName", Config.AutoStoreRolled, function(v) Config.AutoStoreRolled = v end, CustomIcons.Layers)
 
-TabFruits:AddSection("Fruit Magnet (Update 24+ instant pull)")
+TabFruits:AddSection("Fruit Magnet (Update 30 instant pull)")
 TabFruits:AddToggle("Fruit Magnet", "firetouchinterest + Handle pull on every spawned or dropped fruit", Config.FruitMagnet, function(v)
     Config.FruitMagnet = v
     notify("Fruit Magnet", v and "Magnetising fruits..." or "Fruit Magnet off", 2.5, CustomIcons.Magnet)
@@ -6543,7 +6648,8 @@ TabTeleport:AddDropdown("Destination Island", "S1/S2/S3 prefixed island list —
     Config.SelectedIsland = val
 end, CustomIcons.Teleport)
 TabTeleport:AddButton("Tween to Selected Island", "Smooth anti-cheat safe flight to the selected island", "Tween Go", function()
-    local targetCF = ISLAND_TELEPORTS_ALL[Config.SelectedIsland]
+    local islandName = tostring(Config.SelectedIsland or ""):gsub("^S%d%s*•%s*", "")
+    local targetCF = resolveIslandCFrame(islandName) or ISLAND_TELEPORTS_ALL[Config.SelectedIsland]
     if targetCF then
         tweenTo(targetCF, Config.TweenSpeed)
         notify("Teleport", "Tweening to " .. tostring(Config.SelectedIsland), 2.5, CustomIcons.Teleport)
@@ -6848,22 +6954,22 @@ local function UnloadSkillHub()
 end
 
 SharedEnv.SkillHubInstance = {
-    version = "3.7.3",
-    banner = "Skill Hub v3.7.3 Ultra",
+    version = "3.8",
+    banner = "Skill Hub v3.8 Ultra",
     config = Config,
     hookActive = function() return HookRegistry.namecallActive end,
     unload = UnloadSkillHub,
 }
 
-print(string.format("[Skill Hub v3.7.3] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · syntheticInput=%s · coreGui=none",
+print(string.format("[Skill Hub v3.8] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · syntheticInput=%s · coreGui=none",
     ExecutorName, CURRENT_SEA, tostring(SEA_DETECT_SOURCE),
     tostring(Config.HookEngine),
     HookRegistry.namecallActive and "ACTIVE" or "off",
     Config.UseVirtualInput and "on" or "OFF"))
 
 notify(
-    "Skill Hub v3.7.3 Ultra",
-    string.format("Blox Fruits Update 24+ • Sea %d (%s) • PvP & Players tab added • RightCtrl = toggle, RightShift = AimLock, RightAlt = Fly", CURRENT_SEA, tostring(SEA_DETECT_SOURCE)),
+    "Skill Hub v3.8 Ultra",
+    string.format("Blox Fruits Update 30 • Sea %d (%s) • PvP & Players tab added • RightCtrl = toggle, RightShift = AimLock, RightAlt = Fly", CURRENT_SEA, tostring(SEA_DETECT_SOURCE)),
     5,
     CustomIcons.HubCrest
 )

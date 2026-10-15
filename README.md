@@ -4,7 +4,7 @@ Two fully separated products live in this repository:
 
 | File | What it is | Where it runs |
 |------|------------|---------------|
-| `main.lua` | **Skill Hub v3.7.2 Ultra** — Blox Fruits (Update 24+) executer hub | Injected by an executor (Synapse/Delta/Xeno/…) |
+| `main.lua` | **Skill Hub v3.8 Ultra** — Blox Fruits (Update 30) executer hub | Injected by an executor (Synapse/Delta/Xeno/…) |
 | `SkillAnimator/init.lua` | **Skill Animator Studio** — Moon Animator 2 style keyframe/rig editor | Roblox **Studio plugin** (no pre-made animations) |
 
 ---
@@ -19,7 +19,7 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/
 * **Auto Farm** — level/nearest mob/boss farming, chests, Bring Mobs, Hitbox Expander, Triple-Layer Fast Attack.
 * **PvP & Players** *(new)* — **Auto Kill Selected Player**, **Auto Kill PvP-Enabled Players**, **Skill Aimbot / AimLock**, Spectate, Tween/Teleport to Player, Player Hitbox Expander and a live **Player Scanner** (PvP status · Devil Fruit · Fighting Style · Sword · Gun · Level · Bounty).
 * **Stats & Combat** — auto stats, Z/X/C/V skill caster, Haki/race, Kill Aura, and the **fixed Fighting Style switcher** (V1 · V2 · V3).
-* **Fruits & Raids** — stock sniper, **Fruit Magnet** (`firetouchinterest` + Handle pull), upgraded Zioles roller with `OriginalName` auto-store, raids & awakening.
+* **Fruits & Raids** — stock sniper, **Fruit Magnet** (`firetouchinterest` + Handle pull), gacha roller with `OriginalName` auto-store behind a **first-sight acquisition ledger** (Update 30 moved the Gacha Dealer to Middletown), raids & awakening.
 * **Teleport & Seas** — all-sea island tween teleport (S1/S2/S3 prefixed), sea travel, **Sea Detection control** (Auto / force 1-2-3 + live report).
 * **ESP & Visuals** — Player ESP with PvP + full loadout, rarity-coloured Fruit ESP, chest/island/Mirage/Kitsune/boss ESP, tracers.
 * **Misc & Settings** — **Undetected Bypass Fly**, Walk on Water, Infinite Geppo, Infinite Energy, No Dash Cooldown, Auto Collect Drops, Sea Event / Mirage tracker, Server Status HUD, anti-cheat disabler, rejoin/hop, FPS boost.
@@ -45,6 +45,30 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/
 * **Hitbox Expander v2** — player hitbox now scales the whole model (not one blob part) and restores every part exactly; live visualiser; independent **mob hitbox expander** with configurable size/range that works with Bring Mobs off and auto-restores.
 * **Auto Player List** — live in-UI roster that refreshes every second: PvP status lamp, level, fruit, style, HP, distance, plus one-click `TGT` / `KILL` / `TP` / `CAM` buttons per player.
 * **Fly Status panel** — live velocity, altitude and who currently owns movement (manual / autopilot / tween).
+
+### v3.8 — honest fruit reports + Update 30
+
+**The false "выбил фрукт" notification is fixed.** The old watcher announced *every*
+`ChildAdded` in `Backpack`/`Character`, so moving a hotbar slot onto a fruit you already
+owned (an eaten Kitsune, anything stored and re-equipped) printed "Fruit Rolled / Obtained"
+and even fired an unnecessary `StoreFruit`. Fruits are now tracked by an acquisition ledger:
+
+* only a tool **first seen inside the Backpack** counts — that is where pick-ups, gacha rolls and dealer purchases land;
+* the same instance is never announced twice (equipping, re-parenting, un-storing);
+* the same fruit name is never announced twice within a 60 s window;
+* a fruit removed from a container is remembered for 8 s, so taking it back out stays silent;
+* auto-store follows the same rule (no more redundant `StoreFruit` calls on a slot move).
+
+Proven with a replay harness (`/tmp/fruit_test.py`): the *old* build notified **4 times**
+for two real acquisitions, v3.8 notifies **twice** — exactly the two genuine ones.
+`Fruits & Raids → "Fruit Obtained Notifications"` toggles the toast.
+
+**Update 30 awareness (Sea 1 rework, live since 2026-09-05):**
+
+* **Magnet** (Mythical) and the seven **chromatic skins** (Lime Blade, Topaz Diamond, Scarlet Ghost, Yellow Lightning, Starlight Gravity, Runic Fiend, Arcsteel Magnet) added to the roster, the rarity table and Fruit ESP colours; `getFruitTier` now prefers an exact match, so "Yellow Lightning" is no longer reported as "Light".
+* **Advanced Combat** added to the fighting-style database (V1/V2/V3 switcher, `CommF_` remote `BuyAdvancedCombat`).
+* **Island tween teleport resolves live models** — all sixteen First Sea islands were rebuilt, so the hard-coded CFrames can be stale. The hub now looks the island up in `Workspace` (including `Map` / `Islands` / `Locations` / `World`) and flies to its bounding-box centre, falling back to the stored CFrame.
+* **Magnet Event** and **Island Secret** signatures added to the Sea Event tracker; level/EXP readouts no longer assume the old 2,800 cap (Update 30 raises it to 3,000 through the 40 Island Secrets).
 
 ### v3.7.3 — the console now names our own lines, and they are fixed
 With the whole interface running for the first time, Roblox's console started reporting errors *from this file* (`CoreGui.11596.Loadstring.loadstring.<id>` **is** this script — that is how an executor names a `loadstring` container, and the `Locales.en-us` module is only Roblox's error formatter). Two real bugs surfaced and are fixed:
@@ -94,6 +118,14 @@ Roblox tags each console line with where it was raised:
 * Lines without those tags that mention `main`/your executor → raised by scripts you injected.
 
 The hub now *measures* this instead of asserting it: the boot line `[Skill Hub] CoreGui audit @ injection: … numeric-named: …` and the watchdog report printed with every engine error show whether a CoreGui script existed before the hub ran and whether anything was added to CoreGui while it was alive. Load with `Misc → CoreGui Watchdog` on (default) and send that block whenever a red `CoreGui` line appears.
+
+**v3.8 — the reporter can no longer stay silent on your line.** The LogService handler used to require the text `CoreGui`/`Locales` *inside* the message before it printed anything; executors frequently hand the line over without that prefix (the script name is formatted by Roblox, not carried in the payload). Now **any** `attempt to call a nil value` error is captured, our own `[Skill Hub]` output is ignored so the dump cannot feed itself, and the boot log prints
+
+```
+[Skill Hub] console watchlist armed · LogService.MessageOut + ScriptContext.Error · every "attempt to call a nil value" now prints our action trace, the CoreGui snapshot and the failing instance name
+```
+
+If that line is **not** in your console above the red text, the build that ran is not v3.8 (a cached copy of an older `main.lua` — GitHub raw caches for ~5 minutes; re-execute). If it *is* there and the red line still appears, the block underneath it is the answer and always contains the failing instance name, the CoreGui state before/after the hub started, the last tab switches/actions the hub performed, and which layers were active (`synthetic input`, `hookEngine`).
 
 If you want to prove a console error does **not** come from this hub, load it with the hook engine completely off:
 

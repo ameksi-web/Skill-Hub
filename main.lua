@@ -30,6 +30,24 @@ local Debris              = game:GetService("Debris")
 
 local LocalPlayer         = Players.LocalPlayer
 
+-- Shared environment handle (some executors only expose getgenv, others only _G)
+local SharedEnv = (getgenv and getgenv()) or _G or {}
+
+-- ─── DOUBLE-INJECTION GUARD ─────────────────────────────────────────────────
+-- Metamethod hooks can never be removed from a running client, so re-executing
+-- the script used to stack a second (third, fourth…) hook on top of the previous
+-- one — which is exactly what leaks into Roblox's own CoreGui scripts and causes
+--      "CoreGui.RobloxGui.Modules.Common.Locales.en-us ... attempt to call a nil value"
+-- Now a new execution cleanly unloads the previous instance first (its hooks fall
+-- back to a pure pass-through), so only ONE Skill Hub ever owns __namecall.
+do
+    local previous = SharedEnv.SkillHubInstance
+    if type(previous) == "table" and type(previous.unload) == "function" then
+        pcall(previous.unload)
+        print("[Skill Hub] previous instance unloaded (double-injection guarded)")
+    end
+end
+
 -- ═══════════════════════════════════════════════════════════════════════════
 --  CUSTOM VECTOR ICON REGISTRY (LUCIDE / FEATHER RBXASSETID + GLOW ASSETS)
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -643,6 +661,17 @@ local Config = {
     ShowWatermarkHUD    = true,
     PreferExternalFluent = false,
 }
+
+-- Escape hatch: run the hub with ZERO metamethod hooks.
+--   getgenv().SkillHubNoHooks = true
+--   loadstring(game:HttpGet(".../main.lua"))()
+-- Useful to prove whether an error in the console comes from this script's hook
+-- engine or from Roblox / the game itself.
+if SharedEnv.SkillHubNoHooks == true then
+    Config.SafeHookMode = false
+    Config.BypassAntiCheat = false
+    print("[Skill Hub] SkillHubNoHooks is set — no __namecall hook will be installed")
+end
 
 -- Forward-declared hooks (the UI/engine blocks below fill these in later, so every
 -- background loop can safely raise notifications and draw ESP tags).
@@ -1885,11 +1914,19 @@ end)
 local BLOCK_RESULT = {}
 local originalNamecall = nil
 
+-- Only these methods are ever inspected. Everything else (the vast majority of
+-- engine + CoreGui traffic) leaves the hook immediately, untouched.
+local HANDLED_METHODS = {
+    Kick = true, kick = true,
+    FireServer = true, InvokeServer = true,
+    FindPartOnRayWithIgnoreList = true, FindPartOnRay = true, Raycast = true,
+}
+
 local function namecallInterceptor(self, ...)
     if not Config.SafeHookMode then return nil end
 
     local method = getnamecallmethod()
-    if type(method) ~= "string" then return nil end
+    if type(method) ~= "string" or not HANDLED_METHODS[method] then return nil end
 
     -- 1. never let the game kick us
     if method == "Kick" or method == "kick" then
@@ -1903,7 +1940,8 @@ local function namecallInterceptor(self, ...)
     end
 
     -- 3. Skill Aimbot: re-aim the game's own M1 raycasts at the locked target
-    if Config.AimLock and PvPState.target then
+    if Config.AimLock and PvPState.target
+        and (method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRay" or method == "Raycast") then
         local targetChar = PvPState.target.Character
         local info = getCharacterCombatParts(targetChar)
         if info then
@@ -5867,10 +5905,13 @@ TabMisc:AddLivePanel("Server Report", "live server snapshot", 1.5, function()
 end, 104, CustomIcons.Server)
 
 TabMisc:AddSection("Anti-Cheat Engine · hook health")
-TabMisc:AddToggle("Safe Hook Mode", "Single newcclosure'd __namecall hook that can never break other scripts (recommended). OFF = no interception at all.", Config.SafeHookMode, function(v)
+TabMisc:AddToggle("Safe Hook Mode", "Single newcclosure'd __namecall hook that only inspects Kick/FireServer/InvokeServer/raycast calls and can never break another script. OFF = pure pass-through.", Config.SafeHookMode, function(v)
     Config.SafeHookMode = v
-    notify("Hook Engine", v and "Safe hook mode ON" or "Hook interception disabled", 3, CustomIcons.Shield)
+    notify("Hook Engine", v and "Safe hook mode ON" or "Hook is now a pass-through (no interception)", 3, CustomIcons.Shield)
 end, CustomIcons.Shield)
+TabMisc:AddButton("Unload Skill Hub", "Removes the UI + ESP, stops every loop and turns the hook into a pass-through (rejoin to fully clear it)", "Unload", function()
+    UnloadSkillHub()
+end, CustomIcons.Stop)
 TabMisc:AddToggle("Freeze Mob Animations", "Stops mob animation tracks instead of destroying their Animator (avoids animation load spam)", Config.FreezeMobAnimations, function(v) Config.FreezeMobAnimations = v end, CustomIcons.Layers)
 TabMisc:AddLivePanel("Hook & Anti-Cheat Status", "live diagnostics for the __namecall hook", 1.5, function()
     return string.format(
@@ -5966,6 +6007,43 @@ UserInputService.InputBegan:Connect(function(input, gpe)
         setFlyState(Config.FlyEnabled)
     end
 end)
+
+-- ─── UNLOAD API (also used by the double-injection guard above) ─────────────
+local function UnloadSkillHub()
+    Config.SafeHookMode = false        -- the hook becomes a pure pass-through
+    Config.BypassAntiCheat = false
+    Config.FlyEnabled = false
+    Config.AutoKillSelected = false
+    Config.AutoKillPvP = false
+    Config.AimLock = false
+    Config.ESPPlayers = false
+    Config.ESPFruits = false
+    Config.ESPChests = false
+    Config.ESPBosses = false
+    Config.ESPIslands = false
+    pcall(function() setFlyState(false) end)
+    pcall(function() stopTween() end)
+    pcall(function() removeFloorPad() end)
+    pcall(function() Hooks.clearESP() end)
+    pcall(function() ESPFolder:Destroy() end)
+    pcall(function() ScreenGui:Destroy() end)
+    pcall(function() WatermarkBar:Destroy() end)
+    pcall(function() StatusBar:Destroy() end)
+    print("[Skill Hub] unloaded")
+end
+
+SharedEnv.SkillHubInstance = {
+    version = "3.2",
+    banner = "Skill Hub v3.2 Ultra",
+    config = Config,
+    hookActive = function() return HookRegistry.namecallActive end,
+    unload = UnloadSkillHub,
+}
+
+print(string.format("[Skill Hub v3.2] loaded · sea=%d (%s) · namecall hook=%s · safeHook=%s",
+    CURRENT_SEA, tostring(SEA_DETECT_SOURCE),
+    HookRegistry.namecallActive and "ACTIVE" or "off",
+    tostring(Config.SafeHookMode)))
 
 notify(
     "Skill Hub v3.2 Ultra",

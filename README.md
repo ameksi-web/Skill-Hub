@@ -45,6 +45,21 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/
 * **Auto Player List** — live in-UI roster that refreshes every second: PvP status lamp, level, fruit, style, HP, distance, plus one-click `TGT` / `KILL` / `TP` / `CAM` buttons per player.
 * **Fly Status panel** — live velocity, altitude and who currently owns movement (manual / autopilot / tween).
 
+### Diagnosing console errors
+Roblox tags each console line with where it was raised:
+* `[Roblox][CoreGui...] ... Script 'CoreGui.<id>'` → raised inside **Roblox's own CoreScripts** (the well-known `RobloxGui.Modules.Common.Locales.en-us` message is a Roblox/CoreGui quirk and appears in unmodified sessions too).
+* `-- [Blox Fruits] ...` → raised by the game.
+* Lines without those tags that mention `main`/your executor → raised by scripts you injected.
+
+If you want to prove a console error does **not** come from this hub, load it with the hook engine completely off:
+
+```lua
+getgenv().SkillHubNoHooks = true
+loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/main.lua"))()
+```
+
+Other safety nets: meteathod hooks **cannot be removed** from a running client, so re-executing an updated build cleanly unloads the previous instance first (double-injection guard); **Safe Hook Mode** makes the hook a pure pass-through; and **Misc → Unload Skill Hub** tears everything down.
+
 ### Hotkeys
 | Key | Action |
 |-----|--------|

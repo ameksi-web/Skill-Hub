@@ -1,5 +1,10 @@
 --[[
-    Skill Hub v3.7 Ultra — Blox Fruits Edition (Update 24+)
+    Skill Hub v3.7.2 Ultra — Blox Fruits Edition (Update 24+)
+    Architecture: the engine layer and the interface each run inside their own
+                  factory function (see "ENGINES FACTORY" / "INTERFACE FACTORY").
+                  Lua allows only 200 *active* local variables per function and
+                  this hub needs far more, so the main chunk stays around 130 —
+                  keep it that way when adding code.
     Interface: "Porcelain" design system — soft-dark graphite surfaces, hairline
                borders, 20px radii, muted editorial accents. No neon, no glow.
     Features:
@@ -692,11 +697,12 @@ local Config = {
     HitboxMobs          = true,
     SafeHookMode        = true,
     HookEngine          = false,   -- metamethod hooks are opt-in (cannot be removed until rejoin)
-    UseVirtualInput     = false,   -- synthetic key events + virtual mouse clicks. OFF by default
-                                   -- since v3.7: these are the ONLY engine input APIs this hub
-                                   -- ever calls, and the engine formats their failures through
-                                   -- the CoreGui / Locales module. Re-enable in Misc if you want.
+    UseVirtualInput     = true,    -- synthetic key events + virtual mouse clicks — ON, as in v3.6.
+                                   -- The Z/X/C/V skill caster, infinite geppo and Anti-AFK go through
+                                   -- this layer, so it must stay on. Misc -> "Synthetic Input"
+                                   -- switches it off in one click if you ever want that.
     CoreGuiWatch        = true,    -- snapshot CoreGui at boot + log everything added there after
+    NoDiagnostics       = false,   -- kill switch for all v3.7 evidence code (watchdog + reporters)
     DebugTrace          = true,    -- print the action trace when the engine reports an error
     IncrementalUIBuild  = true,    -- spread GUI construction across frames (no creation spikes)
     LogStepErrors       = true,    -- print [Skill Hub] step error @ line … when our own code fails
@@ -766,6 +772,14 @@ if SharedEnv.SkillHubNoHooks == true then
     Config.SafeHookMode = false
     Config.BypassAntiCheat = false
     print("[Skill Hub] SkillHubNoHooks is set — no __namecall hook will be installed")
+end
+
+-- Turns off every v3.7 diagnostic (watchdog, reporters, audit prints):
+--   getgenv().SkillHubNoEvidence = true
+if SharedEnv.SkillHubNoEvidence == true then
+    Config.NoDiagnostics = true
+    Config.CoreGuiWatch = false
+    print("[Skill Hub] SkillHubNoEvidence is set — CoreGui watchdog and error reporters off")
 end
 
 -- Removes every VirtualUser / VirtualInputManager call:
@@ -879,7 +893,9 @@ do
         local frames = {}
         for line in string.gmatch(tb, "[^" .. LF .. "]+") do
             local clean = string.gsub(line, "^%s+", "")
-            local skip = clean == "" or clean == "[C]" or clean == "Stack Begin" or clean == "Stack End"
+            local skip = clean == "" or clean == "Stack Begin" or clean == "Stack End"
+                or string.sub(clean, 1, 3) == "[C]"
+                or string.find(clean, "stack traceback", 1, true)
                 or string.find(clean, "creatorNote", 1, true)
                 or string.find(clean, "coreGuiAdded", 1, true)
                 or string.find(clean, "DescendantAdded", 1, true)
@@ -892,16 +908,26 @@ do
         return table.concat(frames, "  <--  ")
     end
 
+    -- Deliberately cheap: CoreGui receives thousands of descendants per session
+    -- (chat lines, hotbar frames, notifications). Anything that is neither a
+    -- script nor numeric-named leaves here before a single string is built, and
+    -- the whole hook is rate-limited.
+    local lastNote = -1e9
     local function coreGuiAdded(inst)
         local okName, name = pcall(function() return inst.Name end)
+        if not okName or type(name) ~= "string" then return end
         local okCls, cls = pcall(function() return inst.ClassName end)
-        name = okName and tostring(name) or "?"
         cls = okCls and tostring(cls) or "?"
         local isScript = (cls == "Script" or cls == "LocalScript" or cls == "ModuleScript")
-        local numeric = string.match(name, "^%d+$") and " · numeric name (engine module loader)" or ""
+        local isNumeric = string.match(name, "^%d+$") ~= nil
+        if not (isScript or isNumeric) then return end
+        local now = os.clock()
+        if now - lastNote < 0.1 then return end
+        lastNote = now
+        local numeric = isNumeric and " · numeric name (engine module loader)" or ""
         table.insert(SkillHubEvidence.log, string.format(
             "[t=%.2f] +%s%s '%s'%s · creator: %s",
-            os.clock(), isScript and "SCRIPT " or "", cls, name, numeric, creatorNote()))
+            now, isScript and "SCRIPT " or "", cls, name, numeric, creatorNote()))
         while #SkillHubEvidence.log > SkillHubEvidence.max do table.remove(SkillHubEvidence.log, 1) end
     end
 
@@ -921,7 +947,7 @@ do
                 end
             end
         end)
-        if Config.CoreGuiWatch == false then return end
+        if Config.CoreGuiWatch == false or Config.NoDiagnostics == true then return end
         pcall(function()
             gui.DescendantAdded:Connect(function(inst) pcall(coreGuiAdded, inst) end)
         end)
@@ -933,6 +959,10 @@ do
     -- The evidence block: printed whenever the engine reports an error, and on
     -- demand from Misc. Everything in it is measured, nothing is assumed.
     SkillHubEvidence.report = function(reason)
+        if Config.NoDiagnostics == true then
+            print("[Skill Hub] diagnostics are off (SkillHubNoEvidence / Config.NoDiagnostics) — no report")
+            return
+        end
         print("[Skill Hub] " .. tostring(reason))
         print(string.format("    hub alive for %.1fs · a real error inside this hub is labelled like: %s",
             os.clock() - SkillHubEvidence.boot, identitySample()))
@@ -962,7 +992,7 @@ end
 do
     local ok, LogService = pcall(function() return game:GetService("LogService") end)
     if ok and LogService then
-        local lastDump = 0
+        local lastDump = -1e9
         pcall(function()
             LogService.MessageOut:Connect(function(message, msgType)
                 if type(message) ~= "string" then return end
@@ -973,7 +1003,7 @@ do
                 if now - lastDump < 5 then return end
                 lastDump = now
                 print("[Skill Hub] engine reported a CoreGui/Locales error (LogService): " .. message)
-                SkillHubEvidence.report("what this hub was doing at that exact moment:")
+                pcall(function() SkillHubEvidence.report("what this hub was doing at that exact moment:") end)
             end)
         end)
     end
@@ -988,7 +1018,7 @@ do
     local LF = string.char(10)
     local ok, SC = pcall(function() return game:GetService("ScriptContext") end)
     if ok and SC then
-        local lastSCError = 0
+        local lastSCError = -1e9
         pcall(function()
             SC.Error:Connect(function(message, stack, script)
                 if type(message) ~= "string" then return end
@@ -1017,7 +1047,7 @@ do
                 else
                     print("    failing instance: not reported by this executor")
                 end
-                SkillHubEvidence.report("full hub state at that moment:")
+                pcall(function() SkillHubEvidence.report("full hub state at that moment:") end)
             end)
         end)
     end
@@ -1025,11 +1055,13 @@ end
 
 -- CoreGui audit at injection time — printed with the boot log, so the snapshot
 -- is taken before this hub has built a single instance.
-SkillHubEvidence.watch()
-print(string.format("[Skill Hub] CoreGui audit @ injection: %d top-level children · numeric-named: %s",
-    #SkillHubEvidence.names,
-    #SkillHubEvidence.numeric > 0 and table.concat(SkillHubEvidence.numeric, ", ") or "none"))
-print("[Skill Hub] identity sample · a real error inside this hub is labelled like: " .. SkillHubEvidence.identity())
+pcall(function() SkillHubEvidence.watch() end)
+pcall(function()
+    print(string.format("[Skill Hub] CoreGui audit @ injection: %d top-level children · numeric-named: %s",
+        #SkillHubEvidence.names,
+        #SkillHubEvidence.numeric > 0 and table.concat(SkillHubEvidence.numeric, ", ") or "none"))
+    print("[Skill Hub] identity sample · a real error inside this hub is labelled like: " .. SkillHubEvidence.identity())
+end)
 
 -- ─── SYNTHETIC INPUT SANDBOX ────────────────────────────────────────────────
 -- VirtualUser:CaptureController()/Button1Down()/Button1Up() are NOT part of the
@@ -1157,6 +1189,24 @@ markRespawnQuiet = nil
 -- ═══════════════════════════════════════════════════════════════════════════
 --  BLOX FRUITS ANTI-CHEAT DISABLER, SIMRADIUS & ANTI-STUN ENGINE
 -- ═══════════════════════════════════════════════════════════════════════════
+
+
+-- ───────────────────────────────────────────────────────────────────────────
+--  ENGINES FACTORY
+--  Lua allows only 200 active local variables per function and this hub
+--  needs far more than that, so the engine layer lives in its own
+--  function and hands its results back through a table.
+-- ───────────────────────────────────────────────────────────────────────────
+local EngineFactory = function(E)
+    local BLOCKED_REMOTE_PATTERNS, BOSSES_BY_SEA, CURRENT_SEA, Config = E.BLOCKED_REMOTE_PATTERNS, E.BOSSES_BY_SEA, E.CURRENT_SEA, E.Config
+    local CustomIcons, Debris, FIGHTING_STYLE_REMOTES, FIGHTING_STYLE_TOOLS = E.CustomIcons, E.Debris, E.FIGHTING_STYLE_REMOTES, E.FIGHTING_STYLE_TOOLS
+    local FRUIT_STORE_CODES, HookRegistry, Hooks, LocalPlayer = E.FRUIT_STORE_CODES, E.HookRegistry, E.Hooks, E.LocalPlayer
+    local MovementLink, Players, QUEST_DATABASE, ReplicatedStorage = E.MovementLink, E.Players, E.QUEST_DATABASE, E.ReplicatedStorage
+    local RunService, SEA_DETECT_SOURCE, SEA_EVENT_SIGNATURES, SeaEventState = E.RunService, E.SEA_DETECT_SOURCE, E.SEA_EVENT_SIGNATURES, E.SeaEventState
+    local SkillHubStep, StatsService, TweenService, UserInputService = E.SkillHubStep, E.StatsService, E.TweenService, E.UserInputService
+    local VirtualUser, Workspace, getFruitTier, isMeleeTool = E.VirtualUser, E.Workspace, E.getFruitTier, E.isMeleeTool
+    local pressKey, refreshSea, toolMatchesCategory, trace = E.pressKey, E.refreshSea, E.toolMatchesCategory, E.trace
+    local virtualClick = E.virtualClick
 
 local SAFE_GAMEPLAY_REMOTES = {
     ["commf_"]             = true,
@@ -3641,6 +3691,100 @@ Hooks.espTag = createESPBillboard
 --  CUSTOM VECTOR ICON & GLASSMORPHIC SCREENGUI ENGINE
 -- ═══════════════════════════════════════════════════════════════════════════
 
+
+    return {
+        ESPFolder = ESPFolder,
+        Fly = Fly,
+        PvPState = PvPState,
+        clearESP = clearESP,
+        equipFightingStyle = equipFightingStyle,
+        equipWeaponByType = equipWeaponByType,
+        findFruitHandles = findFruitHandles,
+        flyDisable = flyDisable,
+        formatNumber = formatNumber,
+        getCharBoundingBox = getCharBoundingBox,
+        getCharacter = getCharacter,
+        getHumanoid = getHumanoid,
+        getPlayerBeli = getPlayerBeli,
+        getPlayerByName = getPlayerByName,
+        getPlayerFragments = getPlayerFragments,
+        getPlayerLevel = getPlayerLevel,
+        getPlayerLoadout = getPlayerLoadout,
+        getPvPStatus = getPvPStatus,
+        getRoot = getRoot,
+        getServerStatus = getServerStatus,
+        initBloxFruitsAntiCheatBypass = initBloxFruitsAntiCheatBypass,
+        invokeCommF = invokeCommF,
+        isBuddhaUser = isBuddhaUser,
+        isGiantForm = isGiantForm,
+        magnetPart = magnetPart,
+        removeFloorPad = removeFloorPad,
+        scanSeaEvents = scanSeaEvents,
+        setFlyState = setFlyState,
+        setPlayerHitbox = setPlayerHitbox,
+        setSpectate = setSpectate,
+        stopTween = stopTween,
+        tweenTo = tweenTo,
+        tweenToPlayer = tweenToPlayer,
+    }
+end
+
+local Engines = EngineFactory({
+    BLOCKED_REMOTE_PATTERNS = BLOCKED_REMOTE_PATTERNS,
+    BOSSES_BY_SEA = BOSSES_BY_SEA,
+    CURRENT_SEA = CURRENT_SEA,
+    Config = Config,
+    CustomIcons = CustomIcons,
+    Debris = Debris,
+    FIGHTING_STYLE_REMOTES = FIGHTING_STYLE_REMOTES,
+    FIGHTING_STYLE_TOOLS = FIGHTING_STYLE_TOOLS,
+    FRUIT_STORE_CODES = FRUIT_STORE_CODES,
+    HookRegistry = HookRegistry,
+    Hooks = Hooks,
+    LocalPlayer = LocalPlayer,
+    MovementLink = MovementLink,
+    Players = Players,
+    QUEST_DATABASE = QUEST_DATABASE,
+    ReplicatedStorage = ReplicatedStorage,
+    RunService = RunService,
+    SEA_DETECT_SOURCE = SEA_DETECT_SOURCE,
+    SEA_EVENT_SIGNATURES = SEA_EVENT_SIGNATURES,
+    SeaEventState = SeaEventState,
+    SkillHubStep = SkillHubStep,
+    StatsService = StatsService,
+    TweenService = TweenService,
+    UserInputService = UserInputService,
+    VirtualUser = VirtualUser,
+    Workspace = Workspace,
+    getFruitTier = getFruitTier,
+    isMeleeTool = isMeleeTool,
+    pressKey = pressKey,
+    refreshSea = refreshSea,
+    toolMatchesCategory = toolMatchesCategory,
+    trace = trace,
+    virtualClick = virtualClick,
+})
+local ESPFolder, Fly, PvPState, clearESP, equipFightingStyle, equipWeaponByType = Engines.ESPFolder, Engines.Fly, Engines.PvPState, Engines.clearESP, Engines.equipFightingStyle, Engines.equipWeaponByType
+local findFruitHandles, flyDisable, formatNumber, getCharBoundingBox, getCharacter, getHumanoid = Engines.findFruitHandles, Engines.flyDisable, Engines.formatNumber, Engines.getCharBoundingBox, Engines.getCharacter, Engines.getHumanoid
+local getPlayerBeli, getPlayerByName, getPlayerFragments, getPlayerLevel, getPlayerLoadout, getPvPStatus = Engines.getPlayerBeli, Engines.getPlayerByName, Engines.getPlayerFragments, Engines.getPlayerLevel, Engines.getPlayerLoadout, Engines.getPvPStatus
+local getRoot, getServerStatus, initBloxFruitsAntiCheatBypass, invokeCommF, isBuddhaUser, isGiantForm = Engines.getRoot, Engines.getServerStatus, Engines.initBloxFruitsAntiCheatBypass, Engines.invokeCommF, Engines.isBuddhaUser, Engines.isGiantForm
+local magnetPart, removeFloorPad, scanSeaEvents, setFlyState, setPlayerHitbox, setSpectate = Engines.magnetPart, Engines.removeFloorPad, Engines.scanSeaEvents, Engines.setFlyState, Engines.setPlayerHitbox, Engines.setSpectate
+local stopTween, tweenTo, tweenToPlayer = Engines.stopTween, Engines.tweenTo, Engines.tweenToPlayer
+
+-- ───────────────────────────────────────────────────────────────────────────
+--  INTERFACE FACTORY
+--  The "Porcelain" interface is its own function for the same reason:
+--  the main chunk must stay well below the 200-local limit.
+-- ───────────────────────────────────────────────────────────────────────────
+local UIFactory = function(E)
+    local CURRENT_SEA, Config, CustomIcons, Hooks = E.CURRENT_SEA, E.Config, E.CustomIcons, E.Hooks
+    local LocalPlayer, Players, PvPState, RunService = E.LocalPlayer, E.Players, E.PvPState, E.RunService
+    local SEA_DETECT_SOURCE, SkillHubStep, TweenService, UserInputService = E.SEA_DETECT_SOURCE, E.SkillHubStep, E.TweenService, E.UserInputService
+    local Workspace, formatNumber, getPlayerBeli, getPlayerFragments = E.Workspace, E.formatNumber, E.getPlayerBeli, E.getPlayerFragments
+    local getPlayerLevel, getPlayerLoadout, getPvPStatus, getRoot = E.getPlayerLevel, E.getPlayerLoadout, E.getPvPStatus, E.getRoot
+    local getServerStatus, isBuddhaUser, isGiantForm, setSpectate = E.getServerStatus, E.isBuddhaUser, E.isGiantForm, E.setSpectate
+    local trace, tweenToPlayer = E.trace, E.tweenToPlayer
+
 local ExternalFluent = nil
 if Config.PreferExternalFluent then
     pcall(function()
@@ -3985,7 +4129,7 @@ hairline(VersionChip, Theme.StrokeSoft, 1, 0.4)
 new("TextLabel", {
     BackgroundTransparency = 1,
     Font = UIFontMono,
-    Text = "v3.7",
+    Text = "v3.7.2",
     TextColor3 = Theme.TextMuted,
     TextSize = 9,
     Size = UDim2.new(1, 0, 1, 0),
@@ -4585,7 +4729,7 @@ local WatermarkText = new("TextLabel", {
     Font = UIFontMono,
     Position = UDim2.new(0, 32, 0, 0),
     Size = UDim2.new(1, -40, 1, 0),
-    Text = "SKILL HUB 3.7 · SEA 1",
+    Text = "SKILL HUB 3.7.2 · SEA 1",
     TextColor3 = Theme.TextSecondary,
     TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -4630,7 +4774,7 @@ task.spawn(function()
             local status = getServerStatus()
 
             WatermarkBar.Visible = Config.ShowWatermarkHUD
-            WatermarkText.Text = string.format("SKILL HUB 3.7 · SEA %d [%s] · LV %d · %d FPS · %d MS",
+            WatermarkText.Text = string.format("SKILL HUB 3.7.2 · SEA %d [%s] · LV %d · %d FPS · %d MS",
                 CURRENT_SEA, string.upper(tostring(SEA_DETECT_SOURCE)), getPlayerLevel(), fps, status.ping)
 
             StatusBar.Visible = Config.ServerStatusHUD and Config.ShowWatermarkHUD
@@ -5981,6 +6125,58 @@ local TabESP      = createTab(CustomIcons.ESP,      "ESP & Visuals",   Theme.Ros
 local TabMisc     = createTab(CustomIcons.Settings, "Misc & Settings", Theme.Steel)
 
 -- ─── TAB 1: AUTO FARM ───
+
+    return {
+        CloseBtn = CloseBtn,
+        FloatBtn = FloatBtn,
+        MainWindow = MainWindow,
+        MinBtn = MinBtn,
+        ScreenGui = ScreenGui,
+        StatusBar = StatusBar,
+        TabESP = TabESP,
+        TabFarm = TabFarm,
+        TabFruits = TabFruits,
+        TabMisc = TabMisc,
+        TabPvP = TabPvP,
+        TabStats = TabStats,
+        TabTeleport = TabTeleport,
+        WatermarkBar = WatermarkBar,
+        _ = _,
+        notify = notify,
+    }
+end
+
+local UI = UIFactory({
+    CURRENT_SEA = CURRENT_SEA,
+    Config = Config,
+    CustomIcons = CustomIcons,
+    Hooks = Hooks,
+    LocalPlayer = LocalPlayer,
+    Players = Players,
+    PvPState = PvPState,
+    RunService = RunService,
+    SEA_DETECT_SOURCE = SEA_DETECT_SOURCE,
+    SkillHubStep = SkillHubStep,
+    TweenService = TweenService,
+    UserInputService = UserInputService,
+    Workspace = Workspace,
+    formatNumber = formatNumber,
+    getPlayerBeli = getPlayerBeli,
+    getPlayerFragments = getPlayerFragments,
+    getPlayerLevel = getPlayerLevel,
+    getPlayerLoadout = getPlayerLoadout,
+    getPvPStatus = getPvPStatus,
+    getRoot = getRoot,
+    getServerStatus = getServerStatus,
+    isBuddhaUser = isBuddhaUser,
+    isGiantForm = isGiantForm,
+    setSpectate = setSpectate,
+    trace = trace,
+    tweenToPlayer = tweenToPlayer,
+})
+local CloseBtn, FloatBtn, MainWindow, MinBtn, ScreenGui, StatusBar = UI.CloseBtn, UI.FloatBtn, UI.MainWindow, UI.MinBtn, UI.ScreenGui, UI.StatusBar
+local TabESP, TabFarm, TabFruits, TabMisc, TabPvP, TabStats = UI.TabESP, UI.TabFarm, UI.TabFruits, UI.TabMisc, UI.TabPvP, UI.TabStats
+local TabTeleport, WatermarkBar, _, notify = UI.TabTeleport, UI.WatermarkBar, UI._, UI.notify
 TabFarm:AddSection("Weapon & Triple-Layer Fast Attack")
 TabFarm:AddDropdown("Weapon Category", "Select weapon type to auto-equip during farming", {"Melee", "Sword", "Blox Fruit", "Gun"}, Config.SelectedWeaponType, function(val)
     Config.SelectedWeaponType = val
@@ -6473,7 +6669,7 @@ TabMisc:AddToggle("Debug Action Trace", "When the engine reports a CoreGui/Local
 TabMisc:AddToggle("Incremental UI Build", "Build the interface across frames instead of one big GUI-creation spike (recommended)", Config.IncrementalUIBuild, function(v) Config.IncrementalUIBuild = v end, CustomIcons.Layers)
 TabMisc:AddToggle("CoreGui Watchdog", "Read-only: snapshots CoreGui the moment the hub starts and logs every instance added there afterwards, with the traceback of whoever created it", Config.CoreGuiWatch, function(v) Config.CoreGuiWatch = v end, CustomIcons.Server)
 TabMisc:AddButton("Console Audit (paste-ready)", "Prints the whole evidence block on demand: CoreGui snapshot, every CoreGui addition, the hub action trace, and how this script's own errors are labelled", "Audit", function()
-    SkillHubEvidence.report("manual console audit requested from Misc")
+    pcall(function() SkillHubEvidence.report("manual console audit requested from Misc") end)
     notify("Console Audit", "Report printed in the console — copy the [Skill Hub] block", 4, CustomIcons.Search)
 end, CustomIcons.Search)
 TabMisc:AddToggle("Synthetic Input (keys + virtual clicks)", "VirtualInputManager key events + VirtualUser mouse clicks for skills / M1 fallback. Auto-disables and prints a notice if the executor only partially implements them.", Config.UseVirtualInput, function(v)
@@ -6627,21 +6823,21 @@ local function UnloadSkillHub()
 end
 
 SharedEnv.SkillHubInstance = {
-    version = "3.7",
-    banner = "Skill Hub v3.7 Ultra",
+    version = "3.7.2",
+    banner = "Skill Hub v3.7.2 Ultra",
     config = Config,
     hookActive = function() return HookRegistry.namecallActive end,
     unload = UnloadSkillHub,
 }
 
-print(string.format("[Skill Hub v3.7] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · syntheticInput=%s · coreGui=none",
+print(string.format("[Skill Hub v3.7.2] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · syntheticInput=%s · coreGui=none",
     ExecutorName, CURRENT_SEA, tostring(SEA_DETECT_SOURCE),
     tostring(Config.HookEngine),
     HookRegistry.namecallActive and "ACTIVE" or "off",
     Config.UseVirtualInput and "on" or "OFF"))
 
 notify(
-    "Skill Hub v3.7 Ultra",
+    "Skill Hub v3.7.2 Ultra",
     string.format("Blox Fruits Update 24+ • Sea %d (%s) • PvP & Players tab added • RightCtrl = toggle, RightShift = AimLock, RightAlt = Fly", CURRENT_SEA, tostring(SEA_DETECT_SOURCE)),
     5,
     CustomIcons.HubCrest

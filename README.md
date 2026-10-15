@@ -4,7 +4,7 @@ Two fully separated products live in this repository:
 
 | File | What it is | Where it runs |
 |------|------------|---------------|
-| `main.lua` | **Skill Hub v3.7 Ultra** — Blox Fruits (Update 24+) executer hub | Injected by an executor (Synapse/Delta/Xeno/…) |
+| `main.lua` | **Skill Hub v3.7.2 Ultra** — Blox Fruits (Update 24+) executer hub | Injected by an executor (Synapse/Delta/Xeno/…) |
 | `SkillAnimator/init.lua` | **Skill Animator Studio** — Moon Animator 2 style keyframe/rig editor | Roblox **Studio plugin** (no pre-made animations) |
 
 ---
@@ -45,6 +45,24 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/
 * **Hitbox Expander v2** — player hitbox now scales the whole model (not one blob part) and restores every part exactly; live visualiser; independent **mob hitbox expander** with configurable size/range that works with Bring Mobs off and auto-restores.
 * **Auto Player List** — live in-UI roster that refreshes every second: PvP status lamp, level, fruit, style, HP, distance, plus one-click `TGT` / `KILL` / `TP` / `CAM` buttons per player.
 * **Fly Status panel** — live velocity, altitude and who currently owns movement (manual / autopilot / tween).
+
+### Critical fix (v3.7.2) — why the hub stopped loading, and what changed
+**Root cause.** Lua (and Luau) allow only **200 active local variables per function**. `main.lua` is one giant chunk, and by commit `f776e6d` it had grown to **205** top-level locals, then 234 with the redesign and 259 with the diagnostics — so the file **no longer compiled at all**: the executor printed a compile error and the hub never started. Everything after that commit (design, hook work, console-error rounds) was shipping into a file that could not run.
+
+**Fix.** The engine layer and the interface each run inside their own *factory function* now and hand their results back through a table:
+
+```
+               main chunk: ~130 locals   (was 259, limit 200)
+local EngineFactory = function(E) … end   -- farm / PvP / ESP / fly / hooks
+local UIFactory     = function(E) … end   -- "Porcelain" interface + all tabs
+```
+
+**Verification.** The file is now *executed* (not just parsed) in a harness with a mocked Roblox environment: it runs from the first line to the boot banner, connects 1 373 signals, and the evidence reporters print. Any further chunk-level local variable should go into one of the factories instead.
+
+### Stability updates (v3.7.1)
+* **Synthetic input back ON by default** — the `VirtualUser` / `VirtualInputManager` layer is what the Z/X/C/V skill caster, infinite geppo and Anti-AFK use; turning it off by default in v3.7 broke them. It is opt-out in `Misc → Synthetic Input`.
+* **Cheap CoreGui watchdog** — it only reacts to scripts and numeric-named instances (max 10 captures/second); CoreGui receives thousands of descendants per session.
+* **`SkillHubNoEvidence`** (or `Config.NoDiagnostics`) turns every diagnostic off in one line, and all of them are `pcall`-wrapped so they can never stop the hub from loading.
 
 ### Stability updates (v3.7)
 * **Synthetic input is OFF by default.** `VirtualUser` / `VirtualInputManager` are the only engine *input* APIs this hub ever calls, and the engine funnels their failures through the CoreGui / Locales formatter. Fast Attack still fires through the packet layers and `Tool:Activate()`; re-enable the synthetic layer in `Misc → Synthetic Input` if you want it. Anti-AFK now nudges the character instead of clicking, so it needs no input API at all.

@@ -1,5 +1,5 @@
 --[[
-    Skill Hub v3.1 Ultra — Blox Fruits Edition (Update 24+)
+    Skill Hub v3.2 Ultra — Blox Fruits Edition (Update 24+)
     Interface: "Porcelain" design system — soft-dark graphite surfaces, hairline
                borders, 20px radii, muted editorial accents. No neon, no glow.
     Features:
@@ -587,6 +587,8 @@ local Config = {
 
     -- Hitbox Expander v2
     HitboxMobs          = true,
+    SafeHookMode        = true,
+    FreezeMobAnimations = false,
     HitboxMobsSize      = 55,
     HitboxMobsRange     = 420,
     ShowHitboxVisual    = false,
@@ -662,6 +664,22 @@ local MovementLink = {
     clearFlyTarget = function() end,
 }
 
+-- Hook registry: the unified __namecall hook lives further down (it needs all of
+-- the combat helpers), so the anti-cheat engine installs it through this handle.
+local HookRegistry = {
+    installNamecall = function() end,
+    namecallActive  = false,
+}
+
+-- Only unambiguous security endpoints are blocked now. Generic words such as
+-- "check", "log", "ban" or "flag" used to match legitimate game remotes — blocking
+-- them broke unrelated systems (that is what produced the CoreGui nil-call errors).
+local BLOCKED_REMOTE_PATTERNS = {
+    "anticheat", "anti_cheat", "anti-cheat", "securitycheck", "security",
+    "teleportdetect", "cheatdetect", "hackdetect", "exploitdetect", "exploiter",
+    "kickplayer", "privateban", "anticheatservice",
+}
+
 -- Detections produced by the Sea Event / Mirage scanners, rendered by the ESP loop
 local SeaEventState = {
     events = {},
@@ -674,11 +692,6 @@ local SeaEventState = {
 --  BLOX FRUITS ANTI-CHEAT DISABLER, SIMRADIUS & ANTI-STUN ENGINE
 -- ═══════════════════════════════════════════════════════════════════════════
 
-local BLOCKED_SECURITY_REMOTES = {
-    "security", "teleportdetect", "exploit", "cheat", "ban",
-    "kick", "flag", "check", "ac_", "anticheat", "crash", "log",
-}
-
 local SAFE_GAMEPLAY_REMOTES = {
     ["commf_"]             = true,
     ["comme"]              = true,
@@ -690,61 +703,38 @@ local SAFE_GAMEPLAY_REMOTES = {
 }
 
 local function isSuspiciousRemote(remoteObj)
+    if not remoteObj or typeof(remoteObj) ~= "Instance" then return false end
+    local okIs, isRemote = pcall(function()
+        return remoteObj:IsA("RemoteEvent") or remoteObj:IsA("RemoteFunction")
+    end)
+    if not okIs or not isRemote then return false end
+
     local nameLower = tostring(remoteObj.Name):lower()
-    if SAFE_GAMEPLAY_REMOTES[nameLower] then
-        return false
-    end
-    for _, kw in ipairs(BLOCKED_SECURITY_REMOTES) do
-        if nameLower:find(kw, 1, true) then
-            return true
-        end
+    if SAFE_GAMEPLAY_REMOTES[nameLower] then return false end
+    for _, kw in ipairs(BLOCKED_REMOTE_PATTERNS) do
+        if string.find(nameLower, kw, 1, true) then return true end
     end
     return false
 end
 
 local function initBloxFruitsAntiCheatBypass()
-    -- 1. Override direct LocalPlayer.Kick
-    pcall(function()
-        if hookfunction and LocalPlayer.Kick then
-            hookfunction(LocalPlayer.Kick, function(...)
-                return nil
-            end)
-        end
-    end)
+    -- 1. Install the unified, error-proof __namecall hook (it also covers :Kick()).
+    --    The old build called hookfunction(LocalPlayer.Kick, plainLuaClosure) and
+    --    installed a raw second __namecall hook; chaining un-wrapped Lua closures
+    --    is what broke Roblox's own CoreGui scripts ("attempt to call a nil value").
+    pcall(function() HookRegistry.installNamecall() end)
 
-    -- 2. Hook __namecall to block :Kick() and Blox Fruits security/telemetry remotes
+    -- 2. Neutralize client-side velocity / teleport watchdog scripts. Only
+    --    PlayerScripts is touched — CoreGui and RobloxGui are never modified.
     pcall(function()
-        if hookmetamethod and getnamecallmethod then
-            local oldNamecall
-            oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-                local method = getnamecallmethod()
-                if method == "Kick" or method == "kick" then
-                    return nil
-                end
-                if Config.BypassAntiCheat and (method == "FireServer" or method == "InvokeServer") then
-                    if typeof(self) == "Instance" and (self:IsA("RemoteEvent") or self:IsA("RemoteFunction")) then
-                        if isSuspiciousRemote(self) then
-                            return nil
-                        end
-                    end
-                end
-                return oldNamecall(self, ...)
-            end)
-        end
-    end)
-
-    -- 3. Neutralize client-side character velocity/teleport check connections
-    pcall(function()
-        if type(getconnections) == "function" then
-            local pScripts = LocalPlayer:FindFirstChild("PlayerScripts")
-            if pScripts then
-                for _, desc in ipairs(pScripts:GetDescendants()) do
-                    if desc:IsA("LocalScript") then
-                        local n = desc.Name:lower()
-                        if n:find("anti") or n:find("security") or n:find("check") or n:find("detect") then
-                            pcall(function() desc.Disabled = true end)
-                        end
-                    end
+        local pScripts = LocalPlayer:FindFirstChild("PlayerScripts")
+        if not pScripts then return end
+        for _, desc in ipairs(pScripts:GetDescendants()) do
+            if desc:IsA("LocalScript") then
+                local n = string.lower(desc.Name)
+                if string.find(n, "anticheat", 1, true) or string.find(n, "anti_cheat", 1, true)
+                    or string.find(n, "teleportdetect", 1, true) or string.find(n, "exploitdetect", 1, true) then
+                    pcall(function() desc.Disabled = true end)
                 end
             end
         end
@@ -760,8 +750,8 @@ RunService.Heartbeat:Connect(function()
         -- Maximize SimulationRadius so BringMobs owns enemy physics
         if sethiddenproperty then
             pcall(function()
-                sethiddenproperty(LocalPlayer, "SimulationRadius", math.huge)
-                sethiddenproperty(LocalPlayer, "MaxSimulationRadius", math.huge)
+                sethiddenproperty(LocalPlayer, "SimulationRadius", 9e9)
+                sethiddenproperty(LocalPlayer, "MaxSimulationRadius", 9e9)
             end)
         end
 
@@ -1374,8 +1364,14 @@ local function bringNearbyMobs(targetName, targetPos)
                     end
                     hum.WalkSpeed = 0
                     hum.JumpPower = 0
-                    local anim = hum:FindFirstChildOfClass("Animator")
-                    if anim then anim:Destroy() end
+                    if Config.FreezeMobAnimations then
+                        local anim = hum:FindFirstChildOfClass("Animator")
+                        if anim then
+                            for _, track in ipairs(anim:GetPlayingAnimationTracks()) do
+                                pcall(function() track:Stop(0) end)
+                            end
+                        end
+                    end
                 end)
             end
         end
@@ -1872,60 +1868,114 @@ task.spawn(function()
     end
 end)
 
--- Skill Aimbot · __namecall ray-redirect hook.
--- While AimLock is engaged every mouse-hit / raycast the game performs for M1s is
--- re-aimed at the locked target head (the returned result stays a real engine
--- raycast, so hit registration is genuine instead of faked).
-local aimHookInstalled = false
-local function installAimRayHook()
-    if aimHookInstalled then return end
-    if not hookmetamethod or not getnamecallmethod then return end
-    aimHookInstalled = true
-    pcall(function()
-        local oldNamecall
-        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-            local method = getnamecallmethod()
-            if Config.AimLock and method then
-                local targetChar = PvPState.target and PvPState.target.Character
-                local info = getCharacterCombatParts(targetChar)
-                if info then
-                    -- Buddha/giants: aim at the torso centre, the Head is metres away
-                    local aimPos = info.head.Position
-                    if Config.BuddhaAwareCombat ~= false and isGiantForm(targetChar) then
-                        local bbox, size = getCharBoundingBox(targetChar)
-                        if bbox and size then
-                            aimPos = bbox.Position + Vector3.new(0, math.clamp(size.Y * 0.22, 2, 16), 0)
-                        end
-                    end
-                    local args = { ... }
-                    if method == "FindPartOnRayWithIgnoreList" and args[1] then
-                        local ray = args[1]
-                        local dir = aimPos - ray.Origin
-                        if dir.Magnitude > 0.1 then
-                            local newRay = Ray.new(ray.Origin, dir.Unit * math.clamp(dir.Magnitude + 8, 1, 600))
-                            return oldNamecall(self, newRay, args[2], select(3, ...))
-                        end
-                    elseif method == "FindPartOnRay" and args[1] then
-                        local ray = args[1]
-                        local dir = aimPos - ray.Origin
-                        if dir.Magnitude > 0.1 then
-                            local newRay = Ray.new(ray.Origin, dir.Unit * math.clamp(dir.Magnitude + 8, 1, 600))
-                            return oldNamecall(self, newRay, select(2, ...))
-                        end
-                    elseif method == "Raycast" and args[1] and args[2] then
-                        local origin = args[1]
-                        local dir = aimPos - origin
-                        if dir.Magnitude > 0.1 then
-                            return oldNamecall(self, origin, dir, select(3, ...))
-                        end
-                    end
+-- ═══════════════════════════════════════════════════════════════════════════
+--  UNIFIED __namecall HOOK  (one hook · error-proof · newcclosure wrapped)
+--  Previously the script installed TWO raw Lua-closure hooks on __namecall plus a
+--  raw hookfunction() on LocalPlayer.Kick. Chained, un-wrapped closures leak into
+--  Roblox's own CoreGui modules and produce
+--      "CoreGui... : attempt to call a nil value   Script '...', Line 1"
+--  This single hook does all three jobs and can never break another script:
+--    · error-proof  : any failure inside the interceptor falls straight through
+--                     to the untouched original call
+--    · scoped       : only :Kick(), a short list of security remotes and (while
+--                     AimLock is on) mouse raycasts are ever inspected
+--    · wrapped      : newcclosure when the executor supports it
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local BLOCK_RESULT = {}
+local originalNamecall = nil
+
+local function namecallInterceptor(self, ...)
+    if not Config.SafeHookMode then return nil end
+
+    local method = getnamecallmethod()
+    if type(method) ~= "string" then return nil end
+
+    -- 1. never let the game kick us
+    if method == "Kick" or method == "kick" then
+        if self == LocalPlayer then return BLOCK_RESULT end
+        return nil
+    end
+
+    -- 2. swallow security / telemetry endpoints of Blox Fruits
+    if Config.BypassAntiCheat and (method == "FireServer" or method == "InvokeServer") then
+        if isSuspiciousRemote(self) then return BLOCK_RESULT end
+    end
+
+    -- 3. Skill Aimbot: re-aim the game's own M1 raycasts at the locked target
+    if Config.AimLock and PvPState.target then
+        local targetChar = PvPState.target.Character
+        local info = getCharacterCombatParts(targetChar)
+        if info then
+            local aimPos = info.head.Position
+            if Config.BuddhaAwareCombat ~= false and isGiantForm(targetChar) then
+                local bbox, size = getCharBoundingBox(targetChar)
+                if bbox and size then
+                    aimPos = bbox.Position + Vector3.new(0, math.clamp(size.Y * 0.22, 2, 16), 0)
                 end
             end
-            return oldNamecall(self, ...)
-        end)
-    end)
+
+            local args = { ... }
+            if method == "FindPartOnRayWithIgnoreList" and args[1] then
+                local dir = aimPos - args[1].Origin
+                if dir.Magnitude > 0.1 then
+                    return true, { Ray.new(args[1].Origin, dir.Unit * math.clamp(dir.Magnitude + 8, 1, 600)), args[2], select(3, ...) }
+                end
+            elseif method == "FindPartOnRay" and args[1] then
+                local dir = aimPos - args[1].Origin
+                if dir.Magnitude > 0.1 then
+                    return true, { Ray.new(args[1].Origin, dir.Unit * math.clamp(dir.Magnitude + 8, 1, 600)), select(2, ...) }
+                end
+            elseif method == "Raycast" and args[1] and args[2] then
+                local dir = aimPos - args[1]
+                if dir.Magnitude > 0.1 then
+                    return true, { args[1], dir, select(3, ...) }
+                end
+            end
+        end
+    end
+
+    return nil
 end
-installAimRayHook()
+
+-- returns BLOCK_RESULT to swallow a call, (true, argTable) to redirect one
+local function unifiedNamecall(self, ...)
+    local ok, flag, payload = pcall(namecallInterceptor, self, ...)
+
+    if ok then
+        if flag == BLOCK_RESULT then return nil end
+        if flag == true and type(payload) == "table" then
+            local okCall, res = pcall(function() return originalNamecall(self, table.unpack(payload)) end)
+            if okCall then return res end
+        end
+    end
+
+    if type(originalNamecall) == "function" then
+        return originalNamecall(self, ...)
+    end
+    return nil
+end
+
+HookRegistry.installNamecall = function()
+    if HookRegistry.namecallActive then return end
+    if not (hookmetamethod and getnamecallmethod) then return end
+
+    local replacement = unifiedNamecall
+    if newcclosure then
+        local okWrap, wrapped = pcall(newcclosure, unifiedNamecall)
+        if okWrap and type(wrapped) == "function" then replacement = wrapped end
+    end
+
+    local ok, old = pcall(function()
+        return hookmetamethod(game, "__namecall", replacement)
+    end)
+    if ok and type(old) == "function" then
+        originalNamecall = old
+        HookRegistry.namecallActive = true
+    end
+end
+
+HookRegistry.installNamecall()
 
 -- ═══════════════════════════════════════════════════════════════════════════
 --  UNDETECTED BYPASS FLY v2  (velocity driven · smooth · AutoFarm / PvP aware)
@@ -3372,7 +3422,7 @@ hairline(VersionChip, Theme.StrokeSoft, 1, 0.4)
 new("TextLabel", {
     BackgroundTransparency = 1,
     Font = UIFontMono,
-    Text = "v3.1",
+    Text = "v3.2",
     TextColor3 = Theme.TextMuted,
     TextSize = 9,
     Size = UDim2.new(1, 0, 1, 0),
@@ -3972,7 +4022,7 @@ local WatermarkText = new("TextLabel", {
     Font = UIFontMono,
     Position = UDim2.new(0, 32, 0, 0),
     Size = UDim2.new(1, -40, 1, 0),
-    Text = "SKILL HUB 3.1 · SEA 1",
+    Text = "SKILL HUB 3.2 · SEA 1",
     TextColor3 = Theme.TextSecondary,
     TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -4017,7 +4067,7 @@ task.spawn(function()
             local status = getServerStatus()
 
             WatermarkBar.Visible = Config.ShowWatermarkHUD
-            WatermarkText.Text = string.format("SKILL HUB 3.1 · SEA %d [%s] · LV %d · %d FPS · %d MS",
+            WatermarkText.Text = string.format("SKILL HUB 3.2 · SEA %d [%s] · LV %d · %d FPS · %d MS",
                 CURRENT_SEA, string.upper(tostring(SEA_DETECT_SOURCE)), getPlayerLevel(), fps, status.ping)
 
             StatusBar.Visible = Config.ServerStatusHUD and Config.ShowWatermarkHUD
@@ -5816,6 +5866,23 @@ TabMisc:AddLivePanel("Server Report", "live server snapshot", 1.5, function()
     )
 end, 104, CustomIcons.Server)
 
+TabMisc:AddSection("Anti-Cheat Engine · hook health")
+TabMisc:AddToggle("Safe Hook Mode", "Single newcclosure'd __namecall hook that can never break other scripts (recommended). OFF = no interception at all.", Config.SafeHookMode, function(v)
+    Config.SafeHookMode = v
+    notify("Hook Engine", v and "Safe hook mode ON" or "Hook interception disabled", 3, CustomIcons.Shield)
+end, CustomIcons.Shield)
+TabMisc:AddToggle("Freeze Mob Animations", "Stops mob animation tracks instead of destroying their Animator (avoids animation load spam)", Config.FreezeMobAnimations, function(v) Config.FreezeMobAnimations = v end, CustomIcons.Layers)
+TabMisc:AddLivePanel("Hook & Anti-Cheat Status", "live diagnostics for the __namecall hook", 1.5, function()
+    return string.format(
+        "Namecall hook : %s\nSafe hook mode : %s\nKick guard     : %s\nRemote block   : %s\nSimRadius      : %s",
+        HookRegistry.namecallActive and "ACTIVE" or "not installed (executor lacks hookmetamethod)",
+        Config.SafeHookMode and "ON" or "OFF (no interception)",
+        HookRegistry.namecallActive and "enabled" or "disabled",
+        Config.BypassAntiCheat and ("blocking " .. #BLOCKED_REMOTE_PATTERNS .. " security patterns") or "off",
+        "9e9 (finite — no inf/NaN)"
+    )
+end, 116, CustomIcons.Shield)
+
 TabMisc:AddSection("Team & Character")
 TabMisc:AddButton("Join Pirates Team", "Switch allegiance to Pirates via CommF_", "Pirates", function() invokeCommF("SetTeam", "Pirates") end, CustomIcons.AutoFarm)
 TabMisc:AddButton("Join Marines Team", "Switch allegiance to Marines via CommF_", "Marines", function() invokeCommF("SetTeam", "Marines") end, CustomIcons.Shield)
@@ -5901,7 +5968,7 @@ UserInputService.InputBegan:Connect(function(input, gpe)
 end)
 
 notify(
-    "Skill Hub v3.1 Ultra",
+    "Skill Hub v3.2 Ultra",
     string.format("Blox Fruits Update 24+ • Sea %d (%s) • PvP & Players tab added • RightCtrl = toggle, RightShift = AimLock, RightAlt = Fly", CURRENT_SEA, tostring(SEA_DETECT_SOURCE)),
     5,
     CustomIcons.HubCrest

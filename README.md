@@ -24,6 +24,10 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/
 * **ESP & Visuals** — Player ESP with PvP + full loadout, rarity-coloured Fruit ESP, chest/island/Mirage/Kitsune/boss ESP, tracers.
 * **Misc & Settings** — **Undetected Bypass Fly**, Walk on Water, Infinite Geppo, Infinite Energy, No Dash Cooldown, Auto Collect Drops, Sea Event / Mirage tracker, Server Status HUD, anti-cheat disabler, rejoin/hop, FPS boost.
 
+* **Hook engine rewritten (fixes the CoreGui `attempt to call a nil value` error)** — the script used to install two raw, chained `__namecall` closures plus a raw `hookfunction(LocalPlayer.Kick)`, and it blocked any remote whose name merely *contained* generic words like `check`, `log`, `ban` or `flag`. That leaked into Roblox's own `CoreGui` modules. Now there is **one** unified hook: `newcclosure`-wrapped, `pcall`-protected with guaranteed fall-through to the untouched original call, blocking only unambiguous security endpoint names, with the Kick guard limited to `LocalPlayer`. A **Safe Hook Mode** toggle (default ON) disables interception entirely if an executor misbehaves, plus a live **Hook & Anti-Cheat Status** panel.
+* **Animation load spam reduced** — `Bring Mobs` no longer destroys mobs' `Animator` (which made the engine keep replicating animation tracks for a dead animator). It can optionally stop the playing tracks instead.
+* **`SimulationRadius` is now finite (`9e9`)** — `math.huge` produced `inf`/`NaN`, which corrupted physics, animation state and remote payloads downstream.
+
 ### Interface — "Porcelain" design system (2026)
 * Soft-dark graphite surfaces in five intentional elevation steps, 1px hairline borders and 20px window radii — depth comes from surface layering and a soft drop shadow, **not** from neon or glow.
 * Muted editorial accent family per tab (iris, clay, mauve, sand, sage, rose, steel) instead of saturated RGB.

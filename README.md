@@ -46,6 +46,13 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/
 * **Auto Player List** — live in-UI roster that refreshes every second: PvP status lamp, level, fruit, style, HP, distance, plus one-click `TGT` / `KILL` / `TP` / `CAM` buttons per player.
 * **Fly Status panel** — live velocity, altitude and who currently owns movement (manual / autopilot / tween).
 
+### Stability updates (v3.5)
+* **ESP billboard pooling** — the ESP no longer destroys and re-creates 100+ `BillboardGui`s twice per second; tags are pooled per adornee and only updated/swept. GUI churn around death/respawn is practically eliminated.
+* **Death / respawn quiet window** — all heavy work (ESP, attack spam) stands down for ~2.5–3 s while the character is loading or unloading, exactly when Roblox rebuilds its own UI and when CoreScript errors are reported.
+* **Synthetic input sandbox** — every `VirtualUser` / `VirtualInputManager` call is capability-gated, `pcall`ed, throttled and self-disabling (Xeno and other free executors only implement part of that unofficial API).
+* **Tagged internal errors** — 39 internal steps run through `SkillHubStep`, which prints `[Skill Hub] step error @ main.lua:LINE` if code **in this file** fails, so console blame is never ambiguous.
+* **Escape hatches**: `SkillHubNoHooks`, `SkillHubNoVirtualInput`, `SkillHubNoEsp`, `SkillHubSafeMode`, `SkillHubMinimalMode` (UI only, everything else off).
+
 ### Diagnosing console errors
 Roblox tags each console line with where it was raised:
 * `[Roblox][CoreGui...] ... Script 'CoreGui.<id>'` → raised inside **Roblox's own CoreScripts** (the well-known `RobloxGui.Modules.Common.Locales.en-us` message is a Roblox/CoreGui quirk and appears in unmodified sessions too).

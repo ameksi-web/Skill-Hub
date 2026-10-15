@@ -1,5 +1,5 @@
 --[[
-    Skill Hub v3.4 Ultra — Blox Fruits Edition (Update 24+)
+    Skill Hub v3.5 Ultra — Blox Fruits Edition (Update 24+)
     Interface: "Porcelain" design system — soft-dark graphite surfaces, hairline
                borders, 20px radii, muted editorial accents. No neon, no glow.
     Features:
@@ -762,6 +762,58 @@ if SharedEnv.SkillHubNoHooks == true then
     print("[Skill Hub] SkillHubNoHooks is set — no __namecall hook will be installed")
 end
 
+-- Removes every VirtualUser / VirtualInputManager call:
+--   getgenv().SkillHubNoVirtualInput = true
+if SharedEnv.SkillHubNoVirtualInput == true then
+    Config.UseVirtualInput = false
+    print("[Skill Hub] SkillHubNoVirtualInput is set — synthetic input disabled")
+end
+
+-- UI-only boot (interface, but all automation off):
+--   getgenv().SkillHubSafeMode = true
+if SharedEnv.SkillHubSafeMode == true then
+    Config.AutoFarmLevel = false
+    Config.AutoFarmNearest = false
+    Config.AutoFarmBoss = false
+    Config.AutoFarmAllBosses = false
+    Config.AutoAttackAlways = false
+    Config.AutoKillSelected = false
+    Config.AutoKillPvP = false
+    Config.AimLock = false
+    Config.PlayerHitbox = false
+    Config.HitboxMobs = false
+    Config.FruitMagnet = false
+    Config.FlyEnabled = false
+    Config.SeaEventTracker = false
+    Config.MirageFinder = false
+    print("[Skill Hub] SkillHubSafeMode is set — interface only, all automation OFF")
+end
+
+-- The absolute minimum: interface only — no ESP, no automation, no synthetic
+-- input, no hooks, no timer-driven GUI work:
+--   getgenv().SkillHubMinimalMode = true
+if SharedEnv.SkillHubMinimalMode == true then
+    SharedEnv.SkillHubNoVirtualInput = true
+    SharedEnv.SkillHubNoHooks = true
+    SharedEnv.SkillHubSafeMode = true
+    SharedEnv.SkillHubNoEsp = true
+    Config.UseVirtualInput = false
+    Config.SafeHookMode = false
+    Config.BypassAntiCheat = false
+    print("[Skill Hub] SkillHubMinimalMode is set — UI only, ESP/automation/input/hooks all off")
+end
+
+if SharedEnv.SkillHubNoEsp == true then
+    Config.ESPPlayers = false
+    Config.ESPFruits = false
+    Config.ESPChests = false
+    Config.ESPBosses = false
+    Config.ESPIslands = false
+    Config.ESPTracers = false
+    Config.SeaEventTracker = false
+    Config.MirageFinder = false
+end
+
 -- ─── SYNTHETIC INPUT SANDBOX ────────────────────────────────────────────────
 -- VirtualUser:CaptureController()/Button1Down()/Button1Up() are NOT part of the
 -- public Roblox API — they only exist while the executor patches them in, and on
@@ -879,6 +931,10 @@ local SeaEventState = {
     mirage = {},
     lastNotify = {},
 }
+
+-- Set while the character is loading/unloading so heavy loops stand down
+RespawnQuietUntil = 0
+markRespawnQuiet = nil
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -1538,6 +1594,7 @@ task.spawn(function()
         local delayTime = math.clamp(Config.FastAttackDelay or 0.02, 0.01, 0.25)
         task.wait(delayTime)
         SkillHubStep("main.lua:1540", function()
+            if os.clock() < RespawnQuietUntil then return end
             local isFarming = Config.AutoFarmLevel or Config.AutoFarmNearest or Config.AutoFarmBoss or Config.AutoFarmAllBosses
             if (isFarming and Config.FastAttack) or Config.AutoAttackAlways then
                 triggerFastAttack()
@@ -3092,12 +3149,54 @@ ESPFolder.Name = "SkillHub_BF_ESP"
 -- PlayerGui (not CoreGui): the hub never touches Roblox's own GUI containers
 pcall(function() ESPFolder.Parent = LocalPlayer:WaitForChild("PlayerGui") end)
 
+-- ─── ESP BILLBOARD POOL ─────────────────────────────────────────────────────
+-- The old build destroyed and re-created every BillboardGui on each tick (100+
+-- GUI instances churning away, worst exactly when the character dies/respawns —
+-- the moment Roblox rebuilds its own UI). Tags are pooled per adornee now and
+-- only their text is refreshed; stale ones are swept once per tick.
+local espPool, espStamp = {}, 0
+
 local function clearESP()
+    for key, entry in pairs(espPool) do
+        if entry.bb and entry.bb.Parent then entry.bb:Destroy() end
+        espPool[key] = nil
+    end
     ESPFolder:ClearAllChildren()
+end
+
+local function sweepESP()
+    for key, entry in pairs(espPool) do
+        if entry.stamp ~= espStamp then
+            if entry.bb and entry.bb.Parent then entry.bb:Destroy() end
+            espPool[key] = nil
+        end
+    end
 end
 
 local function createESPBillboard(adornee, titleText, subText, color, bodyText, height)
     if not adornee then return nil end
+
+    -- pooled: the same adornee keeps the same BillboardGui, only text is updated
+    local entry = espPool[adornee]
+    if not entry or not entry.bb or not entry.bb.Parent then
+        entry = { bb = nil, main = nil, sub = nil, body = nil }
+        espPool[adornee] = entry
+    end
+    entry.stamp = espStamp
+
+    if entry.bb then
+        if entry.main then
+            entry.main.Text = titleText
+            entry.main.TextColor3 = color
+        end
+        if entry.sub then entry.sub.Text = subText or "" end
+        if entry.body then
+            entry.body.Visible = bodyText ~= nil
+            if bodyText then entry.body.Text = bodyText end
+        end
+        return entry.bb
+    end
+
     local bb = Instance.new("BillboardGui")
     bb.Name = "ESP_Tag"
     bb.Adornee = adornee
@@ -3125,19 +3224,23 @@ local function createESPBillboard(adornee, titleText, subText, color, bodyText, 
     subLbl.TextStrokeTransparency = 0.35
     subLbl.Text = subText or ""
 
-    if bodyText then
-        local bodyLbl = Instance.new("TextLabel", bb)
-        bodyLbl.Size = UDim2.new(1, 0, 0, 36)
-        bodyLbl.Position = UDim2.new(0, 0, 0, 36)
-        bodyLbl.BackgroundTransparency = 1
-        bodyLbl.Font = Enum.Font.Gotham
-        bodyLbl.TextSize = 10
-        bodyLbl.TextWrapped = true
-        bodyLbl.TextYAlignment = Enum.TextYAlignment.Top
-        bodyLbl.TextColor3 = Color3.fromRGB(203, 213, 225)
-        bodyLbl.TextStrokeTransparency = 0.45
-        bodyLbl.Text = bodyText
-    end
+    local bodyLbl = Instance.new("TextLabel", bb)
+    bodyLbl.Size = UDim2.new(1, 0, 0, 36)
+    bodyLbl.Position = UDim2.new(0, 0, 0, 36)
+    bodyLbl.BackgroundTransparency = 1
+    bodyLbl.Font = Enum.Font.Gotham
+    bodyLbl.TextSize = 10
+    bodyLbl.TextWrapped = true
+    bodyLbl.TextYAlignment = Enum.TextYAlignment.Top
+    bodyLbl.TextColor3 = Color3.fromRGB(203, 213, 225)
+    bodyLbl.TextStrokeTransparency = 0.45
+    bodyLbl.Text = bodyText or ""
+    bodyLbl.Visible = bodyText ~= nil
+
+    entry.bb = bb
+    entry.main = mainLbl
+    entry.sub = subLbl
+    entry.body = bodyLbl
 
     return bb
 end
@@ -3171,10 +3274,12 @@ end
 task.spawn(function()
     while task.wait(0.9) do
         SkillHubStep("main.lua:3173", function()
-            clearESP()
             local myRoot = getRoot()
             local cam = Workspace.CurrentCamera
-            if not myRoot then return end
+            if not myRoot or os.clock() < RespawnQuietUntil then return end
+
+            -- pool stamp: tags touched this tick survive, all others are swept
+            espStamp = os.clock()
 
             if not Config.ESPTracers then
                 for _, line in pairs(tracerCache) do pcall(function() line.Visible = false end) end
@@ -3286,6 +3391,8 @@ task.spawn(function()
                     end
                 end
             end
+
+            sweepESP()
         end)
     end
 end)
@@ -3644,7 +3751,7 @@ hairline(VersionChip, Theme.StrokeSoft, 1, 0.4)
 new("TextLabel", {
     BackgroundTransparency = 1,
     Font = UIFontMono,
-    Text = "v3.4",
+    Text = "v3.5",
     TextColor3 = Theme.TextMuted,
     TextSize = 9,
     Size = UDim2.new(1, 0, 1, 0),
@@ -4244,7 +4351,7 @@ local WatermarkText = new("TextLabel", {
     Font = UIFontMono,
     Position = UDim2.new(0, 32, 0, 0),
     Size = UDim2.new(1, -40, 1, 0),
-    Text = "SKILL HUB 3.4 · SEA 1",
+    Text = "SKILL HUB 3.5 · SEA 1",
     TextColor3 = Theme.TextSecondary,
     TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -4289,7 +4396,7 @@ task.spawn(function()
             local status = getServerStatus()
 
             WatermarkBar.Visible = Config.ShowWatermarkHUD
-            WatermarkText.Text = string.format("SKILL HUB 3.4 · SEA %d [%s] · LV %d · %d FPS · %d MS",
+            WatermarkText.Text = string.format("SKILL HUB 3.5 · SEA %d [%s] · LV %d · %d FPS · %d MS",
                 CURRENT_SEA, string.upper(tostring(SEA_DETECT_SOURCE)), getPlayerLevel(), fps, status.ping)
 
             StatusBar.Visible = Config.ServerStatusHUD and Config.ShowWatermarkHUD
@@ -6118,6 +6225,11 @@ end, CustomIcons.Lightning)
 TabMisc:AddToggle("Log Own-Code Errors (line numbers)", "Prints [Skill Hub] step error @ main.lua:line whenever THIS script hits an error, so console blame is never ambiguous", Config.LogStepErrors, function(v)
     Config.LogStepErrors = v
 end, CustomIcons.Search)
+TabMisc:AddToggle("Synthetic Input (keys + virtual clicks)", "VirtualInputManager key events + VirtualUser mouse clicks for skills / M1 fallback. Auto-disables and prints a notice if the executor only partially implements them.", Config.UseVirtualInput, function(v)
+    Config.UseVirtualInput = v
+    notify("Synthetic Input", v and "Enabled" or "Disabled (skills still fire through the game's remote packets)", 3, CustomIcons.Lightning)
+end, CustomIcons.Lightning)
+TabMisc:AddToggle("Log Own-Code Errors (with line numbers)", "Prints [Skill Hub] step error @ main.lua:line whenever THIS script hits an error — so console blame is never ambiguous", Config.LogStepErrors, function(v) Config.LogStepErrors = v end, CustomIcons.Search)
 TabMisc:AddToggle("Freeze Mob Animations", "Stops mob animation tracks instead of destroying their Animator (avoids animation load spam)", Config.FreezeMobAnimations, function(v) Config.FreezeMobAnimations = v end, CustomIcons.Layers)
 TabMisc:AddLivePanel("Hook & Anti-Cheat Status", "live diagnostics for the __namecall hook", 1.5, function()
     return string.format(
@@ -6215,6 +6327,29 @@ UserInputService.InputBegan:Connect(function(input, gpe)
     end
 end)
 
+-- ─── DEATH / RESPAWN QUIET WINDOW ───────────────────────────────────────────
+-- Heavy GUI work stands down around character load/unload — the exact moment
+-- Roblox rebuilds its own UI and CoreScript errors surface.
+markRespawnQuiet = function(seconds)
+    RespawnQuietUntil = math.max(RespawnQuietUntil, os.clock() + (seconds or 2.5))
+end
+
+local function watchDeath(char)
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.Died:Connect(function() markRespawnQuiet(3) end)
+    end
+end
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    markRespawnQuiet(2.5)
+    task.wait(0.2)
+    markRespawnQuiet(2.5)
+    watchDeath(char)
+end)
+LocalPlayer.CharacterRemoving:Connect(function() markRespawnQuiet(2.5) end)
+watchDeath(LocalPlayer.Character)
+
 -- ─── UNLOAD API (also used by the double-injection guard above) ─────────────
 local function UnloadSkillHub()
     Config.SafeHookMode = false        -- the hook becomes a pure pass-through
@@ -6240,20 +6375,20 @@ local function UnloadSkillHub()
 end
 
 SharedEnv.SkillHubInstance = {
-    version = "3.4",
-    banner = "Skill Hub v3.4 Ultra",
+    version = "3.5",
+    banner = "Skill Hub v3.5 Ultra",
     config = Config,
     hookActive = function() return HookRegistry.namecallActive end,
     unload = UnloadSkillHub,
 }
 
-print(string.format("[Skill Hub v3.4] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · coreGui=none",
+print(string.format("[Skill Hub v3.5] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · coreGui=none",
     ExecutorName, CURRENT_SEA, tostring(SEA_DETECT_SOURCE),
     tostring(Config.HookEngine),
     HookRegistry.namecallActive and "ACTIVE" or "off"))
 
 notify(
-    "Skill Hub v3.4 Ultra",
+    "Skill Hub v3.5 Ultra",
     string.format("Blox Fruits Update 24+ • Sea %d (%s) • PvP & Players tab added • RightCtrl = toggle, RightShift = AimLock, RightAlt = Fly", CURRENT_SEA, tostring(SEA_DETECT_SOURCE)),
     5,
     CustomIcons.HubCrest

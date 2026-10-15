@@ -4,7 +4,7 @@ Two fully separated products live in this repository:
 
 | File | What it is | Where it runs |
 |------|------------|---------------|
-| `main.lua` | **Skill Hub v3.9 Ultra** — Blox Fruits (Update 30) executer hub | Injected by an executor (Synapse/Delta/Xeno/…) |
+| `main.lua` | **Skill Hub v3.9.1 Ultra** — Blox Fruits (Update 30) executer hub | Injected by an executor (Synapse/Delta/Xeno/…) |
 | `SkillAnimator/init.lua` | **Skill Animator Studio** — Moon Animator 2 style keyframe/rig editor | Roblox **Studio plugin** (no pre-made animations) |
 
 ---
@@ -45,6 +45,32 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/
 * **Hitbox Expander v2** — player hitbox now scales the whole model (not one blob part) and restores every part exactly; live visualiser; independent **mob hitbox expander** with configurable size/range that works with Bring Mobs off and auto-restores.
 * **Auto Player List** — live in-UI roster that refreshes every second: PvP status lamp, level, fruit, style, HP, distance, plus one-click `TGT` / `KILL` / `TP` / `CAM` buttons per player.
 * **Fly Status panel** — live velocity, altitude and who currently owns movement (manual / autopilot / tween).
+
+### v3.9.1 — the error reporter was hiding the error, and the icons are drawn now
+
+Your console:
+
+```
+CoreGui.10464.Loadstring.loadstring:810579:55: attempt to index nil with 'LogStepErrors'
+Script '…Loadstring.loadstring:810579', Line 55 - function SkillHubStep
+Script '…Loadstring.loadstring:810579', Line 2323
+```
+
+Three separate bugs, all in the hub:
+
+1. **`SkillHubStep` indexed a nil `Config`.** The instrumentation function sits near the top of the file, but `local Config` was declared ~600 lines below it — so inside it `Config` resolved to a *global*, i.e. nil. Every time any step failed, the reporter crashed on `Config.LogStepErrors` instead of printing `[Skill Hub] step error @ … -> <the real message>`. `Config` is forward-declared now, so the line that was supposed to tell you what broke finally can.
+2. **That crash was masking a real error one frame down.** `aimCameraAt` (new in v3.9, the auto-aim used while auto-killing) was declared *after* the PvP tick that calls it → inside the tick it was nil → "attempt to call a nil value" on every auto-aim attempt. Moved above the tick.
+3. **`UnloadSkillHub` was declared after the Misc button that calls it** — the same class of bug, and it means the `Unload` button had never worked. It is forward-declared now.
+
+**Icons: drawn, not downloaded.** Your next console line:
+
+```
+[Skill Hub] icon rbxassetid://10734962068 did not load — drawing the vector fallback
+```
+
+That is the whole 107233… / 107349… asset set — moderated/dead in-game, which is exactly why the Fruits tile was empty. Every icon in `CustomIcons` is now **drawn from primitives** (crossed swords for Auto Farm, a fruit with a leaf for Fruits, an eye for ESP, a compass, a skull, a gear, a chart, a magnet, …) in the tab accent colour: nothing can fail to load, no tile is ever blank, and the active-tab header icon follows the tab. Unknown ids still fall back to `ImageLabel` + the drawn glyph, and the console reports a dead asset at most once per id.
+
+**New release gate:** an `use-before-definition` static check over the whole file (Lua resolves a local declared after a function body to a global, so the call fails at runtime — the mock harness never walks that path). It flags the old build (`UnloadSkillHub`) and passes v3.9.1.
 
 ### v3.9 — fly you can actually stop, hitboxes up to 200 studs, deadlier auto-kill
 

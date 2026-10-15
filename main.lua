@@ -1,5 +1,5 @@
 --[[
-    Skill Hub v3.9 Ultra — Blox Fruits Edition (Update 30)
+    Skill Hub v3.9.1 Ultra — Blox Fruits Edition (Update 30)
     Architecture: the engine layer and the interface each run inside their own
                   factory function (see "ENGINES FACTORY" / "INTERFACE FACTORY").
                   Lua allows only 200 *active* local variables per function and
@@ -49,6 +49,12 @@ local SharedEnv = (getgenv and getgenv()) or _G or {}
 -- pcall (same return values) but prints which line of THIS script failed:
 --      [Skill Hub] step error @ main.lua:1421 -> <message>
 -- If the console shows no such line, no code in this file raised an error.
+-- `Config` is declared further down, but the instrumentation below (and the
+-- diagnostics panel) run before/around it. Without this forward declaration the
+-- name resolved to a global and every failing step died with
+--     attempt to index nil with 'LogStepErrors'
+-- masking the real error it was supposed to report.
+local Config
 local StepErrorCounts, StepErrorPrintCap = {}, 2
 local function SkillHubStep(name, fn, ...)
     local result = table.pack(pcall(fn, ...))
@@ -673,7 +679,7 @@ local ACTIVE_CODES = {
 --  GLOBAL STATE & CONFIGURATION
 -- ═══════════════════════════════════════════════════════════════════════════
 
-local Config = {
+Config = {
     AutoFarmLevel       = false,
     AutoFarmNearest     = false,
     AutoFarmBoss        = false,
@@ -2317,6 +2323,29 @@ local function setSpectate(plr)
     end
 end
 
+-- Shared camera aim: used by AimLock and by the PvP hunter (Auto AimLock while
+-- auto-killing), so both always agree on what "aimed at the target" means.
+-- Declared here on purpose: the PvP tick below calls it, and a local declared
+-- after a function body is not visible inside it (it would be nil at runtime).
+local function aimCameraAt(target)
+    local cam = Workspace.CurrentCamera
+    local info = getCharacterCombatParts(target and target.Character)
+    local myRoot = getRoot()
+    if not cam or not info or not myRoot then return false end
+    local fov = Config.AimLockFOV or 300
+    if fov > 0 and (info.hrp.Position - myRoot.Position).Magnitude > fov then return false end
+
+    local aimPos = info.head.Position
+    if Config.BuddhaAwareCombat ~= false and isGiantForm(target.Character) then
+        local bbox, size = getCharBoundingBox(target.Character)
+        if bbox and size then aimPos = bbox.Position + Vector3.new(0, math.clamp(size.Y * 0.22, 2, 16), 0) end
+    end
+    local goal = CFrame.lookAt(cam.CFrame.Position, aimPos)
+    local alpha = math.clamp(Config.AimLockSmoothness or 0.3, 0.05, 1)
+    cam.CFrame = cam.CFrame:Lerp(goal, alpha)
+    return true
+end
+
 -- Main PvP tick: target selection, kill automation, hitbox control
 task.spawn(function()
     while task.wait(0.06) do
@@ -2433,27 +2462,6 @@ task.spawn(function()
         end)
     end
 end)
-
--- Shared camera aim: used by AimLock and by the PvP hunter (Auto AimLock while
--- auto-killing), so both always agree on what "aimed at the target" means.
-local function aimCameraAt(target)
-    local cam = Workspace.CurrentCamera
-    local info = getCharacterCombatParts(target and target.Character)
-    local myRoot = getRoot()
-    if not cam or not info or not myRoot then return false end
-    local fov = Config.AimLockFOV or 300
-    if fov > 0 and (info.hrp.Position - myRoot.Position).Magnitude > fov then return false end
-
-    local aimPos = info.head.Position
-    if Config.BuddhaAwareCombat ~= false and isGiantForm(target.Character) then
-        local bbox, size = getCharBoundingBox(target.Character)
-        if bbox and size then aimPos = bbox.Position + Vector3.new(0, math.clamp(size.Y * 0.22, 2, 16), 0) end
-    end
-    local goal = CFrame.lookAt(cam.CFrame.Position, aimPos)
-    local alpha = math.clamp(Config.AimLockSmoothness or 0.3, 0.05, 1)
-    cam.CFrame = cam.CFrame:Lerp(goal, alpha)
-    return true
-end
 
 -- Skill Aimbot / AimLock camera controller
 RunService.RenderStepped:Connect(function(dt)
@@ -4233,7 +4241,129 @@ local function addFinish(card, accent, opts)
 end
 
 -- flat icon tile (soft tinted square, hairline) — replaces the old neon badge
-local function iconTile(parent, iconAssetId, accentColor, sizePx, posUDim, zIdx)
+-- ─── VECTOR ICONS ───────────────────────────────────────────────────────────
+-- Every rbxassetid the hub shipped with (the 107233… / 107349… set) is dead
+-- in-game - the console proves it line by line:
+--     [Skill Hub] icon rbxassetid://10734962068 did not load
+-- so icons are no longer loaded, they are DRAWN from frames. Nothing can fail,
+-- no tile is ever empty and the glyphs follow the tab accent colour.
+local BadIconReported, BadIconCount = {}, 0
+
+local GLYPH_OF_ASSET = {
+    [CustomIcons.HubCrest]  = "crest",
+    [CustomIcons.AutoFarm]  = "swords",
+    [CustomIcons.Stats]     = "chart",
+    [CustomIcons.Fruits]    = "fruit",
+    [CustomIcons.Teleport]  = "compass",
+    [CustomIcons.ESP]       = "eye",
+    [CustomIcons.Animator]  = "play",
+    [CustomIcons.Settings]  = "gear",
+    [CustomIcons.Boss]      = "skull",
+    [CustomIcons.Lightning] = "bolt",
+    [CustomIcons.Shield]    = "shield",
+    [CustomIcons.Play]      = "play",
+    [CustomIcons.Stop]      = "stop",
+    [CustomIcons.Loop]      = "loop",
+    [CustomIcons.Wand]      = "bolt",
+    [CustomIcons.Layers]    = "layers",
+    [CustomIcons.Search]    = "search",
+    [CustomIcons.PvP]       = "skull",
+    [CustomIcons.Players]   = "chart",
+    [CustomIcons.Aim]       = "compass",
+    [CustomIcons.Fly]       = "bolt",
+    [CustomIcons.Water]     = "eye",
+    [CustomIcons.Magnet]    = "magnet",
+    [CustomIcons.Server]    = "crest",
+}
+
+local function drawVectorGlyph(holder, kind, color, size, zBase, out)
+    out = out or {}
+    local function put(px, py, w, h, rotation, radius, fill)
+        local part = new("Frame", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundColor3 = fill or color,
+            BackgroundTransparency = 0,
+            BorderSizePixel = 0,
+            Position = UDim2.new(px, 0, py, 0),
+            Size = UDim2.new(0, math.max(math.floor(w * size), 1), 0, math.max(math.floor(h * size), 1)),
+            Rotation = rotation or 0,
+            ZIndex = zBase,
+        }, holder)
+        corner(part, radius or math.floor(size / 2))
+        table.insert(out, part)
+        return part
+    end
+
+    if kind == "swords" then
+        put(0.5, 0.5, 0.13, 1.0, 45, 2)
+        put(0.5, 0.5, 0.13, 1.0, -45, 2)
+    elseif kind == "skull" then
+        put(0.5, 0.43, 0.86, 0.72, 0, math.floor(size * 0.3))
+        put(0.34, 0.41, 0.19, 0.19, 0, math.floor(size / 2), Theme.BgApp)
+        put(0.66, 0.41, 0.19, 0.19, 0, math.floor(size / 2), Theme.BgApp)
+        put(0.5, 0.79, 0.34, 0.17, 0, 2)
+    elseif kind == "chart" then
+        put(0.24, 0.7, 0.15, 0.44, 0, 2)
+        put(0.5, 0.6, 0.15, 0.66, 0, 2)
+        put(0.76, 0.68, 0.15, 0.52, 0, 2)
+    elseif kind == "fruit" then
+        put(0.5, 0.66, 0.8, 0.8, 0, math.floor(size / 2))
+        put(0.75, 0.2, 0.34, 0.16, -18, math.floor(size / 2))
+        put(0.5, 0.22, 0.08, 0.3, 0, 2)
+    elseif kind == "eye" then
+        put(0.5, 0.5, 1.0, 0.62, 0, math.floor(size * 0.31))
+        put(0.5, 0.5, 0.34, 0.34, 0, math.floor(size / 2), Theme.BgApp)
+    elseif kind == "compass" then
+        put(0.5, 0.5, 1.0, 1.0, 0, math.floor(size / 2))
+        put(0.5, 0.5, 0.6, 0.6, 0, math.floor(size / 2), Theme.BgApp)
+        put(0.5, 0.5, 0.09, 0.42, 40, 2)
+    elseif kind == "gear" then
+        put(0.5, 0.16, 0.3, 0.3, 0, 2)
+        put(0.5, 0.84, 0.3, 0.3, 0, 2)
+        put(0.16, 0.5, 0.3, 0.3, 90, 2)
+        put(0.84, 0.5, 0.3, 0.3, 90, 2)
+        put(0.5, 0.5, 0.54, 0.54, 0, math.floor(size / 2))
+        put(0.5, 0.5, 0.2, 0.2, 0, math.floor(size / 2), Theme.BgApp)
+    elseif kind == "bolt" then
+        put(0.44, 0.32, 0.15, 0.48, 18, 2)
+        put(0.56, 0.68, 0.15, 0.48, 18, 2)
+    elseif kind == "shield" then
+        put(0.5, 0.46, 0.86, 0.9, 0, math.floor(size * 0.3))
+        put(0.5, 0.42, 0.34, 0.13, 0, 2, Theme.BgApp)
+        put(0.5, 0.5, 0.13, 0.5, 0, 2, Theme.BgApp)
+    elseif kind == "play" then
+        put(0.42, 0.34, 0.13, 0.55, -32, 2)
+        put(0.42, 0.66, 0.13, 0.55, 32, 2)
+    elseif kind == "stop" then
+        put(0.5, 0.5, 0.6, 0.6, 0, 3)
+    elseif kind == "loop" then
+        put(0.5, 0.5, 0.86, 0.86, 0, math.floor(size / 2))
+        put(0.5, 0.5, 0.5, 0.5, 0, math.floor(size / 2), Theme.BgApp)
+        put(0.5, 0.12, 0.22, 0.22, 0, 2)
+    elseif kind == "layers" then
+        put(0.5, 0.27, 0.8, 0.22, 0, 3)
+        put(0.5, 0.51, 0.8, 0.22, 0, 3)
+        put(0.5, 0.75, 0.8, 0.22, 0, 3)
+    elseif kind == "search" then
+        put(0.44, 0.42, 0.62, 0.62, 0, math.floor(size / 2))
+        put(0.44, 0.42, 0.3, 0.3, 0, math.floor(size / 2), Theme.BgApp)
+        put(0.76, 0.76, 0.15, 0.42, -45, 2)
+    elseif kind == "magnet" then
+        put(0.3, 0.44, 0.16, 0.6, 0, 2)
+        put(0.7, 0.44, 0.16, 0.6, 0, 2)
+        put(0.5, 0.74, 0.56, 0.16, 0, 2)
+    elseif kind == "crest" then
+        put(0.5, 0.5, 0.72, 0.72, 45, 3)
+        put(0.5, 0.22, 0.2, 0.2, 0, math.floor(size / 2))
+        put(0.5, 0.78, 0.2, 0.2, 0, math.floor(size / 2))
+    else
+        put(0.5, 0.5, 0.62, 0.62, 0, math.floor(size / 2))
+        put(0.5, 0.5, 0.28, 0.28, 0, math.floor(size / 2), Theme.BgApp)
+    end
+    return out
+end
+
+local function iconTile(parent, iconAssetId, accentColor, sizePx, posUDim, zIdx, glyphKind)
     accentColor = accentColor or Theme.Accent
     local holder = new("Frame", {
         Name = "IconTile",
@@ -4247,6 +4377,32 @@ local function iconTile(parent, iconAssetId, accentColor, sizePx, posUDim, zIdx)
     hairline(holder, tint(accentColor, 0.55), 1, 0.55)
 
     local inner = math.max(sizePx - math.floor(sizePx * 0.42), 10)
+
+    -- A known icon is drawn immediately - no asset request, nothing to fail.
+    local kind = glyphKind or GLYPH_OF_ASSET[iconAssetId]
+    if kind then
+        local parts = drawVectorGlyph(holder, kind, accentColor, inner, (zIdx or 4) + 1)
+        local proxy = setmetatable({}, {
+            __index = function(_, key)
+                if key == "ImageColor3" then return accentColor end
+                return nil
+            end,
+            __newindex = function(_, key, value)
+                if key == "ImageColor3" then
+                    for _, part in ipairs(parts) do part.BackgroundColor3 = value end
+                elseif key == "Image" then
+                    local newKind = GLYPH_OF_ASSET[value]
+                    if newKind then
+                        for _, part in ipairs(parts) do pcall(function() part:Destroy() end) end
+                        for i = #parts, 1, -1 do parts[i] = nil end
+                        drawVectorGlyph(holder, newKind, accentColor, inner, (zIdx or 4) + 1, parts)
+                    end
+                end
+            end,
+        })
+        return holder, proxy
+    end
+
     local img = new("ImageLabel", {
         BackgroundTransparency = 1,
         Image = iconAssetId or CustomIcons.HubCrest,
@@ -4264,28 +4420,17 @@ local function iconTile(parent, iconAssetId, accentColor, sizePx, posUDim, zIdx)
         local loaded = true
         pcall(function() loaded = img.IsLoaded end)
         if loaded then return end
-        print(string.format("[Skill Hub] icon %s did not load — drawing the vector fallback", tostring(iconAssetId)))
+        if not BadIconReported[tostring(iconAssetId)] then
+            BadIconReported[tostring(iconAssetId)] = true
+            BadIconCount = BadIconCount + 1
+            if BadIconCount <= 3 then
+                print(string.format("[Skill Hub] icon %s is dead in-game — drawing the vector icon instead", tostring(iconAssetId)))
+            elseif BadIconCount == 4 then
+                print("[Skill Hub] more dead icon assets: every one of them now falls back to a drawn icon")
+            end
+        end
         img.Visible = false
-        local dot = new("Frame", {
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            BackgroundColor3 = accentColor,
-            BackgroundTransparency = 0.12,
-            BorderSizePixel = 0,
-            Position = UDim2.new(0.5, 0, 0.5, 0),
-            Size = UDim2.new(0, math.max(inner - 5, 6), 0, math.max(inner - 5, 6)),
-            ZIndex = (zIdx or 4) + 1,
-        }, holder)
-        corner(dot, math.max(math.floor(inner / 2), 3))
-        local core = new("Frame", {
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            BackgroundColor3 = Theme.BgApp,
-            BackgroundTransparency = 0.2,
-            BorderSizePixel = 0,
-            Position = UDim2.new(0.5, 0, 0.5, 0),
-            Size = UDim2.new(0, math.max(inner - 14, 3), 0, math.max(inner - 14, 3)),
-            ZIndex = (zIdx or 4) + 2,
-        }, dot)
-        corner(core, math.max(math.floor(inner / 4), 2))
+        drawVectorGlyph(holder, glyphKind or GLYPH_OF_ASSET[iconAssetId] or "dot", accentColor, inner, (zIdx or 4) + 1)
     end)
 
     return holder, img
@@ -4416,7 +4561,7 @@ hairline(VersionChip, Theme.StrokeSoft, 1, 0.4)
 new("TextLabel", {
     BackgroundTransparency = 1,
     Font = UIFontMono,
-    Text = "v3.9",
+    Text = "v3.9.1",
     TextColor3 = Theme.TextMuted,
     TextSize = 9,
     Size = UDim2.new(1, 0, 1, 0),
@@ -5016,7 +5161,7 @@ local WatermarkText = new("TextLabel", {
     Font = UIFontMono,
     Position = UDim2.new(0, 32, 0, 0),
     Size = UDim2.new(1, -40, 1, 0),
-    Text = "SKILL HUB 3.9 · SEA 1",
+    Text = "SKILL HUB 3.9.1 · SEA 1",
     TextColor3 = Theme.TextSecondary,
     TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -5061,7 +5206,7 @@ task.spawn(function()
             local status = getServerStatus()
 
             WatermarkBar.Visible = Config.ShowWatermarkHUD
-            WatermarkText.Text = string.format("SKILL HUB 3.9 · SEA %d [%s] · LV %d · %d FPS · %d MS",
+            WatermarkText.Text = string.format("SKILL HUB 3.9.1 · SEA %d [%s] · LV %d · %d FPS · %d MS",
                 CURRENT_SEA, string.upper(tostring(SEA_DETECT_SOURCE)), getPlayerLevel(), fps, status.ping)
 
             StatusBar.Visible = Config.ServerStatusHUD and Config.ShowWatermarkHUD
@@ -6502,6 +6647,9 @@ local TabRegistry = {
     { name = "Misc & Settings", tab = TabMisc },
 }
 local tabCensus, tabSelfTest
+-- The Misc "Unload" button calls this; a local declared after that button is not
+-- visible inside its callback, so the button used to do nothing at all.
+local UnloadSkillHub
 TabFarm:AddSection("Weapon & Triple-Layer Fast Attack")
 TabFarm:AddDropdown("Weapon Category", "Select weapon type to auto-equip during farming", {"Melee", "Sword", "Blox Fruit", "Gun"}, Config.SelectedWeaponType, function(val)
     Config.SelectedWeaponType = val
@@ -7151,7 +7299,7 @@ LocalPlayer.CharacterRemoving:Connect(function() markRespawnQuiet(2.5) end)
 watchDeath(LocalPlayer.Character)
 
 -- ─── UNLOAD API (also used by the double-injection guard above) ─────────────
-local function UnloadSkillHub()
+function UnloadSkillHub()
     Config.SafeHookMode = false        -- the hook becomes a pure pass-through
     Config.BypassAntiCheat = false
     Config.FlyEnabled = false
@@ -7203,8 +7351,8 @@ end
 tabCensus("tab census")
 
 SharedEnv.SkillHubInstance = {
-    version = "3.9",
-    banner = "Skill Hub v3.9 Ultra",
+    version = "3.9.1",
+    banner = "Skill Hub v3.9.1 Ultra",
     config = Config,
     hookActive = function() return HookRegistry.namecallActive end,
     unload = UnloadSkillHub,
@@ -7213,14 +7361,14 @@ SharedEnv.SkillHubInstance = {
     tabSelfTest = function() return tabSelfTest("tab self-test (manual)") end,
 }
 
-print(string.format("[Skill Hub v3.9] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · syntheticInput=%s · coreGui=none",
+print(string.format("[Skill Hub v3.9.1] loaded · executor=%s · sea=%d (%s) · hookEngine=%s · hook=%s · syntheticInput=%s · coreGui=none",
     ExecutorName, CURRENT_SEA, tostring(SEA_DETECT_SOURCE),
     tostring(Config.HookEngine),
     HookRegistry.namecallActive and "ACTIVE" or "off",
     Config.UseVirtualInput and "on" or "OFF"))
 
 notify(
-    "Skill Hub v3.9 Ultra",
+    "Skill Hub v3.9.1 Ultra",
     string.format("Blox Fruits Update 30 • Sea %d (%s) • PvP & Players tab added • RightCtrl = toggle, RightShift = AimLock, RightAlt = Fly", CURRENT_SEA, tostring(SEA_DETECT_SOURCE)),
     5,
     CustomIcons.HubCrest

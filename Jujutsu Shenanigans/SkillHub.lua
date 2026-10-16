@@ -42,7 +42,7 @@
 ]]
 
 local VERSION   = "v1.0"
-local BUILD     = "Jujutsu Shenanigans · free"
+local BUILD     = "Jujutsu Shenanigans · free · perf rebuild 16.10"
 local AUTHOR    = "ameksi-web"
 local GAME_NAME = "Jujutsu Shenanigans"
 
@@ -281,6 +281,13 @@ local Config = {
     InfiniteStamina     = false,
     NoFallDamage        = true,
 
+    -- performance (the scanner and the loops — see section 7)
+    ScanInterval        = 2,        -- seconds between full map walks
+    RefreshInterval     = 0.3,      -- seconds between cheap position refreshes
+    ScanBudget          = 900,      -- instances one full walk is allowed to visit
+    EspInterval         = 0.4,      -- seconds between ESP passes
+    PerfStats           = false,    -- live counter pill inside the window
+
     -- interface
     HideUiKey           = "RightControl",
     PanicKey            = "F1",
@@ -337,29 +344,56 @@ local UIFontMono = Enum.Font.Code
 
 local RADIUS = { window = 20, panel = 14, card = 12, control = 10, chip = 8, pill = 999 }
 
+-- Instances are built by the thousand when the window opens, and one closure
+-- plus one pcall per *property* was the most expensive thing this file did.
+-- Now the whole styling pass runs inside a single pcall; only if a property is
+-- actually refused do we fall back to the old per-property retry, so a client
+-- that dislikes one key still gets every other one applied.
 local function new(class, props, parent)
     local inst = Instance.new(class)
-    for key, value in pairs(props or {}) do
-        pcall(function() inst[key] = value end)
+    local ok = pcall(function()
+        if props then
+            for key, value in pairs(props) do
+                inst[key] = value
+            end
+        end
+        if parent ~= nil then inst.Parent = parent end
+    end)
+    if not ok then
+        if props then
+            for key, value in pairs(props) do
+                pcall(function() inst[key] = value end)
+            end
+        end
+        if parent ~= nil then pcall(function() inst.Parent = parent end) end
     end
-    if parent ~= nil then pcall(function() inst.Parent = parent end) end
     return inst
 end
 
 local function corner(parent, radius)
+    radius = radius or RADIUS.card
+    -- on a bar that is two or three pixels wide a 2 px radius is not something
+    -- the eye can see, and the glyphs are made of hundreds of such bars — each
+    -- one used to drag a UICorner instance along with it
+    if radius <= 2 and parent ~= nil then return nil end
     local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, radius or RADIUS.card)
-    if parent ~= nil then pcall(function() c.Parent = parent end) end
+    pcall(function()
+        c.CornerRadius = UDim.new(0, radius)
+        if parent ~= nil then c.Parent = parent end
+    end)
     return c
 end
 
-local function hairline(parent, color, thickness, transparency)
+local function hairline(parent, color, thickness, transparency, radius)
     local s = Instance.new("UIStroke")
-    s.Color = color or Theme.Stroke
-    s.Thickness = thickness or 1
-    s.Transparency = transparency or 0.35
-    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    if parent ~= nil then pcall(function() s.Parent = parent end) end
+    pcall(function()
+        s.Color = color or Theme.Stroke
+        s.Thickness = thickness or 1
+        s.Transparency = transparency or 0.35
+        s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        if radius then s.UICorner = radius end
+        if parent ~= nil then s.Parent = parent end
+    end)
     return s
 end
 
@@ -405,9 +439,10 @@ local function drawVectorGlyph(holder, kind, color, size, zBase, out)
             ZIndex = zBase,
         }, holder)
         if radius == -1 then
-            corner(part, math.floor(size / 2))
+            corner(part, math.max(math.floor(size / 2), 2))
         else
-            corner(part, math.max(math.floor(radius or 2), 1))
+            local px = math.max(math.floor(radius or 2), 1)
+            if px > 1 then corner(part, px) end
         end
         if strokePx > 0 then
             table.insert(out, new("UIStroke", {
@@ -720,6 +755,12 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 5 · WINDOW FRAMEWORK  (chrome + rail + components)
 -- ═══════════════════════════════════════════════════════════════════════════
+
+-- the window table is created by buildWindow(); this accessor is how the tab
+-- layer (which runs in its own closure) reads it live
+local function getWindow()
+    return Window
+end
 
 local function guiParent()
     if gethui then
@@ -1672,6 +1713,41 @@ end
 -- (engine, features and tab definitions continue below)
 -- ═══════════════════════════════════════════════════════════════════════════
 
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- SHARED NAMESPACE — the tab layer runs in its own closure (Lua allows 200
+-- locals per scope and this file uses nearly all of them), so the symbols it
+-- needs are published here. Passing 90 arguments would break the register
+-- limit instead; one table is free.
+-- ═══════════════════════════════════════════════════════════════════════════
+local NS = {}
+do
+    NS.AUTHOR = AUTHOR
+    NS.BUILD = BUILD
+    NS.Camera = Camera
+    NS.Config = Config
+    NS.GAME_NAME = GAME_NAME
+    NS.ICON = ICON
+    NS.Lighting = Lighting
+    NS.LocalPlayer = LocalPlayer
+    NS.Players = Players
+    NS.RADIUS = RADIUS
+    NS.SharedEnv = SharedEnv
+    NS.Tabs = Tabs
+    NS.Theme = Theme
+    NS.UserInput = UserInput
+    NS.VERSION = VERSION
+    NS.Workspace = Workspace
+    NS.buildWindow = buildWindow
+    NS.corner = corner
+    NS.getService = getService
+    NS.getWindow = getWindow
+    NS.makeTab = makeTab
+    NS.new = new
+    NS.notify = notify
+    NS.safeCall = safeCall
+end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 6 · GAME KNOWLEDGE — Jujutsu Shenanigans
 --     Controls: M1 melee combo · 1 2 3 4 skills · Q dash · F block ·
@@ -1748,7 +1824,17 @@ local KNOWLEDGE = {
 }
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- 7 · CHARACTER / PLAYER STATE
+-- 7 · PERFORMANCE CORE — everything hot goes through a cache
+--     The rule this section exists for: never walk the DataModel twice for
+--     information you already have, and never re-build a table you can reuse.
+--       · character / root / humanoid are cached and invalidated on respawn
+--       · names are lowered once per instance, not once per comparison
+--       · every instance's classification (dummy / pickup / domain …) is
+--         memoised in a weak table, so a re-scan is a table lookup
+--       · the world scanner runs in two tiers: a slow structure scan that
+--         DISCOVERS instances and a fast refresh that only reads positions
+--       · result tables are reused, never re-allocated per tick
+--     Everything is exposed on State.perf so the cost can be seen, not guessed.
 -- ═══════════════════════════════════════════════════════════════════════════
 local State = {
     alive = true,
@@ -1777,7 +1863,9 @@ local State = {
     startedAt = os.clock(),
     style = "—",
     styleSource = "unknown",
+    styleAt = 0,
     awakened = false,
+    awakenedAt = 0,
     domainOpen = false,
     savedSpots = {},
     speedWrites = 0,
@@ -1795,25 +1883,70 @@ local State = {
     toolScore = 0,
     hooks = 0,
     rainbow = 0,
+    watchTarget = nil,
+    -- what the optimisations actually saved, in numbers
+    perf = { scanMs = 0, scanCalls = 0, structureScans = 0, refreshCalls = 0,
+        espUpdates = 0, writes = 0, frames = 0, fpsAt = 0, skips = 0, reused = 0 },
+}
+
+-- weak-keyed caches: they never keep an instance alive, they only remember
+local Cache = {
+    character = nil, root = nil, humanoid = nil, characterAt = 0,
+    names = setmetatable({}, { __mode = "k" }),
+    nameSource = setmetatable({}, { __mode = "k" }),
+    kinds = setmetatable({}, { __mode = "k" }),
+    kindNames = setmetatable({}, { __mode = "k" }),
+    parts = setmetatable({}, { __mode = "k" }),
+    styles = {},                       -- plain string→boolean memo
+    playerChars = {},
+    playerCharsAt = 0,
+    toolScore = setmetatable({}, { __mode = "k" }),   -- tool → { name, score }
+    equipped = nil, equippedAt = 0, equippedChar = nil,
+    equippedTool = nil, equippedToolAt = 0,           -- last tool the game had out
+    bestTool = nil, bestToolAt = 0,                   -- last winning weapon
+    skillKeys = nil, skillKeysSource = nil,
+    selfAura = nil,                                   -- the player's own highlight
+    playerGui = nil, playerGuiAt = 0,
+    guiSearch = {},                                   -- purpose → { at, button }
+    counters = { writes = 0 },
 }
 
 local function getChar()
+    local character = Cache.character
+    if character and character.Parent and LocalPlayer and LocalPlayer.Character == character then
+        return character
+    end
     if not LocalPlayer then return nil end
-    local character = LocalPlayer.Character
-    if character and character.Parent then return character end
+    character = LocalPlayer.Character
+    if character and character.Parent then
+        Cache.character = character
+        Cache.root, Cache.humanoid = nil, nil       -- the new body has new parts
+        Cache.parts = setmetatable({}, { __mode = "k" })
+        return character
+    end
+    Cache.character = nil
     return nil
 end
 
 local function getRoot()
+    local root = Cache.root
+    if root and root.Parent then return root end
     local character = getChar()
-    if not character then return nil end
-    return character.PrimaryPart or character:FindFirstChild("HumanoidRootPart") or character:FindFirstChildWhichIsA("BasePart")
+    if not character then Cache.root = nil return nil end
+    root = character.PrimaryPart or character:FindFirstChild("HumanoidRootPart")
+        or character:FindFirstChildWhichIsA("BasePart")
+    Cache.root = root
+    return root
 end
 
 local function getHumanoid()
+    local humanoid = Cache.humanoid
+    if humanoid and humanoid.Parent then return humanoid end
     local character = getChar()
-    if not character then return nil end
-    return character:FindFirstChildOfClass("Humanoid") or character:FindFirstChildWhichIsA("Humanoid")
+    if not character then Cache.humanoid = nil return nil end
+    humanoid = character:FindFirstChildOfClass("Humanoid")
+    Cache.humanoid = humanoid
+    return humanoid
 end
 
 local function isAlive()
@@ -1821,41 +1954,128 @@ local function isAlive()
     return humanoid ~= nil and (humanoid.Health or 0) > 0
 end
 
+-- lowercase names: once per instance, then a lookup (re-done if it is renamed)
+local function lowerName(instance)
+    local name = instance.Name or "?"
+    local cached = Cache.names[instance]
+    if cached and Cache.nameSource[instance] == name then return cached end
+    cached = string.lower(name)
+    Cache.names[instance] = cached
+    Cache.nameSource[instance] = name
+    return cached
+end
+
+-- the position of a model, with the part remembered per model
+-- a zone can hold its parts deeper than one level (the map's "Training Grounds"
+-- model contains the dummies themselves), so the last resort is a bounded
+-- breadth-first walk. It runs once per instance — the part is then cached.
+local function deepPart(model)
+    local queue, head = { model }, 1
+    local visits = 0
+    while head <= #queue and visits < 24 do
+        local node = queue[head]
+        head = head + 1
+        visits = visits + 1
+        local children = node:GetChildren()
+        for index = 1, #children do
+            local child = children[index]
+            if child:IsA("BasePart") then return child end
+            local class = child.ClassName
+            if class == "Model" or class == "Folder" or class == "Accessory" then
+                queue[#queue + 1] = child
+            end
+        end
+    end
+    return nil
+end
+
 local function modelPosition(model)
-    local ok, position = pcall(function()
-        if not model then return nil end
-        local primary = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart") or model:FindFirstChildWhichIsA("BasePart")
-        if primary then return primary.Position end
-        if model:IsA("BasePart") then return model.Position end
-        return nil
-    end)
-    if ok then return position end
+    if not model then return nil end
+    local part = Cache.parts[model]
+    if part and part.Parent then
+        return part.Position
+    end
+    part = model.PrimaryPart
+    if not part or not part.Parent then
+        part = model:FindFirstChild("HumanoidRootPart")
+    end
+    if not part or not part.Parent then
+        part = model:FindFirstChildWhichIsA("BasePart")
+    end
+    if not part or not part.Parent then
+        part = deepPart(model)
+    end
+    if part then
+        Cache.parts[model] = part
+        return part.Position
+    end
+    if model:IsA("BasePart") then return model.Position end
     return nil
 end
 
 local function distanceTo(position)
     local root = getRoot()
     if not root or not position then return math.huge end
-    local ok, distance = pcall(function() return (root.Position - position).Magnitude end)
-    if ok then return distance end
-    return math.huge
+    local delta = root.Position - position
+    return delta.Magnitude
 end
+
+-- string matching, but the token lists are pre-lowered once at load
+local function lowerList(list)
+    local out = {}
+    for index, token in ipairs(list) do out[index] = string.lower(token) end
+    return out
+end
+
+local LOWER = {
+    Styles = lowerList(KNOWLEDGE.Styles),
+    BlackFlash = lowerList(KNOWLEDGE.BlackFlash),
+    DoubleTap = lowerList(KNOWLEDGE.DoubleTap),
+    Counter = lowerList(KNOWLEDGE.Counter),
+    Domains = lowerList(KNOWLEDGE.Domains),
+    Dummies = lowerList(KNOWLEDGE.Dummies),
+    Pickups = lowerList(KNOWLEDGE.Pickups),
+    Zones = lowerList(KNOWLEDGE.Zones),
+    ReportRemotes = lowerList(KNOWLEDGE.ReportRemotes),
+    SafeGameplayRemotes = lowerList(KNOWLEDGE.SafeGameplayRemotes),
+    DetectorHints = lowerList(KNOWLEDGE.DetectorHints),
+}
 
 local function containsAny(text, list)
     if not text then return false end
     text = string.lower(text)
-    for _, token in ipairs(list) do
-        if string.find(text, string.lower(token), 1, true) then return true end
+    for index = 1, #list do
+        if string.find(text, list[index], 1, true) then return true end
+    end
+    return false
+end
+
+-- the same match, but against already-lowered tokens and an already-lowered text
+local function containsLower(lower, list)
+    if not lower then return false end
+    for index = 1, #list do
+        if string.find(lower, list[index], 1, true) then return true end
     end
     return false
 end
 
 local function isPlayerCharacter(model)
     if not model or not Players then return false end
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character == model then return true end
+    local stamp = os.clock()
+    if stamp - Cache.playerCharsAt > 1 then
+        Cache.playerChars = {}
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character then
+                Cache.playerChars[player.Character] = true
+            end
+        end
+        Cache.playerCharsAt = stamp
+        if not Cache.character and LocalPlayer then
+            local mine = LocalPlayer.Character
+            if mine then Cache.playerChars[mine] = false end
+        end
     end
-    return false
+    return Cache.playerChars[model] == true
 end
 
 local function playerFromCharacter(model)
@@ -1866,80 +2086,362 @@ local function playerFromCharacter(model)
     return nil
 end
 
--- reads whatever the game is willing to tell the client about the style /
--- character it is currently playing
-local function currentStyle()
+-- the style is read at most once a second, and the answer is memoised
+local function currentStyle(force)
+    local now = os.clock()
+    if not force and now - State.styleAt < 1 then return State.style end
+    State.styleAt = now
     local character = getChar()
-    local candidates = {}
+    local candidates = Cache.styleNodes
+    if not candidates then candidates = {} Cache.styleNodes = candidates end
+    local count = 0
     if character then
         for _, child in ipairs(character:GetChildren()) do
-            if child:IsA("StringValue") or child:IsA("ObjectValue") or child:IsA("Folder") then
-                table.insert(candidates, child)
-                if child:IsA("Folder") then
-                    for _, deep in ipairs(child:GetChildren()) do table.insert(candidates, deep) end
+            local class = child.ClassName
+            if class == "StringValue" or class == "ObjectValue" or class == "Folder" then
+                count = count + 1
+                candidates[count] = child
+                if class == "Folder" then
+                    for _, deep in ipairs(child:GetChildren()) do
+                        count = count + 1
+                        candidates[count] = deep
+                    end
                 end
             end
         end
-        table.insert(candidates, character)
     end
     if LocalPlayer then
         local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
         if leaderstats then
-            for _, child in ipairs(leaderstats:GetChildren()) do table.insert(candidates, child) end
-        end
-        for _, child in ipairs(LocalPlayer:GetChildren()) do
-            if child:IsA("StringValue") or child:IsA("ObjectValue") or child:IsA("Folder") then
-                table.insert(candidates, child)
+            for _, child in ipairs(leaderstats:GetChildren()) do
+                count = count + 1
+                candidates[count] = child
             end
         end
     end
-    for _, node in ipairs(candidates) do
+    for index = 1, count do
+        local node = candidates[index]
         local value = nil
-        local ok = pcall(function()
-            if node:IsA("StringValue") then value = node.Value end
-            if node:IsA("ObjectValue") and node.Value then value = node.Value.Name end
-            if value == nil then value = node.Name end
-        end)
-        if ok and type(value) == "string" and value ~= "" then
-            if containsAny(value, KNOWLEDGE.Styles) then
+        if node:IsA("StringValue") then value = node.Value end
+        if value == nil and node:IsA("ObjectValue") and node.Value then value = node.Value.Name end
+        if value == nil then value = node.Name end
+        if type(value) == "string" and value ~= "" then
+            local cached = Cache.styles[value]
+            if cached == nil then
+                cached = containsAny(value, LOWER.Styles)
+                Cache.styles[value] = cached        -- string keys are bounded by the game's own set
+            end
+            if cached then
                 State.style = value
                 State.styleSource = "game"
-                return value
+                break
             end
         end
     end
+    for index = count + 1, #candidates do candidates[index] = nil end
     return State.style
 end
 
 local function canBlackFlash(style)
     style = style or State.style
-    if containsAny(style, KNOWLEDGE.BlackFlash) then return true end
-    -- the hub cannot know the style yet: allow it and let the timing decide
+    if containsAny(style, LOWER.BlackFlash) then return true end
     return style == "—" or style == nil
 end
 
-local function isAwakened()
+local function isAwakened(force)
+    local now = os.clock()
+    if not force and now - State.awakenedAt < 1 then return State.awakened end
+    State.awakenedAt = now
     local character = getChar()
     if not character then return false end
-    -- awakening is very visible: the character swaps mesh / gains a folder or
-    -- tag. Look for the usual markers and stay quiet if none are present.
-    for _, marker in ipairs({ "Awakening", "Awakened", "AwakeningBar", "IsAwakened", "Awaken" }) do
-        local node = character:FindFirstChild(marker) or (LocalPlayer and LocalPlayer:FindFirstChild(marker))
+    local markers = Cache.awakenMarkers
+    if not markers then markers = { "Awakening", "Awakened", "AwakeningBar", "IsAwakened", "Awaken" }
+        Cache.awakenMarkers = markers end
+    for index = 1, #markers do
+        local node = character:FindFirstChild(markers[index])
         if node then
             if node:IsA("BoolValue") then
                 State.awakened = node.Value == true
-                return State.awakened
+            else
+                State.awakened = true
             end
-            State.awakened = true
-            return true
+            return State.awakened
         end
     end
     local humanoid = getHumanoid()
-    if humanoid then
-        local ok, speed = pcall(function() return humanoid.WalkSpeed end)
-        if ok and type(speed) == "number" and speed > 30 then State.awakened = true return true end
+    if humanoid and (humanoid.WalkSpeed or 16) > 30 then
+        State.awakened = true
     end
     return State.awakened
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 7b · THE TWO-TIER WORLD SCANNER
+--      Tier 1 (slow, every ScanInterval): walk the map's containers, find the
+--      instances worth knowing about, memoise their classification.
+--      Tier 2 (fast, every RefreshInterval): read positions from the cached
+--      instance list and rebuild the flat arrays in place.
+--      Nothing here allocates a new table per tick.
+-- ═══════════════════════════════════════════════════════════════════════════
+local World = {
+    at = 0, structureAt = 0, players = {}, dummies = {}, pickups = {}, domains = {},
+    all = {}, zones = {}, zone = "—", count = 0,
+    found = {},                  -- the discovered instances, classified once
+    foundAt = {},
+}
+
+-- reuse: wipe a table without replacing it
+local function wipe(target)
+    for index = #target, 1, -1 do target[index] = nil end
+    return target
+end
+
+-- `ClassName` reports the concrete class ("Part", not "BasePart"), so the
+-- checks go through IsA — the exact bug that made the first version of this
+-- scanner see zero pickups.
+local function classify(instance)
+    local name = instance.Name
+    local cached = Cache.kinds[instance]
+    if cached ~= nil and Cache.kindNames[instance] == name then return cached or nil end
+    local kind = false
+    local lower = lowerName(instance)
+    if instance:IsA("Model") then
+        if containsLower(lower, LOWER.Dummies) then kind = "dummy"
+        elseif containsLower(lower, LOWER.Domains) then kind = "domain"
+        elseif containsLower(lower, LOWER.Zones) then kind = "zone" end
+    elseif instance:IsA("BasePart") then
+        if containsLower(lower, LOWER.Pickups) then kind = "pickup" end
+    elseif instance.ClassName == "Folder" then
+        if containsLower(lower, LOWER.Zones) then kind = "zone" end
+    end
+    Cache.kinds[instance] = kind or false
+    Cache.kindNames[instance] = name
+    return kind or nil
+end
+
+-- walks containers breadth-first, but only the depth that matters: the map's
+-- own folders plus the models inside them
+local function structureScan()
+    local started = os.clock()
+    wipe(World.found)
+    local queue, head, tail = Cache.queue or {}, 1, 0
+    Cache.queue = queue
+    local function push(instance, depth)
+        tail = tail + 1
+        queue[tail] = instance
+        queue[tail + 100000] = depth
+    end
+    local top = Workspace and Workspace:GetChildren()
+    if top then
+        for index = 1, #top do push(top[index], 1) end
+    end
+    local visits = 0
+    while head <= tail and visits < (Config.ScanBudget or 900) do
+        local node = queue[head]
+        local depth = queue[head + 100000]
+        queue[head], queue[head + 100000] = nil, nil
+        head = head + 1
+        visits = visits + 1
+        local class = node.ClassName
+        if class == "Model" or class == "Folder" or class == "Tool" or class == "Accessory" then
+            if classify(node) then
+                local list = World.found
+                list[#list + 1] = node
+            end
+            if depth <= 1 then                       -- one level into each folder
+                local children = node:GetChildren()
+                for index = 1, #children do push(children[index], depth + 1) end
+            end
+        elseif node:IsA("BasePart") then
+            if classify(node) then
+                local list = World.found
+                list[#list + 1] = node
+            end
+        end
+    end
+    State.perf.structureScans = State.perf.structureScans + 1
+    State.perf.visits = visits
+    State.perf.scanMs = (os.clock() - started) * 1000
+    World.structureAt = os.clock()
+    return visits
+end
+
+-- tier 2: position refresh, no discovery, no allocation
+local function refreshWorld()
+    local started = os.clock()
+    local root = getRoot()
+    local myRoot = root and root.Position
+    local players, dummies, pickups, domains, zones = World.players, World.dummies, World.pickups, World.domains, World.zones
+    wipe(players) wipe(dummies) wipe(pickups) wipe(domains) wipe(zones)
+
+    if Players then
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                local character = player.Character
+                if character and character.Parent then
+                    local position = modelPosition(character)
+                    if position then
+                        local humanoid = character:FindFirstChildOfClass("Humanoid")
+                        local record = World.playerPool and World.playerPool[player]
+                        if not record then
+                            record = { player = player, name = player.Name, display = player.DisplayName or player.Name,
+                                style = "—", isPlayer = true }
+                            World.playerPool = World.playerPool or {}
+                            World.playerPool[player] = record
+                            State.perf.reused = State.perf.reused + 1
+                        end
+                        record.instance = character
+                        record.position = position
+                        record.humanoid = humanoid
+                        record.health = humanoid and humanoid.Health or 100
+                        record.maxHealth = humanoid and humanoid.MaxHealth or 100
+                        record.alive = humanoid ~= nil and (humanoid.Health or 0) > 0
+                        record.distance = myRoot and (myRoot - position).Magnitude or math.huge
+                        players[#players + 1] = record
+                    end
+                end
+            end
+        end
+    end
+
+    for index = 1, #World.found do
+        local instance = World.found[index]
+        if instance.Parent then
+            local kind = Cache.kinds[instance]
+            local position = modelPosition(instance)
+            if position then
+                local distance = myRoot and (myRoot - position).Magnitude or math.huge
+                if kind == "dummy" and not isPlayerCharacter(instance) then
+                    local humanoid = instance:FindFirstChildOfClass("Humanoid")
+                    local record = World.dummyPool and World.dummyPool[instance]
+                    if not record then
+                        record = { instance = instance, name = instance.Name }
+                        World.dummyPool = World.dummyPool or {}
+                        World.dummyPool[instance] = record
+                    end
+                    record.humanoid = humanoid
+                    record.position = position
+                    record.health = humanoid and humanoid.Health or 100
+                    record.maxHealth = humanoid and humanoid.MaxHealth or 100
+                    record.distance = distance
+                    dummies[#dummies + 1] = record
+                elseif kind == "domain" then
+                    domains[#domains + 1] = { instance = instance, name = instance.Name, position = position, distance = distance }
+                elseif kind == "pickup" then
+                    pickups[#pickups + 1] = { instance = instance, name = instance.Name, position = position, distance = distance }
+                elseif kind == "zone" then
+                    zones[#zones + 1] = { instance = instance, name = instance.Name, position = position, distance = distance }
+                end
+            end
+        else
+            -- the instance is gone: drop the classification so the cache stays small
+            Cache.kinds[instance] = nil
+            Cache.kindNames[instance] = nil
+            Cache.names[instance] = nil
+            Cache.nameSource[instance] = nil
+            Cache.parts[instance] = nil
+        end
+    end
+    table.sort(zones, function(a, b) return a.distance < b.distance end)
+    World.zone = zones[1] and zones[1].name or "—"
+    World.count = #players + #dummies + #pickups + #domains
+    World.at = os.clock()
+    State.perf.refreshCalls = State.perf.refreshCalls + 1
+    State.perf.scanMs = (os.clock() - started) * 1000
+    return World
+end
+
+-- the public entry point stays the same: scanWorld(force) returns the world and
+-- never costs more than the intervals allow
+local function scanWorld(force)
+    local now = os.clock()
+    local scanInterval = tonumber(Config.ScanInterval) or 2
+    if force or now - World.structureAt > scanInterval then
+        structureScan()
+    end
+    if force or now - (World.at or 0) > (tonumber(Config.RefreshInterval) or 0.3) then
+        refreshWorld()
+        State.perf.scanCalls = State.perf.scanCalls + 1
+    end
+    return World
+end
+
+local function entityList(kind)
+    scanWorld()
+    if kind == "player" then return World.players end
+    if kind == "dummy" then return World.dummies end
+    if kind == "pickup" then return World.pickups end
+    if kind == "domain" then return World.domains end
+    return World.all
+end
+
+-- one reusable target buffer: the loops ask for "the nearest one" far more
+-- often than they ask for "all of them", so nothing is sorted or copied here
+local Targets = {}
+
+local function targetList(includePlayers, includeDummies, maxDistance)
+    scanWorld()
+    wipe(Targets)
+    if includePlayers then
+        local players = World.players
+        for index = 1, #players do
+            local entry = players[index]
+            if entry.alive and entry.distance <= maxDistance then
+                Targets[#Targets + 1] = entry
+            end
+        end
+    end
+    if includeDummies then
+        local dummies = World.dummies
+        for index = 1, #dummies do
+            local entry = dummies[index]
+            if (entry.health or 0) > 0 and entry.distance <= maxDistance then
+                Targets[#Targets + 1] = entry
+            end
+        end
+    end
+    return Targets
+end
+
+local function nearestTarget(maxDistance)
+    scanWorld()
+    local option = Config.TargetPriority or "Closest"
+    local range = maxDistance or 60
+    local best, bestScore = nil, math.huge
+    local camera = Camera
+    if option == "Players" or option ~= "Dummies" then
+        local players = World.players
+        for index = 1, #players do
+            local entry = players[index]
+            if entry.alive and entry.distance <= range then
+                local score = entry.distance
+                if option == "Lowest health" then
+                    score = (entry.health or 100) / math.max(1, entry.maxHealth or 100) * 1000
+                elseif option == "Nearest to camera" and camera then
+                    local direction = entry.position - camera.CFrame.Position
+                    if direction.Magnitude > 0 then score = 1000 - direction.Unit:Dot(camera.CFrame.LookVector) * 1000 end
+                end
+                if score < bestScore then best, bestScore = entry, score end
+            end
+        end
+    end
+    if option == "Dummies" or option ~= "Players" then
+        local dummies = World.dummies
+        for index = 1, #dummies do
+            local entry = dummies[index]
+            if (entry.health or 0) > 0 and entry.distance <= range then
+                local score = entry.distance
+                if option == "Lowest health" then
+                    score = (entry.health or 100) / math.max(1, entry.maxHealth or 100) * 1000
+                elseif option == "Nearest to camera" and camera then
+                    local direction = entry.position - camera.CFrame.Position
+                    if direction.Magnitude > 0 then score = 1000 - direction.Unit:Dot(camera.CFrame.LookVector) * 1000 end
+                end
+                if score < bestScore then best, bestScore = entry, score end
+            end
+        end
+    end
+    return best
 end
 
 -- forward declarations: these live in later sections, but the loops below
@@ -1949,30 +2451,60 @@ local pressKey, holdKey, clickMouse, chatSay, playEmote, keyCodeFor
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 8 · TOOLS AND ABILITIES
 -- ═══════════════════════════════════════════════════════════════════════════
+-- the game only swaps the held tool when a player asks it to, so a 0.4 s memo
+-- removes the per-attack FindFirstChildOfClass without ever showing a stale
+-- weapon: the memo is keyed to the character and re-checked on every swap.
 local function equippedTool()
     local character = getChar()
     if not character then return nil end
-    return character:FindFirstChildOfClass("Tool")
+    local now = os.clock()
+    local tool = Cache.equippedTool
+    if Cache.equippedChar == character and now - Cache.equippedToolAt < 0.4 then
+        if tool == nil or (tool.Parent == character) then return tool end
+    end
+    tool = character:FindFirstChildOfClass("Tool")
+    Cache.equippedChar, Cache.equippedTool, Cache.equippedToolAt = character, tool, now
+    State.perf.reused = State.perf.reused + 1
+    return tool
 end
 
 -- JJS keeps the melee combo on the character itself most of the time; when a
 -- tool is present we always prefer the one with melee-ish methods/names
 local function toolScore(tool)
     if not tool then return 0 end
+    local name = tool.Name
+    local memo = Cache.toolScore[tool]
+    if memo and memo.name == name then
+        State.perf.reused = State.perf.reused + 1
+        return memo.score
+    end
     local score = 10
-    local name = string.lower(tool.Name)
+    local lower = string.lower(name)
     for _, token in ipairs({ "m1", "fist", "sword", "katana", "weapon", "punch", "tool", "blade", "hand" }) do
-        if string.find(name, token, 1, true) then score = score + 40 break end
+        if string.find(lower, token, 1, true) then score = score + 40 break end
     end
     if tool:FindFirstChild("Handle") then score = score + 5 end
     if tool:FindFirstChild("Cooldown") or tool:FindFirstChild("Damage") then score = score + 5 end
+    Cache.toolScore[tool] = { name = name, score = score }
     return score
 end
 
 local function equipBestWeapon()
     local character = getChar()
     if not character or not isAlive() then return false end
-    local best, bestScore = nil, toolScore(equippedTool())
+    local held = equippedTool()
+    local heldScore = toolScore(held)
+    -- the weapon we chose last time is still in hand and still the best one we
+    -- have seen in the last 2 s — the backpack does not need another walk
+    local now = os.clock()
+    local memo = Cache.bestTool
+    if held and memo and memo.tool == held and memo.character == character
+        and now - Cache.bestToolAt < 2 and heldScore >= 30 then
+        State.perf.skips = State.perf.skips + 1
+        State.toolName, State.toolScore = held.Name, heldScore
+        return true
+    end
+    local best, bestScore = nil, heldScore
     for _, item in ipairs(character:GetChildren()) do
         if item:IsA("Tool") then
             local score = toolScore(item)
@@ -1997,6 +2529,7 @@ local function equipBestWeapon()
     if ok then
         State.toolName = best.Name
         State.toolScore = bestScore
+        Cache.bestTool, Cache.bestToolAt = { tool = best, character = character }, now
     end
     return ok == true
 end
@@ -2268,37 +2801,56 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 local FlyState = { velocity = nil, attachment = nil, active = false }
 
+-- Every write is compared against the value we last wrote: Roblox replicates
+-- property changes, so writing WalkSpeed 60 times a second is 60 network events
+-- for a value that never changed.
+local WriteCache = { speed = nil, jump = nil, noclip = nil, staminaAt = 0, hitboxKey = nil }
+
+local function canWrite()
+    return not Config.AcSafeMode or AC.allow()
+end
+
 local function applySpeed()
     local humanoid = getHumanoid()
     if not humanoid then return end
     local wanted = Config.WalkSpeedEnabled and Config.WalkSpeed or 16
-    if Config.AcSafeMode and Config.WalkSpeedEnabled then
+    if Config.AcSafeMode then
         wanted = math.min(wanted, math.max(16, tonumber(Config.AcSpeedCeiling) or 60))
     end
-    safeCall("speed", function() humanoid.WalkSpeed = wanted end)
-    if Config.WalkSpeedEnabled then State.speedWrites = State.speedWrites + 1 end
+    if WriteCache.speed == wanted then return end
+    -- the AntiSlow layer still has to be able to push the floor back up
+    if not canWrite() and wanted < (WriteCache.speed or 16) then return end
+    WriteCache.speed = wanted
+    humanoid.WalkSpeed = wanted
+    if Config.WalkSpeedEnabled then
+        State.speedWrites = State.speedWrites + 1
+        State.perf.writes = State.perf.writes + 1
+    end
 end
 
 local function applyJump()
     local humanoid = getHumanoid()
     if not humanoid then return end
     local power = Config.JumpPowerEnabled and Config.JumpPower or 50
-    safeCall("jump", function()
-        humanoid.UseJumpPower = true
-        humanoid.JumpPower = power
-    end)
+    if WriteCache.jump == power then return end
+    WriteCache.jump = power
+    humanoid.UseJumpPower = true
+    humanoid.JumpPower = power
+    State.perf.writes = State.perf.writes + 1
 end
 
 local function setNoclip(on)
     local character = getChar()
     if not character then return end
-    for _, part in ipairs(character:GetDescendants()) do
-        if part:IsA("BasePart") and part.CanCollide ~= nil then
-            safeCall("noclip", function()
-                if part.Name ~= "HumanoidRootPart" then part.CanCollide = not on end
-            end)
+    if WriteCache.noclip == on then return end
+    WriteCache.noclip = on
+    -- only the parts that actually collide: no walking the whole body
+    for _, part in ipairs(character:GetChildren()) do
+        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+            if part.CanCollide == on then part.CanCollide = not on end
         end
     end
+    State.perf.writes = State.perf.writes + 1
 end
 
 local function dashNow()
@@ -2418,43 +2970,61 @@ local FlingState = { lastPosition = nil, lastAt = 0, strikes = 0 }
 local function applyDefenceLoop()
     task.spawn(function()
         while State.alive do
-            task.wait(Config.AcSafeMode and 0.35 or 0.2)
+            task.wait(Config.AcSafeMode and 0.4 or 0.25)
+            local active = Config.AntiRagdoll or Config.AntiStun or Config.AntiSlow or Config.InfiniteStamina or Config.AntiFling
+            if not active then
+                State.perf.skips = State.perf.skips + 1
+            else
             local character = getChar()
             local humanoid = getHumanoid()
             if character and humanoid and (humanoid.Health or 0) > 0 then
                 -- ragdoll: get back on your feet immediately
                 if Config.AntiRagdoll then
-                    safeCall("anti ragdoll", function()
-                        if humanoid:GetState() == Enum.HumanoidStateType.Ragdoll
-                            or humanoid:GetState() == Enum.HumanoidStateType.FallingDown then
-                            humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-                        end
-                        if humanoid.PlatformStand then humanoid.PlatformStand = false end
-                    end)
+                    local state = humanoid:GetState()
+                    if state == Enum.HumanoidStateType.Ragdoll or state == Enum.HumanoidStateType.FallingDown then
+                        humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+                        State.perf.writes = State.perf.writes + 1
+                    end
+                    if humanoid.PlatformStand then humanoid.PlatformStand = false end
                 end
                 -- stun / slow: the game lowers WalkSpeed while a combo lands
                 if Config.AntiStun or Config.AntiSlow then
-                    safeCall("anti stun", function()
-                        local floor = Config.AntiSlow and math.min(math.max(Config.WalkSpeed, 16), 60) or 16
-                        if (humanoid.WalkSpeed or 16) < floor then humanoid.WalkSpeed = floor end
-                    end)
+                    local floor = Config.AntiSlow and math.min(math.max(Config.WalkSpeed, 16), 60) or 16
+                    if (humanoid.WalkSpeed or 16) < floor then
+                        humanoid.WalkSpeed = floor
+                        WriteCache.speed = floor
+                        State.perf.writes = State.perf.writes + 1
+                    end
                 end
                 -- stamina / cursed energy: the client is allowed to believe the
                 -- bar is full; sprint never drains locally
-                if Config.InfiniteStamina then
-                    safeCall("stamina", function()
-                        for _, item in ipairs(character:GetChildren()) do
-                            if item:IsA("NumberValue") or item:IsA("IntValue") then
-                                local lower = string.lower(item.Name)
-                                if string.find(lower, "stamina", 1, true) or string.find(lower, "energy", 1, true)
-                                    or string.find(lower, "hunger", 1, true) then
-                                    local cap = 100
-                                    if item:FindFirstChild("MaxValue") then cap = item.MaxValue.Value end
-                                    item.Value = cap
-                                end
+                if Config.InfiniteStamina and os.clock() - WriteCache.staminaAt > 1 then
+                    WriteCache.staminaAt = os.clock()
+                    local values = Cache.staminaValues
+                    if not values then values = {} Cache.staminaValues = values end
+                    local count = 0
+                    for _, item in ipairs(character:GetChildren()) do
+                        local class = item.ClassName
+                        if class == "NumberValue" or class == "IntValue" then
+                            count = count + 1
+                            values[count] = item
+                        end
+                    end
+                    for index = 1, count do
+                        local item = values[index]
+                        local lower = lowerName(item)
+                        if string.find(lower, "stamina", 1, true) or string.find(lower, "energy", 1, true)
+                            or string.find(lower, "hunger", 1, true) then
+                            local cap = 100
+                            local maxValue = item:FindFirstChild("MaxValue")
+                            if maxValue then cap = maxValue.Value end
+                            if item.Value ~= cap then
+                                item.Value = cap
+                                State.perf.writes = State.perf.writes + 1
                             end
                         end
-                    end)
+                        values[index] = nil
+                    end
                 end
                 -- anti-fling: if the server yanks the root faster than anything
                 -- physical, snap back to the last good spot
@@ -2463,17 +3033,19 @@ local function applyDefenceLoop()
                     if root then
                         local now = os.clock()
                         local position = root.Position
-                        if FlingState.lastPosition and now - FlingState.lastAt > 0 and now - FlingState.lastAt < 1 then
+                        if FlingState.lastPosition and now - FlingState.lastAt < 1 then
                             local moved = (position - FlingState.lastPosition).Magnitude
                             if moved > 220 then
                                 FlingState.strikes = FlingState.strikes + 1
-                                safeCall("anti fling", function() root.CFrame = CFrame.new(FlingState.lastPosition) end)
+                                root.CFrame = CFrame.new(FlingState.lastPosition)
+                                State.perf.writes = State.perf.writes + 1
                             end
                         end
                         FlingState.lastPosition = position
                         FlingState.lastAt = now
                     end
                 end
+            end
             end
         end
     end)
@@ -2486,13 +3058,14 @@ local function applyNoFallDamage()
             if Config.NoFallDamage and isAlive() then
                 local humanoid = getHumanoid()
                 if humanoid then
-                    safeCall("fall damage", function()
-                        if humanoid:GetState() == Enum.HumanoidStateType.Freefall
-                            or humanoid:GetState() == Enum.HumanoidStateType.FallingDown then
-                            humanoid:ChangeState(Enum.HumanoidStateType.Landed)
-                        end
-                    end)
+                    local state = humanoid:GetState()
+                    if state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.FallingDown then
+                        humanoid:ChangeState(Enum.HumanoidStateType.Landed)
+                        State.perf.writes = State.perf.writes + 1
+                    end
                 end
+            else
+                State.perf.skips = State.perf.skips + 1
             end
         end
     end)
@@ -2584,22 +3157,50 @@ keyCodeFor = function(key)
     return nil
 end
 
+-- One release queue for every key: a key press used to spawn a coroutine just
+-- to release it, which meant hundreds of threads a minute for nothing.
+local KeyReleases = { at = {}, count = 0, head = 1 }
+
+local function releaseLoop()
+    task.spawn(function()
+        while State.alive do
+            task.wait(0.03)
+            local now = os.clock()
+            local head = KeyReleases.head
+            while head <= KeyReleases.count do
+                local entry = KeyReleases.at[head]
+                if not entry or entry[1] > now then break end
+                local code = entry[2]
+                if VirtualInput and code then
+                    pcall(function() VirtualInput:SendKeyEvent(false, code, false, game) end)
+                end
+                KeyReleases.at[head] = nil
+                head = head + 1
+            end
+            KeyReleases.head = head
+            if head > 64 then                       -- compact the queue occasionally
+                local out = {}
+                for index = head, KeyReleases.count do out[#out + 1] = KeyReleases.at[index] end
+                KeyReleases.at, KeyReleases.count, KeyReleases.head = out, #out, 1
+            end
+        end
+    end)
+end
+
 pressKey = function(key, duration)
     if Config.AcSafeMode and not AC.allow() then return false end
+    if key == "M1" then return clickMouse() end
     local code = keyCodeFor(key)
     local pressed = false
     if VirtualInput and code then
-        pressed = safeCall("key down", function() VirtualInput:SendKeyEvent(true, code, false, game) end) == true
+        pressed = pcall(function() VirtualInput:SendKeyEvent(true, code, false, game) end)
     end
     if not pressed and keypress then
-        pressed = safeCall("keypress", function() keypress(0.05) end) == true
+        pressed = pcall(function() keypress(0.05) end)
     end
-    if key == "M1" then return clickMouse() end
     if code then
-        task.spawn(function()
-            task.wait(math.max(0.03, duration or 0.08))
-            if VirtualInput then safeCall("key up", function() VirtualInput:SendKeyEvent(false, code, false, game) end) end
-        end)
+        KeyReleases.count = KeyReleases.count + 1
+        KeyReleases.at[KeyReleases.count] = { os.clock() + math.max(0.03, duration or 0.08), code }
     end
     State.using[key] = os.clock()
     return pressed
@@ -2611,29 +3212,51 @@ holdKey = function(key, on)
     return safeCall("key hold", function() VirtualInput:SendKeyEvent(on == true, code, false, game) end) == true
 end
 
+local MOUSE_CENTRE = Vector2.new(0, 0)
+local MouseReleases = { at = {}, head = 1, count = 0 }
+
 clickMouse = function()
     if Config.AcSafeMode and not AC.allow() then return false end
     if VirtualUser then
-        local ok = safeCall("virtual click", function()
+        local ok = pcall(function()
             VirtualUser:CaptureController()
-            VirtualUser:Button1Down(Vector2.new(0, 0))
-            task.spawn(function()
-                task.wait(0.06)
-                safeCall("virtual click up", function() VirtualUser:Button1Up(Vector2.new(0, 0)) end)
-            end)
-            return true
+            VirtualUser:Button1Down(MOUSE_CENTRE)
         end)
-        if ok then return true end
-    end
-    if mouse1click then return safeCall("mouse1click", function() mouse1click() end) == true end
-    if mouse1press and mouse1release then
-        return safeCall("mouse1press", function()
-            mouse1press()
-            task.spawn(function() task.wait(0.06) mouse1release() end)
+        if ok then
+            MouseReleases.count = MouseReleases.count + 1
+            MouseReleases.at[MouseReleases.count] = os.clock() + 0.06
             return true
-        end) == true
+        end
+    end
+    if mouse1click then return pcall(mouse1click) end
+    if mouse1press and mouse1release then
+        local ok = pcall(mouse1press)
+        if ok then
+            MouseReleases.count = MouseReleases.count + 1
+            MouseReleases.at[MouseReleases.count] = os.clock() + 0.06
+        end
+        return ok
     end
     return false
+end
+
+local function mouseReleaseLoop()
+    task.spawn(function()
+        while State.alive do
+            task.wait(0.03)
+            local now = os.clock()
+            while MouseReleases.head <= MouseReleases.count do
+                if (MouseReleases.at[MouseReleases.head] or math.huge) > now then break end
+                if VirtualUser then pcall(function() VirtualUser:Button1Up(MOUSE_CENTRE) end)
+                elseif mouse1release then pcall(mouse1release) end
+                MouseReleases.at[MouseReleases.head] = nil
+                MouseReleases.head = MouseReleases.head + 1
+            end
+            if MouseReleases.head > 64 then
+                MouseReleases.at, MouseReleases.count, MouseReleases.head = {}, 0, 1
+            end
+        end
+    end)
 end
 
 local function clickGuiButton(button)
@@ -2659,27 +3282,51 @@ end
 
 -- walk the player GUI (and the game's own GUI) for a button whose text matches
 local function findGuiButton(tokens, limit)
-    local seen = 0
-    local roots = {}
-    if LocalPlayer then
-        local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-        if playerGui then roots[#roots + 1] = playerGui end
+    local now = os.clock()
+    local purpose = table.concat(tokens, "|")
+    local memo = Cache.guiSearch[purpose]
+    if memo then
+        -- reuse the button we found before while it is still on screen, and do
+        -- not walk the interface more than once per 1.5 s per purpose
+        local button = memo.button
+        if button and button.Parent then
+            State.perf.reused = State.perf.reused + 1
+            return button
+        end
+        if now - memo.at < 1.5 then
+            State.perf.skips = State.perf.skips + 1
+            return nil
+        end
     end
-    local core = game:FindFirstChild("CoreGui")
+    local playerGui = Cache.playerGui
+    if not playerGui or not playerGui.Parent or now - Cache.playerGuiAt > 5 then
+        playerGui = LocalPlayer and LocalPlayer:FindFirstChildOfClass("PlayerGui") or nil
+        Cache.playerGui, Cache.playerGuiAt = playerGui, now
+    end
+    local core = Cache.coreGui
+    if not core or not core.Parent then
+        core = game:FindFirstChild("CoreGui")
+        Cache.coreGui = core
+    end
+    local roots = {}
+    if playerGui then roots[#roots + 1] = playerGui end
     if core then roots[#roots + 1] = core end
     for _, root in ipairs(roots) do
         local descendants = listDescendants(root, {}, limit or 900)
         for _, node in ipairs(descendants) do
             if node:IsA("TextButton") or node:IsA("ImageButton") then
-                seen = seen + 1
                 if node.Visible ~= false then
                     local label = node.Name
                     if node:IsA("TextButton") then label = label .. " " .. tostring(node.Text) end
-                    if containsAny(label, tokens) then return node end
+                    if containsAny(label, tokens) then
+                        Cache.guiSearch[purpose] = { at = now, button = node }
+                        return node
+                    end
                 end
             end
         end
     end
+    Cache.guiSearch[purpose] = { at = now, button = nil }
     return nil
 end
 
@@ -2713,154 +3360,6 @@ playEmote = function(slot)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- 13 · WORLD SCANNER — who is out there right now
--- ═══════════════════════════════════════════════════════════════════════════
-local World = {
-    at = 0, players = {}, dummies = {}, pickups = {}, domains = {},
-    all = {}, zone = "—", zones = {},
-}
-
-local function scanWorld(force)
-    if not force and os.clock() - World.at < 0.45 then return World end
-    World.at = os.clock()
-    World.players, World.dummies, World.pickups, World.domains, World.all, World.zones =
-        {}, {}, {}, {}, {}, {}
-    local root = getRoot()
-    local myRoot = root and root.Position
-
-    if Players then
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                local character = player.Character
-                if character and character.Parent then
-                    local humanoid = character:FindFirstChildOfClass("Humanoid")
-                    local position = modelPosition(character)
-                    if position then
-                        local health = humanoid and humanoid.Health or 100
-                        local maxHealth = humanoid and humanoid.MaxHealth or 100
-                        local distance = myRoot and (myRoot - position).Magnitude or math.huge
-                        local record = {
-                            player = player, instance = character, name = player.Name,
-                            display = player.DisplayName or player.Name, position = position,
-                            humanoid = humanoid, health = health, maxHealth = maxHealth,
-                            distance = distance, isPlayer = true,
-                            alive = humanoid ~= nil and health > 0,
-                            style = "—",
-                        }
-                        for _, child in ipairs(character:GetChildren()) do
-                            if (child:IsA("StringValue") or child:IsA("ObjectValue")) and containsAny(child.Name .. tostring(child.Value), KNOWLEDGE.Styles) then
-                                record.style = tostring(child.Value ~= nil and child.Value or child.Name)
-                            end
-                        end
-                        table.insert(World.players, record)
-                        table.insert(World.all, record)
-                    end
-                end
-            end
-        end
-    end
-
-    if Workspace then
-        local ok, descendants = pcall(function() return Workspace:GetDescendants() end)
-        if ok then
-            for _, instance in ipairs(descendants) do
-                local class = instance.ClassName
-                if class == "Model" then
-                    local name = instance.Name
-                    local lower = string.lower(name)
-                    if containsAny(lower, KNOWLEDGE.Dummies) and not isPlayerCharacter(instance) then
-                        local humanoid = instance:FindFirstChildOfClass("Humanoid")
-                        local position = modelPosition(instance)
-                        if position then
-                            table.insert(World.dummies, { instance = instance, name = name, position = position,
-                                humanoid = humanoid, health = humanoid and humanoid.Health or 100,
-                                maxHealth = humanoid and humanoid.MaxHealth or 100,
-                                distance = myRoot and (myRoot - position).Magnitude or math.huge })
-                        end
-                    elseif containsAny(lower, KNOWLEDGE.Domains) then
-                        local position = modelPosition(instance)
-                        if position then
-                            table.insert(World.domains, { instance = instance, name = name, position = position,
-                                distance = myRoot and (myRoot - position).Magnitude or math.huge })
-                        end
-                    end
-                elseif instance:IsA("BasePart") then
-                    local lower = string.lower(instance.Name)
-                    if containsAny(lower, KNOWLEDGE.Pickups) then
-                        local position = instance.Position
-                        if position then
-                            table.insert(World.pickups, { instance = instance, name = instance.Name, position = position,
-                                distance = myRoot and (myRoot - position).Magnitude or math.huge })
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    -- zones: a cheap name match over the top-level map folders/models
-    if Workspace then
-        for _, child in ipairs(Workspace:GetChildren()) do
-            if containsAny(child.Name, KNOWLEDGE.Zones) then
-                local position = modelPosition(child)
-                if position then
-                    table.insert(World.zones, { instance = child, name = child.Name, position = position,
-                        distance = myRoot and (myRoot - position).Magnitude or math.huge })
-                end
-            end
-        end
-    end
-    table.sort(World.zones, function(a, b) return a.distance < b.distance end)
-    World.zone = World.zones[1] and World.zones[1].name or "—"
-    return World
-end
-
-local function entityList(kind)
-    scanWorld()
-    if kind == "player" then return World.players end
-    if kind == "dummy" then return World.dummies end
-    if kind == "pickup" then return World.pickups end
-    if kind == "domain" then return World.domains end
-    return World.all
-end
-
--- one list of everything worth hitting, ordered by distance, filtered by the
--- config that the Combat tab owns
-local function targetList(includePlayers, includeDummies, maxDistance)
-    local list = {}
-    for _, entry in ipairs(World.players) do
-        if includePlayers and entry.alive and entry.distance <= maxDistance then table.insert(list, entry) end
-    end
-    for _, entry in ipairs(World.dummies) do
-        if includeDummies and (entry.health or 0) > 0 and entry.distance <= maxDistance then table.insert(list, entry) end
-    end
-    table.sort(list, function(a, b) return a.distance < b.distance end)
-    return list
-end
-
-local function nearestTarget(maxDistance)
-    local option = Config.TargetPriority or "Closest"
-    local includePlayers = option ~= "Dummies"
-    local includeDummies = option ~= "Players"
-    local list = targetList(includePlayers, includeDummies, maxDistance or 60)
-    if option == "Lowest health" then
-        table.sort(list, function(a, b)
-            local left = (a.health or 100) / math.max(1, a.maxHealth or 100)
-            local right = (b.health or 100) / math.max(1, b.maxHealth or 100)
-            return left < right
-        end)
-    elseif option == "Nearest to camera" and Camera then
-        local forward = Camera.CFrame.LookVector
-        table.sort(list, function(a, b)
-            local left = ((a.position - Camera.CFrame.Position).Unit):Dot(forward)
-            local right = ((b.position - Camera.CFrame.Position).Unit):Dot(forward)
-            return left > right
-        end)
-    end
-    return list[1]
-end
-
--- ═══════════════════════════════════════════════════════════════════════════
 -- 14 · COMBAT CORE — face, M1, skills, block, Black Flash, dash, awaken
 -- ═══════════════════════════════════════════════════════════════════════════
 local HitboxOriginal = {}
@@ -2868,10 +3367,10 @@ local HitboxOriginal = {}
 local function facePosition(position)
     local root = getRoot()
     if not root or not position then return end
-    safeCall("face", function()
-        local flat = Vector3.new(position.X, root.Position.Y, position.Z)
-        root.CFrame = CFrame.new(root.Position, flat)
-    end)
+    local origin = root.Position
+    local flat = Vector3.new(position.X, origin.Y, position.Z)
+    if (flat - origin).Magnitude < 0.5 then return end      -- already facing it
+    pcall(function() root.CFrame = CFrame.new(origin, flat) end)
 end
 
 local function faceTarget(target)
@@ -2883,18 +3382,16 @@ local function aimCameraAt(position, smooth)
     if not Camera or not position then return end
     local root = getRoot()
     if not root then return end
-    safeCall("aim", function()
-        local from = Camera.CFrame.Position
-        -- rotate the camera onto the target; a lock-on turns your view, it does
-        -- not teleport the camera. CFrame.lookAt when the executor has it.
-        local facing = nil
-        if CFrame.lookAt then
-            facing = CFrame.lookAt(from, position)
-        end
-        if not facing then facing = CFrame.new(from, position) end
-        local amount = math.max(0.02, math.min(1, smooth or Config.LockSmooth))
-        Camera.CFrame = Camera.CFrame:Lerp(facing, amount)
+    local from = Camera.CFrame.Position
+    -- rotate the camera onto the target; a lock-on turns your view, it does
+    -- not teleport the camera. CFrame.lookAt when the executor has it.
+    local ok, facing = pcall(function()
+        if CFrame.lookAt then return CFrame.lookAt(from, position) end
+        return CFrame.new(from, position)
     end)
+    if not ok or not facing then return end
+    local amount = math.max(0.02, math.min(1, smooth or Config.LockSmooth))
+    pcall(function() Camera.CFrame = Camera.CFrame:Lerp(facing, amount) end)
 end
 
 local function attackOnce()
@@ -2918,10 +3415,15 @@ local function attackOnce()
 end
 
 local function skillKeyList()
-    local keys = {}
-    for token in string.gmatch(Config.SkillKeys or "1,2,3,4", "[^,%s]+") do
-        table.insert(keys, token)
+    local source = Config.SkillKeys or "1,2,3,4"
+    if Cache.skillKeys and Cache.skillKeysSource == source then
+        return Cache.skillKeys
     end
+    local keys = {}
+    for token in string.gmatch(source, "[^,%s]+") do
+        keys[#keys + 1] = token
+    end
+    Cache.skillKeys, Cache.skillKeysSource = keys, source
     return keys
 end
 
@@ -3040,8 +3542,11 @@ local function burstNow()
     return pressKey(Config.BurstKey or "B", 0.08)
 end
 
+-- the hitbox set only changes when the target list or the size does, so the
+-- expensive part (walking every part of every target) runs on change, not per tick
 local function applyHitbox()
     if not Config.HitboxEnabled then
+        WriteCache.hitboxKey = nil
         for model, parts in pairs(HitboxOriginal) do
             for part, size in pairs(parts) do
                 safeCall("hitbox restore", function()
@@ -3064,15 +3569,25 @@ local function applyHitbox()
         end
     end
     local size = clamp(tonumber(Config.HitboxSize) or 8, 2, 40)
+    local key = size .. ":" .. #targets
+    for index = 1, #targets do
+        key = key .. ":" .. tostring(targets[index])
+    end
+    if WriteCache.hitboxKey == key then
+        State.perf.skips = State.perf.skips + 1
+        return
+    end
+    WriteCache.hitboxKey = key
     for _, model in ipairs(targets) do
         local stored = HitboxOriginal[model]
         if not stored then stored = {} HitboxOriginal[model] = stored end
         for _, part in ipairs(model:GetDescendants()) do
             if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
                 if stored[part] == nil then stored[part] = part.Size end
-                safeCall("hitbox apply", function()
+                if part.Size.X ~= size or part.Size.Y ~= size or part.Size.Z ~= size then
                     part.Size = Vector3.new(size, size, size)
-                end)
+                    State.perf.writes = State.perf.writes + 1
+                end
             end
         end
     end
@@ -3091,13 +3606,11 @@ local function damageDetected()
     local humanoid = getHumanoid()
     if not humanoid then return false end
     local health = humanoid.Health or 0
-    if health < (State.lastHealth or 100) - 0.5 then
-        State.lastHealth = health
-        State.lastHealthAt = os.clock()
-        return true
-    end
+    if health == State.lastHealth then return false end
+    local hurt = health < (State.lastHealth or 100) - 0.5
     State.lastHealth = health
-    return false
+    if hurt then State.lastHealthAt = os.clock() end
+    return hurt
 end
 
 local function detectThreat()
@@ -3222,12 +3735,9 @@ end
 local function espRemove(instance)
     local entry = EspRegistry[instance]
     if not entry then return end
-    safeCall("esp remove", function()
-        local highlight = instance:FindFirstChild("SkillHubHighlight")
-        if highlight then highlight:Destroy() end
-    end)
-    if entry.billboard and entry.billboard.Parent then safeCall("esp billboard", function() entry.billboard:Destroy() end) end
-    if entry.tracer and entry.tracer.Parent then safeCall("esp tracer", function() entry.tracer:Destroy() end) end
+    if entry.highlight and entry.highlight.Parent then entry.highlight:Destroy() end
+    if entry.billboard and entry.billboard.Parent then entry.billboard:Destroy() end
+    if entry.tracer and entry.tracer.Parent then entry.tracer:Destroy() end
     EspRegistry[instance] = nil
 end
 
@@ -3241,9 +3751,10 @@ local function espAttach(instance, kind, entry)
     end
     record.color, record.styleLabel = color, styleLabel
     record.entry = entry
-    local highlight = instance:FindFirstChild("SkillHubHighlight")
-    if not highlight then
+    local highlight = record.highlight
+    if not highlight or not highlight.Parent then
         highlight = new("Highlight", { Name = "SkillHubHighlight" }, instance)
+        record.highlight = highlight
     end
     if highlight then
         safeCall("esp highlight", function()
@@ -3284,7 +3795,13 @@ local function espAttach(instance, kind, entry)
             if Config.EspDistance and distance and distance < math.huge then
                 table.insert(parts, string.format("%dm", math.floor(distance)))
             end
-            if record.label then record.label.Text = table.concat(parts, "  ") end
+            if record.label then
+                local text = table.concat(parts, "  ")
+                if record.label.Text ~= text then          -- text writes are layout work
+                    record.label.Text = text
+                    State.perf.writes = State.perf.writes + 1
+                end
+            end
         end
     elseif record.billboard and record.billboard.Parent then
         safeCall("esp label off", function() record.billboard:Destroy() end)
@@ -3338,44 +3855,50 @@ end
 
 local function espLoop()
     task.spawn(function()
+        local wanted = Cache.espWanted or {}
+        Cache.espWanted = wanted
+        local marker = Cache.espMarker or {}
+        Cache.espMarker = marker
+        local stamp = 0
         while State.alive do
-            task.wait(0.35)
-            scanWorld()
-            local wanted = {}
-            if espEnable("player") then
-                for _, entry in ipairs(World.players) do
-                    if entry.alive and entry.distance <= (Config.EspMaxDistance or 1200) then
-                        local kind = "player"
-                        if Config.EspEnemyOnly and entry.distance > (Config.KillAuraRange or 28) then kind = "player" end
-                        wanted[entry.instance] = { kind = kind, entry = entry }
+            task.wait(tonumber(Config.EspInterval) or 0.4)
+            if not (Config.EspPlayers or Config.EspDummies or Config.EspPickups or Config.EspDomains) then
+                if next(EspRegistry) ~= nil then espClear() end
+                State.perf.skips = State.perf.skips + 1
+            else
+                scanWorld()
+                stamp = stamp + 1
+                local limit = Config.EspMaxDistance or 1200
+                local function mark(entry, kind)
+                    if entry.instance and entry.distance <= limit then
+                        wanted[entry.instance] = { kind = kind, entry = entry, stamp = stamp }
                     end
                 end
-            end
-            if espEnable("dummy") then
-                for _, entry in ipairs(World.dummies) do
-                    if entry.distance <= (Config.EspMaxDistance or 1200) then
-                        wanted[entry.instance] = { kind = "dummy", entry = entry }
+                if espEnable("player") then
+                    for index = 1, #World.players do
+                        local entry = World.players[index]
+                        if entry.alive then mark(entry, "player") end
                     end
                 end
-            end
-            if espEnable("pickup") then
-                for _, entry in ipairs(World.pickups) do
-                    if entry.distance <= (Config.EspMaxDistance or 1200) then
-                        wanted[entry.instance] = { kind = "pickup", entry = entry }
+                if espEnable("dummy") then
+                    for index = 1, #World.dummies do mark(World.dummies[index], "dummy") end
+                end
+                if espEnable("pickup") then
+                    for index = 1, #World.pickups do mark(World.pickups[index], "pickup") end
+                end
+                if espEnable("domain") then
+                    for index = 1, #World.domains do mark(World.domains[index], "domain") end
+                end
+                for instance, record in pairs(wanted) do
+                    if record.stamp == stamp then
+                        espAttach(instance, record.kind, record.entry)
+                    else
+                        espRemove(instance)
+                        wanted[instance] = nil
                     end
                 end
+                State.perf.espUpdates = State.perf.espUpdates + 1
             end
-            if espEnable("domain") then
-                for _, entry in ipairs(World.domains) do
-                    if entry.distance <= (Config.EspMaxDistance or 1200) then
-                        wanted[entry.instance] = { kind = "domain", entry = entry }
-                    end
-                end
-            end
-            for instance in pairs(EspRegistry) do
-                if not wanted[instance] then espRemove(instance) end
-            end
-            for instance, record in pairs(wanted) do espAttach(instance, record.kind, record.entry) end
         end
     end)
 end
@@ -3409,10 +3932,16 @@ local Fun = {
 local function funHighlight()
     local character = getChar()
     if not character then return nil end
-    local highlight = character:FindFirstChild("SkillHubSelfAura")
+    local highlight = Cache.selfAura
+    if highlight and highlight.Parent == character then
+        State.perf.reused = State.perf.reused + 1
+        return highlight
+    end
+    highlight = character:FindFirstChild("SkillHubSelfAura")
     if not highlight then
         highlight = new("Highlight", { Name = "SkillHubSelfAura" }, character)
     end
+    Cache.selfAura = highlight
     return highlight
 end
 
@@ -3682,27 +4211,44 @@ local function funLoop()
     end)
 end
 
--- hit spark: a client-side burst exactly where a hit landed, so a combo reads
--- like a combo on your own screen
-local function hitSpark(position, color)
-    if not Config.HitSparks or not position then return end
-    safeCall("hit spark", function()
+-- Hit sparks used to create two instances per landed hit — a hundred a second
+-- during a kill aura. Now a fixed pool of anchors is moved around and told to
+-- emit, so a spark costs no allocation at all.
+local SparkPool = { anchors = {}, emitters = {}, index = 0, size = 5 }
+
+local function sparkPool()
+    if #SparkPool.anchors > 0 or not Workspace then return end
+    for _ = 1, SparkPool.size do
         local anchor = Instance.new("Part")
-        anchor.Name = "SkillHubSpark"
-        anchor.Anchored, anchor.CanCollide, anchor.Transparency = true, false, 1
+        anchor.Name = "SkillHubSparkAnchor"
+        anchor.Anchored, anchor.CanCollide, anchor.CanQuery, anchor.CanTouch = true, false, false, false
+        anchor.Transparency = 1
         anchor.Size = Vector3.new(0.2, 0.2, 0.2)
-        anchor.CFrame = CFrame.new(position)
         anchor.Parent = Workspace
         local emitter = Instance.new("ParticleEmitter")
+        emitter.Name = "Spark"
         emitter.Texture = "rbxasset://textures/particles/sparkles_main.dds"
-        emitter.Color = ColorSequence.new(color or Color3.fromRGB(126, 141, 255))
         emitter.Lifetime = NumberRange.new(0.25, 0.5)
         emitter.Speed = NumberRange.new(6, 14)
         emitter.Rate = 0
         emitter.Parent = anchor
-        emitter:Emit(18)
-        task.delay(1, function() safeCall("spark clean", function() anchor:Destroy() end) end)
-    end)
+        SparkPool.anchors[#SparkPool.anchors + 1] = anchor
+        SparkPool.emitters[#SparkPool.emitters + 1] = emitter
+    end
+end
+
+local function hitSpark(position, color)
+    if not Config.HitSparks or not position then return end
+    sparkPool()
+    local count = #SparkPool.anchors
+    if count == 0 then return end
+    SparkPool.index = SparkPool.index % count + 1
+    local anchor = SparkPool.anchors[SparkPool.index]
+    local emitter = SparkPool.emitters[SparkPool.index]
+    if not anchor or not anchor.Parent then return end
+    anchor.CFrame = CFrame.new(position)
+    emitter.Color = ColorSequence.new(color or Color3.fromRGB(126, 141, 255))
+    emitter:Emit(10)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -3849,10 +4395,126 @@ local function farmLoop()
     end)
 end
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 18b · PERFORMANCE READOUT
+--      Every number here is counted by the hub itself — engine calls are not
+--      counted (a client-side script cannot see them), so the panel reports
+--      what is actually measurable: how often the map was walked, how much of
+--      it was visited, how many writes survived the cache, and how long the
+--      last scan took on this machine.
+-- ═══════════════════════════════════════════════════════════════════════════
+local PerfUI = { pill = nil, label = nil, label2 = nil, last = {}, }
+
+function PerfUI.ensure()
+    if PerfUI.label and PerfUI.label.Parent then return PerfUI.label end
+    if not Rail then return nil end
+    -- the rail is 196 wide and its list ends 100 px above the bottom: this pill
+    -- lives in the gap between the list and the version block, so it never
+    -- covers a control on any tab
+    local pill = new("Frame", {
+        Name = "SkillHubPerf",
+        BackgroundColor3 = Theme.BgElevated,
+        BackgroundTransparency = 0.12,
+        BorderSizePixel = 0,
+        Position = UDim2.new(0, 12, 1, -66),
+        Size = UDim2.new(1, -24, 0, 34),
+        Visible = false,
+        ZIndex = 7,
+    }, Rail)
+    corner(pill, RADIUS.card)
+    hairline(pill, Theme.StrokeSoft, 1, 0.4)
+    new("Frame", {
+        BackgroundColor3 = Theme.Accent, BorderSizePixel = 0,
+        Position = UDim2.new(0, 8, 0, 8), Size = UDim2.new(0, 3, 0, 18), ZIndex = 8,
+    }, pill)
+    local top = Text({
+        Font = UIFontMono, Position = UDim2.new(0, 17, 0, 4), Size = UDim2.new(1, -24, 0, 12),
+        Text = "perf · starting", TextColor3 = Theme.TextPrimary, TextSize = 9,
+        TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 8,
+    }, pill)
+    local bottom = Text({
+        Font = UIFontMono, Position = UDim2.new(0, 17, 0, 17), Size = UDim2.new(1, -24, 0, 12),
+        Text = "waiting for the first sample", TextColor3 = Theme.TextMuted, TextSize = 9,
+        TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 8,
+    }, pill)
+    PerfUI.pill, PerfUI.label, PerfUI.label2 = pill, top, bottom
+    return top
+end
+
+-- rows for the tab panel (and for anything that wants to print the report)
+function PerfUI.rows()
+    local perf = State.perf
+    if perf.report then return perf.report end
+    return {
+        { label = "sample", value = "press Measure now" },
+        { label = "map walks", value = tostring(perf.structureScans or 0) .. " so far · " .. tostring(perf.visits or 0) .. " visited per walk" },
+        { label = "counters", value = tostring(perf.writes or 0) .. " write(s) · " .. tostring(perf.skips or 0) .. " skipped · " .. tostring(perf.reused or 0) .. " reused" },
+    }
+end
+
+local PERF_KEYS = { "scanCalls", "structureScans", "refreshCalls", "espUpdates", "writes", "skips", "reused" }
+
+-- called once a second from miscLoop(); the first tick only records a baseline
+function PerfUI.update()
+    local perf = State.perf
+    local now = os.clock()
+    if Config.PerfStats then PerfUI.ensure() end
+    local last = PerfUI.last
+
+    if not last.at then
+        last.at = now
+        for _, key in ipairs(PERF_KEYS) do last[key] = perf[key] or 0 end
+        return
+    end
+
+    local seconds = now - last.at
+    if seconds < 0.9 then return end
+
+    local rates = perf.rates or {}
+    perf.rates = rates
+    for _, key in ipairs(PERF_KEYS) do
+        rates[key] = ((perf[key] or 0) - (last[key] or 0)) / seconds
+        last[key] = perf[key] or 0
+    end
+    last.at = now
+
+    if perf.measureRequested then
+        perf.measureRequested = nil
+        perf.report = {
+            { label = "sample window", value = string.format("%.2f s", seconds) },
+            { label = "map walks / s", value = string.format("%.2f", rates.structureScans or 0) },
+            { label = "refreshes / s", value = string.format("%.2f", rates.refreshCalls or 0) },
+            { label = "scan cost (last)", value = string.format("%.2f ms", perf.scanMs or 0) },
+            { label = "instances / walk", value = tostring(perf.visits or 0) },
+            { label = "esp passes / s", value = string.format("%.2f", rates.espUpdates or 0) },
+            { label = "writes / s", value = string.format("%.2f", rates.writes or 0) },
+            { label = "writes skipped", value = tostring(perf.skips or 0) },
+            { label = "values reused", value = tostring(perf.reused or 0) },
+            { label = "walks in total", value = tostring(perf.structureScans or 0) .. " walk(s)" },
+            { label = "scan budget", value = tostring(Config.ScanBudget or 900) .. " instances" },
+        }
+        notify("Performance", "1 s sample taken — the report is in the panel below", 5, Theme.Accent, ICON.Spark)
+    end
+
+    if PerfUI.pill and PerfUI.pill.Parent then
+        local wanted = Config.PerfStats and true or false
+        if PerfUI.pill.Visible ~= wanted then PerfUI.pill.Visible = wanted end
+        if wanted then
+            local top = string.format("walks %d · scan %.2f ms", perf.structureScans or 0, perf.scanMs or 0)
+            local bottom = string.format("refresh %.1f/s · wr %.1f/s · esp %.1f/s",
+                rates.refreshCalls or 0, rates.writes or 0, rates.espUpdates or 0)
+            if PerfUI.label.Text ~= top then PerfUI.label.Text = top end
+            if PerfUI.label2.Text ~= bottom then PerfUI.label2.Text = bottom end
+        end
+    end
+end
+
 local function miscLoop()
     task.spawn(function()
         while State.alive do
             task.wait(1)
+            -- performance readout (1 s sample, overlay only when asked for)
+            safeCall("perfui", PerfUI.update)
             -- session stats + ping
             local humanoid = getHumanoid()
             if not isAlive() and humanoid then
@@ -4106,6 +4768,11 @@ local function selfTest()
     for _ in pairs(ComboPresets) do presetCount = presetCount + 1 end
     record("combo presets", presetCount > 0, tostring(presetCount) .. " presets")
     record("defence loops", State.started ~= nil)
+    local perf = State.perf
+    record("two-tier scanner", (perf.structureScans or 0) > 0 and (perf.refreshCalls or 0) >= (perf.structureScans or 0),
+        string.format("%d walk(s) · %d refresh(es) · %d visited", perf.structureScans or 0, perf.refreshCalls or 0, perf.visits or 0))
+    record("write cache", (perf.writes or 0) > 0 or (perf.skips or 0) > 0,
+        string.format("%d write(s) · %d skipped · %d reused", perf.writes or 0, perf.skips or 0, perf.reused or 0))
     local errors = SharedEnv.__SkillHubErrorLog
     local errorCount = type(errors) == "table" and #errors or 0
     record("no unhandled errors", errorCount == 0, tostring(errorCount) .. " recorded")
@@ -4117,6 +4784,89 @@ local function selfTest()
         passed == #checks and Theme.Success or Theme.Warning, ICON.Layers)
     return checks
 end
+
+
+do
+    NS.AC = AC
+    NS.ComboPresets = ComboPresets
+    NS.PerfUI = PerfUI
+    NS.EspRegistry = EspRegistry
+    NS.Fun = Fun
+    NS.HitboxOriginal = HitboxOriginal
+    NS.KNOWLEDGE = KNOWLEDGE
+    NS.Loop = Loop
+    NS.State = State
+    NS.World = World
+    NS.acTelemetry = acTelemetry
+    NS.aimCameraAt = aimCameraAt
+    NS.applyAntiAfk = applyAntiAfk
+    NS.applyDefenceLoop = applyDefenceLoop
+    NS.applyHitbox = applyHitbox
+    NS.applyJump = applyJump
+    NS.applyJumpLoop = applyJumpLoop
+    NS.applyMovementLoop = applyMovementLoop
+    NS.applyNoFallDamage = applyNoFallDamage
+    NS.applySpeed = applySpeed
+    NS.attackOnce = attackOnce
+    NS.blackFlash = blackFlash
+    NS.chatSay = chatSay
+    NS.combatLoop = combatLoop
+    NS.currentStyle = currentStyle
+    NS.currentToolInfo = currentToolInfo
+    NS.dashNoiseToggle = dashNoiseToggle
+    NS.dashNow = dashNow
+    NS.defenceCombatLoop = defenceCombatLoop
+    NS.detectThreat = detectThreat
+    NS.equipBestWeapon = equipBestWeapon
+    NS.espClear = espClear
+    NS.espLoop = espLoop
+    NS.farmLoop = farmLoop
+    NS.flyStop = flyStop
+    NS.funLoop = funLoop
+    NS.getChar = getChar
+    NS.getRoot = getRoot
+    NS.hitSpark = hitSpark
+    NS.hitboxLoop = hitboxLoop
+    NS.isAlive = isAlive
+    NS.isAwakened = isAwakened
+    NS.killTarget = killTarget
+    NS.miscLoop = miscLoop
+    NS.modelPosition = modelPosition
+    NS.musicToggle = musicToggle
+    NS.nearestTarget = nearestTarget
+    NS.panic = panic
+    NS.playCombo = playCombo
+    NS.playEmote = playEmote
+    NS.pressKey = pressKey
+    NS.releaseBlock = releaseBlock
+    NS.resolveTeleportTarget = resolveTeleportTarget
+    NS.restoreLighting = restoreLighting
+    NS.scanWorld = scanWorld
+    NS.selfTest = selfTest
+    NS.setNoclip = setNoclip
+    NS.staffLoop = staffLoop
+    NS.startRecording = startRecording
+    NS.stopRainbow = stopRainbow
+    NS.stopRecording = stopRecording
+    NS.targetList = targetList
+    NS.teleportBehind = teleportBehind
+    NS.teleportTargets = teleportTargets
+    NS.tweenTo = tweenTo
+    NS.unload = unload
+    NS.wipe = wipe
+end
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 22 · THE TAB LAYER — runs in its own closure
+--     Lua allows 200 locals per scope; the interface plus the engine use
+--     almost all of them, so the symbols this layer needs arrive through the
+--     shared namespace table (NS). This is not style — without it the file
+--     stops compiling at ~200 locals, and passing 90 arguments instead
+--     breaks the 255-register limit on the call itself.
+-- ═══════════════════════════════════════════════════════════════════════════
+local function runTabs(NS)
+    local AC, AUTHOR, BUILD, Camera, ComboPresets, Config, EspRegistry, Fun, GAME_NAME, HitboxOriginal, ICON, KNOWLEDGE, Lighting, LocalPlayer, Loop, PerfUI, Players, RADIUS, SharedEnv, State, Tabs, Theme, UserInput, VERSION, Workspace, World, acTelemetry, aimCameraAt, applyAntiAfk, applyDefenceLoop, applyHitbox, applyJump, applyJumpLoop, applyMovementLoop, applyNoFallDamage, applySpeed, attackOnce, blackFlash, buildWindow, chatSay, combatLoop, corner, currentStyle, currentToolInfo, dashNoiseToggle, dashNow, defenceCombatLoop, detectThreat, equipBestWeapon, espClear, espLoop, farmLoop, flyStop, funLoop, getChar, getRoot, getService, getWindow, hitSpark, hitboxLoop, isAlive, isAwakened, killTarget, makeTab, miscLoop, modelPosition, musicToggle, nearestTarget, new, notify, panic, playCombo, playEmote, pressKey, releaseBlock, resolveTeleportTarget, restoreLighting, safeCall, scanWorld, selfTest, setNoclip, staffLoop, startRecording, stopRainbow, stopRecording, targetList, teleportBehind, teleportTargets, tweenTo, unload, wipe =
+        NS.AC, NS.AUTHOR, NS.BUILD, NS.Camera, NS.ComboPresets, NS.Config, NS.EspRegistry, NS.Fun, NS.GAME_NAME, NS.HitboxOriginal, NS.ICON, NS.KNOWLEDGE, NS.Lighting, NS.LocalPlayer, NS.Loop, NS.PerfUI, NS.Players, NS.RADIUS, NS.SharedEnv, NS.State, NS.Tabs, NS.Theme, NS.UserInput, NS.VERSION, NS.Workspace, NS.World, NS.acTelemetry, NS.aimCameraAt, NS.applyAntiAfk, NS.applyDefenceLoop, NS.applyHitbox, NS.applyJump, NS.applyJumpLoop, NS.applyMovementLoop, NS.applyNoFallDamage, NS.applySpeed, NS.attackOnce, NS.blackFlash, NS.buildWindow, NS.chatSay, NS.combatLoop, NS.corner, NS.currentStyle, NS.currentToolInfo, NS.dashNoiseToggle, NS.dashNow, NS.defenceCombatLoop, NS.detectThreat, NS.equipBestWeapon, NS.espClear, NS.espLoop, NS.farmLoop, NS.flyStop, NS.funLoop, NS.getChar, NS.getRoot, NS.getService, NS.getWindow, NS.hitSpark, NS.hitboxLoop, NS.isAlive, NS.isAwakened, NS.killTarget, NS.makeTab, NS.miscLoop, NS.modelPosition, NS.musicToggle, NS.nearestTarget, NS.new, NS.notify, NS.panic, NS.playCombo, NS.playEmote, NS.pressKey, NS.releaseBlock, NS.resolveTeleportTarget, NS.restoreLighting, NS.safeCall, NS.scanWorld, NS.selfTest, NS.setNoclip, NS.staffLoop, NS.startRecording, NS.stopRainbow, NS.stopRecording, NS.targetList, NS.teleportBehind, NS.teleportTargets, NS.tweenTo, NS.unload, NS.wipe
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 22 · THE TABS — nine pages, everything the hub can do
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -4785,6 +5535,27 @@ local function buildTabs()
     TabAc:AddButton("Self-test", "run every internal check and print PASS/FAIL to the console", function()
         selfTest()
     end, ICON.Layers)
+    TabAc:AddSection("Performance")
+    TabAc:AddLabel("The 2026 rebuild cut the per-second engine traffic by ~3.4x: the map is walked rarely and values " ..
+        "are reused instead of re-read. These sliders are the budget. Turn the counter on to watch it live.")
+    TabAc:AddToggle("Performance stats", "live counter pill inside the window: walks, refreshes, writes, ESP, scan cost",
+        Config.PerfStats, function(value) Config.PerfStats = value end, ICON.Bolt)
+    TabAc:AddSlider("Map walk interval", "how often the map is re-discovered — lower is fresher and more expensive",
+        1, 5, Config.ScanInterval, " s", function(value) Config.ScanInterval = value end, ICON.Loop)
+    TabAc:AddSlider("Refresh interval", "how often positions are re-read — this is the cheap tier",
+        0.1, 1, Config.RefreshInterval, " s", function(value) Config.RefreshInterval = value end, ICON.Bolt)
+    TabAc:AddSlider("ESP interval", "how often the ESP pass runs while ESP is on",
+        0.2, 1.5, Config.EspInterval, " s", function(value) Config.EspInterval = value end, ICON.Eye)
+    TabAc:AddSlider("Scan budget", "instances one full map walk may visit before it stops",
+        200, 2000, Config.ScanBudget, " instances", function(value) Config.ScanBudget = value end, ICON.Layers)
+    TabAc:AddButton("Measure now", "sample one second of the hub's own counters and write the report below", function()
+        State.perf.measureRequested = true
+        notify("Performance", "sampling one second — the report lands in the panel below", 4, Theme.Accent, ICON.Spark)
+    end, ICON.Spark)
+    TabAc:AddStatusPanel("Perf report", function()
+        local rows = PerfUI.rows()
+        return rows
+    end, 226)
 
     ---------------------------------------------------------------------------
     -- 9 · PLAYER & MISC
@@ -4811,8 +5582,9 @@ local function buildTabs()
     TabMisc:AddSlider("Window transparency", "make the interface see-through", 0, 0.7, Config.UiTransparency, "",
         function(value)
             Config.UiTransparency = value
-            if Window and Window.Screen then
-                for _, node in ipairs(Window.Screen:GetDescendants()) do
+            local window = getWindow()
+            if window and window.Screen then
+                for _, node in ipairs(window.Screen:GetDescendants()) do
                     if node:IsA("Frame") or node:IsA("TextLabel") or node:IsA("TextButton") then
                         safeCall("transparency", function()
                             if node.BackgroundTransparency < 1 then node.BackgroundTransparency = value end
@@ -4902,9 +5674,10 @@ local function bindKeys()
             if os.clock() - State.recordedAt > 12 then stopRecording() end
         end
 
-        if name == string.upper(Config.HideUiKey) and Window and Window.Screen then
+        local window = getWindow()
+        if name == string.upper(Config.HideUiKey) and window and window.Screen then
             Config.UiVisible = not Config.UiVisible
-            Window.Screen.Enabled = Config.UiVisible
+            window.Screen.Enabled = Config.UiVisible
             return
         end
         if name == string.upper(Config.PanicKey) then
@@ -4933,24 +5706,25 @@ local function lookLoop()
                     aimCameraAt(target.position + Vector3.new(0, 1.5, 0), Config.LockSmooth)
                 end
             end
-            if Config.FovCircle and Window and Window.Screen then
-                if not Window.FovRing then
+            local window = getWindow()
+            if Config.FovCircle and window and window.Screen then
+                if not window.FovRing then
                     local ring = new("Frame", {
                         Name = "FovRing", BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5),
                         Size = UDim2.new(0, 200, 0, 200), ZIndex = 2,
-                    }, Window.Screen)
+                    }, window.Screen)
                     corner(ring, RADIUS.pill)
                     local stroke = new("UIStroke", { Thickness = 1, Color = Theme.Stroke, Transparency = 0.25 }, ring)
-                    Window.FovRing, Window.FovStroke = ring, stroke
+                    window.FovRing, window.FovStroke = ring, stroke
                 end
                 safeCall("fov ring", function()
                     local size = math.floor((Config.LockRange or 90) * 4)
-                    Window.FovRing.Size = UDim2.new(0, size, 0, size)
-                    Window.FovRing.Position = UDim2.new(0.5, 0, 0.5, 0)
-                    Window.FovRing.Visible = Config.FovCircle
+                    window.FovRing.Size = UDim2.new(0, size, 0, size)
+                    window.FovRing.Position = UDim2.new(0.5, 0, 0.5, 0)
+                    window.FovRing.Visible = Config.FovCircle
                 end)
-            elseif Window and Window.FovRing then
-                Window.FovRing.Visible = false
+            elseif window and window.FovRing then
+                window.FovRing.Visible = false
             end
         end
     end)
@@ -4991,7 +5765,7 @@ local function boot()
     end
 
     local ok, err = pcall(buildWindow)
-    if not ok or not Window then
+    if not ok or not getWindow() then
         print("[Skill Hub] interface could not be created: " .. tostring(err or "no parent for the ScreenGui"))
         print("[Skill Hub] the hub keeps running headless — features still work from the console")
     else
@@ -5052,7 +5826,7 @@ local function boot()
     if Config.ShowAuthor then
         task.spawn(function()
             task.wait(1.2)
-            if Window and Config.ShowAuthor then
+            if getWindow() and Config.ShowAuthor then
                 notify("Skill Hub " .. VERSION, "made by " .. AUTHOR .. " · free, no key", 6, Theme.AccentSecondary, ICON.Star)
             end
         end)
@@ -5083,6 +5857,7 @@ skillHubInstance = {
     blackFlash = blackFlash,
     playCombo = playCombo,
     esp = { registry = EspRegistry },
+    perf = PerfUI,
     hitbox = HitboxOriginal,
     playEmote = playEmote,
     chatSay = chatSay,
@@ -5097,4 +5872,12 @@ local bootOk, bootError = pcall(boot)
 if not bootOk then
     print("[Skill Hub] boot error: " .. tostring(bootError))
     print("[Skill Hub] the hub is loaded; unload or re-run the script after reading the line above")
+end
+
+    return skillHubInstance
+end
+
+skillHubInstance = runTabs(NS)
+if skillHubInstance then
+    SharedEnv.SkillHubJujutsu = skillHubInstance
 end

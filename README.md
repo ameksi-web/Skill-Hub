@@ -6,10 +6,10 @@ Two fully separated products live in this repository:
 |------|------------|---------------|
 | `release/skillhub.release.lua` | **the build the world gets** — not Lua at all: a hex blob XOR-ed against a per-16-byte-block stream seeded from the current key. Without the key it unlocks to noise | Downloaded by `loader.lua` |
 | `loader.lua` | **the only entry point** — opens the in-game **key window** when no key was supplied (key sources: argument → `skillhub.key` → clipboard → window), unlocks, verifies the pinned checksum, refuses wrong keys and modified builds | **the link you hand out** |
-| `tools/` | `build_release.py` (seal + lock + checksum), `seal_secret.py` (per-machine endpoint sealing), `loader_test.py` (17 automated checks of the loader and its key window in a mocked Roblox) | Run before each release |
+| `tools/` | `build_release.py` (seal + lock + checksum), `seal_secret.py` (per-machine endpoint sealing), `loader_test.py` (17 automated checks of the loader and its key window in a mocked Roblox), `slayers_test.py` (29), `jjs_test.py` (42), `perf_test.py` (engine-call budget per virtual second) | Run before each release |
 | `SkillAnimator/init.lua` | **Skill Animator Studio** — Moon Animator 2 style keyframe/rig editor | Roblox **Studio plugin** (no pre-made animations) |
 | `Slayers 2/SkillHub.lua` | **Slayers 2 hub** — free edition, no key: farm, quests, combat, ESP, teleports, anti-cheat layer | `[Slayers 2]` Roblox place |
-| `Jujutsu Shenanigans/SkillHub.lua` | **Jujutsu Shenanigans hub** — free edition, no key: combat, Black Flash, combos, ESP, fun toys, teleports, anti-cheat layer | `[SKY ASSASSIN] Jujutsu Shenanigans` |
+| `Jujutsu Shenanigans/SkillHub.lua` | **Jujutsu Shenanigans hub** — free edition, no key: combat, Black Flash, combos, ESP, fun toys, teleports, anti-cheat layer, two-tier scanner + perf panel | `[SKY ASSASSIN] Jujutsu Shenanigans` |
 | `main.lua` | the readable **source of truth** — deliberately **NOT published** (`.gitignore`, kept private/local) | Only you |
 
 ---
@@ -33,7 +33,39 @@ Both are verified by a mocked-Roblox harness that boots the real file:
 ```
 /tmp/venv/bin/python tools/slayers_test.py     # → 29/29 checks
 /tmp/venv/bin/python tools/jjs_test.py         # → 42/42 checks
+/tmp/venv/bin/python tools/perf_test.py        # → PERF OK (budget guard)
 ```
+
+### Performance budget (Jujutsu Shenanigans, 2026-10-16)
+
+The rebuild replaced the per-frame style of the first version with a two-tier
+scanner (a full map walk every `ScanInterval` seconds, a cheap position refresh
+every `RefreshInterval`), a write cache that only touches a property when its
+value actually changes, pooled hit sparks, one-shot key/mouse releases instead
+of a coroutine per press, and memos for the things that were re-read every
+frame (character, root, humanoid, held tool, own aura, GUI buttons).
+
+Measured by `tools/perf_test.py` and an A/B over the same mock, 22 virtual
+seconds with every toggle on (`BEFORE` = the R23 build at `bb80236`):
+
+| engine calls (22 virtual seconds) | before | after |
+|---|---|---|
+| `GetDescendants` | 4,884 | **477** |
+| `IsA` | 9,067 | **630** |
+| `FindFirstChild` | 3,108 | **564** |
+| `FindFirstChildOfClass` | 3,650 | **494** |
+| those four, together | 20,973 | **2,250** (9.3× less) |
+
+Loop cost fell from 7.8 ms to 5.2 ms per virtual second in the mock (1.5×), and
+`FindFirstChildWhichIsA` from 12.0/s to 3.9/s. `Instance.new` is a one-time
+cost and did not change: the window builds ~5,000 instances when it opens, then
+settles at ~5/s while running. The Anti-Cheat tab now carries a
+**Performance** section — a live counter pill in the rail, the interval sliders
+that are the actual budget, and a **Measure now** button that samples one second
+of the hub's own counters and writes a report from them. Nothing in that panel
+is guessed: the client cannot count Roblox's internal calls, so it reports what
+it can see — walks, instances visited per walk, scan duration, writes, writes
+skipped, values reused.
 
 The Jujutsu Shenanigans build is written against the live game (v1.79 + Sky
 Assassin + the 2026-10-13 patch): M1 melee, skills 1-4, Q dash, F block, R

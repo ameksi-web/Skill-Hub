@@ -8,7 +8,40 @@ Two fully separated products live in this repository:
 | `loader.lua` | **the only entry point** — opens the in-game **key window** when no key was supplied (key sources: argument → `skillhub.key` → clipboard → window), unlocks, verifies the pinned checksum, refuses wrong keys and modified builds | **the link you hand out** |
 | `tools/` | `build_release.py` (seal + lock + checksum), `seal_secret.py` (per-machine endpoint sealing), `loader_test.py` (17 automated checks of the loader and its key window in a mocked Roblox) | Run before each release |
 | `SkillAnimator/init.lua` | **Skill Animator Studio** — Moon Animator 2 style keyframe/rig editor | Roblox **Studio plugin** (no pre-made animations) |
+| `Slayers 2/SkillHub.lua` | **Slayers 2 hub** — free edition, no key: farm, quests, combat, ESP, teleports, anti-cheat layer | `[Slayers 2]` Roblox place |
+| `Jujutsu Shenanigans/SkillHub.lua` | **Jujutsu Shenanigans hub** — free edition, no key: combat, Black Flash, combos, ESP, fun toys, teleports, anti-cheat layer | `[SKY ASSASSIN] Jujutsu Shenanigans` |
 | `main.lua` | the readable **source of truth** — deliberately **NOT published** (`.gitignore`, kept private/local) | Only you |
+
+---
+
+## 0. Free builds — Slayers 2 and Jujutsu Shenanigans
+
+Both are open, readable, **keyless** builds of the same Skill Hub interface (the
+Porcelain design system, nine-ish tabs, the drawn icon set). No loader, no lock,
+no key window — the raw URL is the whole distribution.
+
+```lua
+-- Slayers 2
+loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/Slayers%202/SkillHub.lua"))()
+
+-- Jujutsu Shenanigans
+loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/Jujutsu%20Shenanigans/SkillHub.lua"))()
+```
+
+Both are verified by a mocked-Roblox harness that boots the real file:
+
+```
+/tmp/venv/bin/python tools/slayers_test.py     # → 29/29 checks
+/tmp/venv/bin/python tools/jjs_test.py         # → 42/42 checks
+```
+
+The Jujutsu Shenanigans build is written against the live game (v1.79 + Sky
+Assassin + the 2026-10-13 patch): M1 melee, skills 1-4, Q dash, F block, R
+special, G awaken, Black Flash (2.5×), burst, domains, roulette queue. Its
+anti-cheat tab finds and disables client-side detector scripts, drops outgoing
+report / flag / ban remotes at the namecall level, blocks a client kick, and
+keeps the hub's own traffic in a plausible range. It does **not** and cannot
+make a script undetectable — the server decides what the server believes.
 
 ---
 

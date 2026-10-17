@@ -3085,6 +3085,7 @@ local function fallGuard()
         while State.alive do
             task.wait(0.25)
             State.beats.fall = os.clock()
+            protectLoop("fall guard", function()
             local humanoid, root = getHumanoid(), getRoot()
             if humanoid and root and Config.NoFallDamage and isAlive() then
                 if humanoid:GetState() == Enum.HumanoidStateType.Freefall then
@@ -3096,6 +3097,7 @@ local function fallGuard()
                     end
                 end
             end
+            end)
         end
     end)
 end
@@ -3794,7 +3796,7 @@ local function espLoop()
             if not State.alive then break end
             State.beats.esp = os.clock()
             if Config.EspPlayers or Config.EspChams or Config.EspTracers or Config.FovCircle then
-                safeCall("esp", function()
+                protectLoop("esp", function()
                     scanWorld(false)
                     espUpdate()
                     fovCircle()
@@ -4108,6 +4110,7 @@ local function staffWatchLoop()
         while State.alive do
             task.wait(2.5)
             State.beats.staff = os.clock()
+            protectLoop("staff watch", function()
             if Config.StaffWatch and #World.players > 0 then
                 for _, record in ipairs(World.players) do
                     local player = record.player
@@ -4128,6 +4131,7 @@ local function staffWatchLoop()
                     end
                 end
             end
+            end)
         end
     end)
 end
@@ -5121,7 +5125,7 @@ local function boot()
                 if character and character ~= lastCharacter then
                     lastCharacter = character
                     task.wait(1)
-                    equipWeapon(Config.LoadoutPreset)
+                    protectLoop("equip", function() equipWeapon(Config.LoadoutPreset) end)
                 end
             end
         end
@@ -5132,8 +5136,10 @@ local function boot()
         while State.alive do
             task.wait(10)
             if Config.PerfStats then
-                print(string.format("[Skill Hub] perf · scan %.2f ms · esp %d · remotes %d · shots %d/%d",
-                    State.perf.scanMs, Esp.count, #Remotes.list, State.shots, State.shotsBlocked))
+                protectLoop("perf print", function()
+                    print(string.format("[Skill Hub] perf · scan %.2f ms · esp %d · remotes %d · shots %d/%d",
+                        State.perf.scanMs, Esp.count, #Remotes.list, State.shots, State.shotsBlocked))
+                end)
             end
         end
     end)
@@ -5171,7 +5177,7 @@ local API = {
     setSpeed = setWalkSpeed, setJump = setJumpPower, noclip = setNoclip,
     silentPosition = silentAimPosition, namecall = namecallFilter,
     bright = applyFullbright, antiFlash = antiFlash, smoke = clearSmoke, strip = stripEffects,
-    gravity = setGravity,
+    gravity = setGravity, protect = protectLoop,
     say = sayChat, hop = serverHop, teleportTo = teleportToPlayer,
     playSound = playSound, killEffect = killEffect, patchWeapons = patchWeaponStats,
     flying = function() return Mov.flyBody ~= nil end,

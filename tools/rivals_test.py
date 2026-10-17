@@ -1952,6 +1952,25 @@ hub.panic()
 check("panic restores gravity", math.abs(_G.workspace.Gravity - gravityBefore) < 0.01,
     tostring(_G.workspace.Gravity))
 
+-- ── every worker is alive, and a throwing frame cannot kill one ───────────
+for _ = 1, 60 do pump(0.05) end          -- three virtual seconds
+local beats = hub.state.beats
+local missing = {}
+for _, name in ipairs({ "combat", "esp", "movement", "utility", "fun", "staff", "recoil", "fall", "kick", "aim" }) do
+    local at = beats[name]
+    if not at or (_G.__CLOCK.now - at) > 5 then missing[#missing + 1] = name end
+end
+check("every worker is still beating", #missing == 0,
+    #missing == 0 and "10/10" or ("stalled: " .. table.concat(missing, ", ")))
+
+local loopErrorsBefore = hub.state.perf.loopErrors or 0
+hub.protect("harness fault", function() error("injected failure") end)
+local survived = (hub.state.perf.loopErrors or 0) == loopErrorsBefore + 1
+local errorLog = _G.__SkillHubErrorLog
+if errorLog then for index = #errorLog, 1, -1 do errorLog[index] = nil end end
+check("a throwing frame is contained and logged", survived, tostring(loopErrorsBefore) .. " → "
+    .. tostring(hub.state.perf.loopErrors or 0))
+
 -- ── the safe-mode panel, for when the window cannot be built at all ────────
 local fallbackScreen = hub.fallback("harness check")
 check("safe-mode panel builds", fallbackScreen ~= nil and #fallbackScreen:GetDescendants() >= 10,

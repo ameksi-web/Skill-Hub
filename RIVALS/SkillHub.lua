@@ -51,10 +51,12 @@
         do in a game that bans for it.
 ]]
 
-local VERSION   = "v1.1"
-local BUILD     = "RIVALS · free · Update 23 build 17.10 · aim fix"
-local AUTHOR    = "ameksi-web"
-local GAME_NAME = "RIVALS"
+local META = {
+    version = "v1.2",
+    build   = "RIVALS · free · Update 23 build 17.10 · match aim",
+    author  = "ameksi-web",
+    game    = "RIVALS",
+}
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 0 · SERVICES AND CHEAP HELPERS  (never let a missing service break the load)
@@ -140,10 +142,11 @@ local Config = {
     AimEnabled          = false,
     AimKey              = "E",
     AimToggle           = true,        -- false = hold the key
-    AimMethod           = "Camera",    -- Camera | Mouse | Silent
+    AimMethod           = "Hybrid",    -- Hybrid (mouse first) | Camera | Mouse | Silent
     AimPart             = "Head",      -- Head | Torso | Nearest | Random
     AimFov              = 140,
     AimSmooth           = 0.55,        -- 0 = snap, 1 = very slow
+    AimMouseSensitivity = 0.35,        -- degrees of view per pixel of mouse travel
     AimRange            = 600,
     AimPrediction       = true,
     AimPredictionFactor = 0.12,
@@ -236,7 +239,7 @@ local Config = {
     AcNeutralize        = true,
     AcBlockReports      = true,
     AcKickGuard         = true,
-    AcCamouflage        = true,
+    AcCamouflage        = false,       -- hooks __index for every instance read; costs frames
     AcSpeedLimiter      = true,
     AcSafeMode          = true,
     AcSpeedCeiling      = 60,
@@ -315,9 +318,7 @@ local Theme = {
     Danger          = Color3.fromRGB(223, 118, 116),
 }
 
-local UIFont     = Enum.Font.GothamMedium
-local UIFontBold = Enum.Font.GothamBold
-local UIFontMono = Enum.Font.Code
+local FONT = { UI = Enum.Font.GothamMedium, Bold = Enum.Font.GothamBold, Mono = Enum.Font.Code }
 
 local RADIUS = { window = 20, panel = 14, card = 12, control = 10, chip = 8, pill = 999 }
 
@@ -387,7 +388,7 @@ end
 local function Text(props, parent)
     props.BackgroundTransparency = 1
     props.BorderSizePixel = 0
-    props.Font = props.Font or UIFont
+    props.Font = props.Font or FONT.UI
     return new("TextLabel", props, parent)
 end
 
@@ -658,14 +659,13 @@ end
 -- 4 · TOASTS  (top-right stack, draining progress hairline)
 -- ═══════════════════════════════════════════════════════════════════════════
 local Window, Body, Rail, PageHolder, Toast, ActiveTab
+local TOAST = { order = 0, holder = nil }
 local Tabs = {}
 local ToggleRegistry = {}
-local ToastOrder = 0
 
-local toastHolder
 
 local function notify(title, message, duration, accent, iconKind)
-    if not toastHolder then return end
+    if not TOAST.holder then return end
     duration = duration or 4
     accent = accent or Theme.Accent
 
@@ -675,7 +675,7 @@ local function notify(title, message, duration, accent, iconKind)
         Position = UDim2.new(1, -312, 0, 16),
         Size = UDim2.new(0, 296, 0, message and 62 or 44),
         ZIndex = 60,
-    }, toastHolder)
+    }, TOAST.holder)
     corner(card, RADIUS.card)
     hairline(card, Theme.Stroke, 1, 0.3)
 
@@ -691,7 +691,7 @@ local function notify(title, message, duration, accent, iconKind)
     iconTile(card, iconKind or "crest", accent, 24, UDim2.new(0, 22, 0, 11), 61)
 
     Text({
-        Font = UIFontBold, Position = UDim2.new(0, 54, 0, 11), Size = UDim2.new(1, -66, 0, 14),
+        Font = FONT.Bold, Position = UDim2.new(0, 54, 0, 11), Size = UDim2.new(1, -66, 0, 14),
         Text = tostring(title), TextColor3 = Theme.TextPrimary, TextSize = 12,
         TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 61,
     }, card)
@@ -709,8 +709,8 @@ local function notify(title, message, duration, accent, iconKind)
     }, card)
     corner(drain, 1)
 
-    ToastOrder = ToastOrder + 1
-    card.LayoutOrder = ToastOrder
+    TOAST.order = TOAST.order + 1
+    card.LayoutOrder = TOAST.order
 
     task.spawn(function()
         safeCall("toast drain", function()
@@ -774,7 +774,7 @@ local function buildWindow()
         Padding = UDim.new(0, 8), FillDirection = Enum.FillDirection.Vertical,
         HorizontalAlignment = Enum.HorizontalAlignment.Right, SortOrder = Enum.SortOrder.LayoutOrder,
     }, Toast)
-    toastHolder = Toast
+    TOAST.holder = Toast
 
     local shadow = new("Frame", {
         BackgroundColor3 = Color3.fromRGB(4, 5, 7), BackgroundTransparency = 0.45,
@@ -809,13 +809,13 @@ local function buildWindow()
 
     iconTile(topbar, ICON.Crest, Theme.Accent, 30, UDim2.new(0, 16, 0, 9), 5)
     Text({
-        Font = UIFontBold, Position = UDim2.new(0, 54, 0, 9), Size = UDim2.new(0, 260, 0, 16),
+        Font = FONT.Bold, Position = UDim2.new(0, 54, 0, 9), Size = UDim2.new(0, 260, 0, 16),
         Text = "Skill Hub", TextColor3 = Theme.TextPrimary, TextSize = 14,
         TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 5,
     }, topbar)
     Text({
         Position = UDim2.new(0, 54, 0, 25), Size = UDim2.new(0, 300, 0, 14),
-        Text = GAME_NAME .. " · " .. VERSION .. " · free edition", TextColor3 = Theme.TextMuted,
+        Text = META.game .. " · " .. META.version .. " · free edition", TextColor3 = Theme.TextMuted,
         TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 5,
     }, topbar)
 
@@ -836,7 +836,7 @@ local function buildWindow()
         corner(chip, RADIUS.chip)
         hairline(chip, Theme.StrokeSoft, 1, 0.4)
         local text = Text({
-            Font = UIFontMono, Position = UDim2.new(0, 0, 0, 0), Size = UDim2.new(1, 0, 1, 0),
+            Font = FONT.Mono, Position = UDim2.new(0, 0, 0, 0), Size = UDim2.new(1, 0, 1, 0),
             Text = label .. " —", TextColor3 = Theme.TextSecondary, TextSize = 10, ZIndex = 6,
         }, chip)
         return chip, text
@@ -853,7 +853,7 @@ local function buildWindow()
         }, topbar)
         corner(button, RADIUS.chip)
         Text({
-            Font = UIFontBold, Size = UDim2.new(1, 0, 1, 0), Text = text,
+            Font = FONT.Bold, Size = UDim2.new(1, 0, 1, 0), Text = text,
             TextColor3 = Theme.TextSecondary, TextSize = 13, ZIndex = 7,
         }, button)
         button.MouseEnter:Connect(function() button.BackgroundColor3 = Theme.BgHover end)
@@ -925,7 +925,7 @@ local function buildWindow()
     hairline(searchShell, Theme.StrokeSoft, 1, 0.4)
     iconTile(searchShell, ICON.Search, Theme.TextMuted, 16, UDim2.new(0, 7, 0.5, -8), 6)
     local searchBox = new("TextBox", {
-        BackgroundTransparency = 1, Font = UIFont, PlaceholderText = "search options…",
+        BackgroundTransparency = 1, Font = FONT.UI, PlaceholderText = "search options…",
         PlaceholderColor3 = Theme.TextFaint, Position = UDim2.new(0, 30, 0, 0), Size = UDim2.new(1, -38, 1, 0),
         Text = "", TextColor3 = Theme.TextPrimary, TextSize = 11,
         TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, ZIndex = 6,
@@ -942,7 +942,7 @@ local function buildWindow()
 
     Text({
         Position = UDim2.new(0, 14, 1, -26), Size = UDim2.new(1, -28, 0, 12),
-        Text = VERSION .. " · free · no key", TextColor3 = Theme.TextFaint, TextSize = 9,
+        Text = META.version .. " · free · no key", TextColor3 = Theme.TextFaint, TextSize = 9,
         TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 5,
     }, Rail)
     Text({
@@ -964,7 +964,7 @@ local function buildWindow()
         Size = UDim2.new(0, 28, 0, 28), ZIndex = 6,
     }, header)
     local headerTitle = Text({
-        Font = UIFontBold, Position = UDim2.new(0, 54, 0, 10), Size = UDim2.new(1, -70, 0, 16),
+        Font = FONT.Bold, Position = UDim2.new(0, 54, 0, 10), Size = UDim2.new(1, -70, 0, 16),
         Text = "Auto Farm", TextColor3 = Theme.TextPrimary, TextSize = 13,
         TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
     }, header)
@@ -994,7 +994,7 @@ local function buildWindow()
         TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 7,
     }, strip)
     local stripRight = Text({
-        Font = UIFontMono, Position = UDim2.new(1, -320, 0, 7), Size = UDim2.new(0, 306, 0, 12),
+        Font = FONT.Mono, Position = UDim2.new(1, -320, 0, 7), Size = UDim2.new(0, 306, 0, 12),
         Text = "", TextColor3 = Theme.TextMuted, TextSize = 9,
         TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 7,
     }, strip)
@@ -1025,16 +1025,15 @@ local function buildWindow()
 end
 
 -- ── tabs and their components ───────────────────────────────────────────────
-local TabOrder = 0
 
 local function makeTab(title, desc, iconKind, accent)
-    TabOrder = TabOrder + 1
+    Window.tabOrder = (Window.tabOrder or 0) + 1
     accent = accent or Theme.Accent
     local railList = Rail:FindFirstChildOfClass("ScrollingFrame")
 
     local button = new("TextButton", {
         AutoButtonColor = false, BackgroundColor3 = Theme.BgElevated, BackgroundTransparency = 1,
-        BorderSizePixel = 0, LayoutOrder = TabOrder, Size = UDim2.new(1, 0, 0, 34),
+        BorderSizePixel = 0, LayoutOrder = Window.tabOrder, Size = UDim2.new(1, 0, 0, 34),
         Text = "", ZIndex = 6,
     }, railList)
     corner(button, RADIUS.control)
@@ -1048,7 +1047,7 @@ local function makeTab(title, desc, iconKind, accent)
 
     local tile = iconTile(button, iconKind, accent, 22, UDim2.new(0, 9, 0.5, -11), 7)
     local label = Text({
-        Font = UIFontBold, Position = UDim2.new(0, 40, 0, 0), Size = UDim2.new(1, -46, 1, 0),
+        Font = FONT.Bold, Position = UDim2.new(0, 40, 0, 0), Size = UDim2.new(1, -46, 1, 0),
         Text = title, TextColor3 = Theme.TextSecondary, TextSize = 11,
         TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 7,
     }, button)
@@ -1113,7 +1112,7 @@ local function makeTab(title, desc, iconKind, accent)
             BackgroundTransparency = 1, LayoutOrder = nextOrder(), Size = UDim2.new(1, 0, 0, 22),
         }, page)
         Text({
-            Font = UIFontBold, Position = UDim2.new(0, 2, 1, -14), Size = UDim2.new(1, -4, 0, 14),
+            Font = FONT.Bold, Position = UDim2.new(0, 2, 1, -14), Size = UDim2.new(1, -4, 0, 14),
             Text = string.upper(text), TextColor3 = Theme.TextFaint, TextSize = 9,
             TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
         }, holder)
@@ -1135,7 +1134,7 @@ local function makeTab(title, desc, iconKind, accent)
         iconTile(card, iconKind or tab.icon, tab.color, 30, UDim2.new(0, 14, 0.5, -15), 6)
 
         Text({
-            Font = UIFontBold, Position = UDim2.new(0, 56, 0, 11), Size = UDim2.new(1, -170, 0, 16),
+            Font = FONT.Bold, Position = UDim2.new(0, 56, 0, 11), Size = UDim2.new(1, -170, 0, 16),
             Text = title, TextColor3 = Theme.TextPrimary, TextSize = 12,
             TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 6,
         }, card)
@@ -1145,7 +1144,7 @@ local function makeTab(title, desc, iconKind, accent)
             TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 6,
         }, card)
         local stateLabel = Text({
-            Font = UIFontBold, Position = UDim2.new(1, -112, 0.5, -7), Size = UDim2.new(0, 30, 0, 14),
+            Font = FONT.Bold, Position = UDim2.new(1, -112, 0.5, -7), Size = UDim2.new(0, 30, 0, 14),
             Text = "OFF", TextColor3 = Theme.TextFaint, TextSize = 9,
             TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 6,
         }, card)
@@ -1205,7 +1204,7 @@ local function makeTab(title, desc, iconKind, accent)
         hairline(card, Theme.StrokeSoft, 1, 0.45)
         iconTile(card, iconKind or tab.icon, tab.color, 30, UDim2.new(0, 14, 0, 12), 6)
         Text({
-            Font = UIFontBold, Position = UDim2.new(0, 56, 0, 12), Size = UDim2.new(1, -170, 0, 16),
+            Font = FONT.Bold, Position = UDim2.new(0, 56, 0, 12), Size = UDim2.new(1, -170, 0, 16),
             Text = title, TextColor3 = Theme.TextPrimary, TextSize = 12,
             TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
         }, card)
@@ -1222,7 +1221,7 @@ local function makeTab(title, desc, iconKind, accent)
         corner(pill, RADIUS.pill)
         hairline(pill, Theme.StrokeSoft, 1, 0.4)
         local pillText = Text({
-            Font = UIFontMono, Size = UDim2.new(1, 0, 1, 0),
+            Font = FONT.Mono, Size = UDim2.new(1, 0, 1, 0),
             Text = tostring(round(value, 2)) .. (suffix or ""), TextColor3 = Theme.TextSecondary,
             TextSize = 10, ZIndex = 7,
         }, pill)
@@ -1295,7 +1294,7 @@ local function makeTab(title, desc, iconKind, accent)
         hairline(card, Theme.StrokeSoft, 1, 0.45)
         iconTile(card, iconKind or tab.icon, danger and Theme.Danger or tab.color, 30, UDim2.new(0, 14, 0.5, -15), 6)
         Text({
-            Font = UIFontBold, Position = UDim2.new(0, 56, 0, 11), Size = UDim2.new(1, -120, 0, 16),
+            Font = FONT.Bold, Position = UDim2.new(0, 56, 0, 11), Size = UDim2.new(1, -120, 0, 16),
             Text = title, TextColor3 = Theme.TextPrimary, TextSize = 12,
             TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
         }, card)
@@ -1307,7 +1306,7 @@ local function makeTab(title, desc, iconKind, accent)
 
         local action = new("TextButton", {
             AutoButtonColor = false, BackgroundColor3 = danger and Color3.fromRGB(58, 33, 34) or tint(tab.color, 0.86),
-            BorderSizePixel = 0, Font = UIFontBold, Position = UDim2.new(1, -96, 0.5, -13),
+            BorderSizePixel = 0, Font = FONT.Bold, Position = UDim2.new(1, -96, 0.5, -13),
             Size = UDim2.new(0, 82, 0, 26), Text = "RUN", TextColor3 = danger and Theme.Danger or tab.color,
             TextSize = 10, ZIndex = 7,
         }, card)
@@ -1332,7 +1331,7 @@ local function makeTab(title, desc, iconKind, accent)
         hairline(card, Theme.StrokeSoft, 1, 0.45)
         iconTile(card, iconKind or tab.icon, tab.color, 30, UDim2.new(0, 14, 0.5, -15), 6)
         Text({
-            Font = UIFontBold, Position = UDim2.new(0, 56, 0, 11), Size = UDim2.new(1, -170, 0, 16),
+            Font = FONT.Bold, Position = UDim2.new(0, 56, 0, 11), Size = UDim2.new(1, -170, 0, 16),
             Text = title, TextColor3 = Theme.TextPrimary, TextSize = 12,
             TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
         }, card)
@@ -1351,7 +1350,7 @@ local function makeTab(title, desc, iconKind, accent)
         corner(selector, RADIUS.chip)
         hairline(selector, Theme.StrokeSoft, 1, 0.4)
         local selectorText = Text({
-            Font = UIFontBold, Position = UDim2.new(0, 10, 0, 0), Size = UDim2.new(1, -26, 1, 0),
+            Font = FONT.Bold, Position = UDim2.new(0, 10, 0, 0), Size = UDim2.new(1, -26, 1, 0),
             Text = tostring(current), TextColor3 = Theme.TextSecondary, TextSize = 10,
             TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 8,
         }, selector)
@@ -1377,7 +1376,7 @@ local function makeTab(title, desc, iconKind, accent)
             end
             for index, option in ipairs(newOptions) do
                 local row = new("TextButton", {
-                    AutoButtonColor = false, BackgroundTransparency = 1, Font = UIFont,
+                    AutoButtonColor = false, BackgroundTransparency = 1, Font = FONT.UI,
                     LayoutOrder = index, Size = UDim2.new(1, 0, 0, 22), Text = "   " .. tostring(option),
                     TextColor3 = Theme.TextSecondary, TextSize = 10,
                     TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 41,
@@ -1425,7 +1424,7 @@ local function makeTab(title, desc, iconKind, accent)
         hairline(card, Theme.StrokeSoft, 1, 0.45)
         iconTile(card, iconKind or tab.icon, tab.color, 30, UDim2.new(0, 14, 0.5, -15), 6)
         Text({
-            Font = UIFontBold, Position = UDim2.new(0, 56, 0, 11), Size = UDim2.new(1, -170, 0, 16),
+            Font = FONT.Bold, Position = UDim2.new(0, 56, 0, 11), Size = UDim2.new(1, -170, 0, 16),
             Text = title, TextColor3 = Theme.TextPrimary, TextSize = 12,
             TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
         }, card)
@@ -1442,7 +1441,7 @@ local function makeTab(title, desc, iconKind, accent)
         corner(shell, RADIUS.chip)
         local stroke = hairline(shell, Theme.StrokeSoft, 1, 0.4)
         local box = new("TextBox", {
-            BackgroundTransparency = 1, ClearTextOnFocus = false, Font = UIFont,
+            BackgroundTransparency = 1, ClearTextOnFocus = false, Font = FONT.UI,
             PlaceholderText = placeholder or "…", PlaceholderColor3 = Theme.TextFaint,
             Position = UDim2.new(0, 10, 0, 0), Size = UDim2.new(1, -18, 1, 0),
             Text = "", TextColor3 = Theme.TextPrimary, TextSize = 10,
@@ -1466,7 +1465,7 @@ local function makeTab(title, desc, iconKind, accent)
         hairline(card, Theme.StrokeSoft, 1, 0.45)
         iconTile(card, iconKind or tab.icon, tab.color, 30, UDim2.new(0, 14, 0.5, -15), 6)
         Text({
-            Font = UIFontBold, Position = UDim2.new(0, 56, 0, 11), Size = UDim2.new(1, -170, 0, 16),
+            Font = FONT.Bold, Position = UDim2.new(0, 56, 0, 11), Size = UDim2.new(1, -170, 0, 16),
             Text = title, TextColor3 = Theme.TextPrimary, TextSize = 12,
             TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
         }, card)
@@ -1477,7 +1476,7 @@ local function makeTab(title, desc, iconKind, accent)
         }, card)
         local button = new("TextButton", {
             AutoButtonColor = false, BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
-            Font = UIFontMono, Position = UDim2.new(1, -110, 0.5, -12), Size = UDim2.new(0, 96, 0, 24),
+            Font = FONT.Mono, Position = UDim2.new(1, -110, 0.5, -12), Size = UDim2.new(0, 96, 0, 24),
             Text = default or "None", TextColor3 = Theme.TextSecondary, TextSize = 10, ZIndex = 7,
         }, card)
         corner(button, RADIUS.chip)
@@ -1528,7 +1527,7 @@ local function makeTab(title, desc, iconKind, accent)
         hairline(card, Theme.StrokeSoft, 1, 0.45)
         iconTile(card, ICON.Guard, tab.color, 26, UDim2.new(0, 14, 0, 12), 6)
         Text({
-            Font = UIFontBold, Position = UDim2.new(0, 50, 0, 13), Size = UDim2.new(1, -140, 0, 16),
+            Font = FONT.Bold, Position = UDim2.new(0, 50, 0, 13), Size = UDim2.new(1, -140, 0, 16),
             Text = title, TextColor3 = Theme.TextPrimary, TextSize = 12,
             TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
         }, card)
@@ -1538,7 +1537,7 @@ local function makeTab(title, desc, iconKind, accent)
         }, card)
         corner(dot, RADIUS.pill)
         Text({
-            Font = UIFontMono, Position = UDim2.new(1, -64, 0, 13), Size = UDim2.new(0, 56, 0, 16),
+            Font = FONT.Mono, Position = UDim2.new(1, -64, 0, 13), Size = UDim2.new(0, 56, 0, 16),
             Text = "LIVE", TextColor3 = Theme.Success, TextSize = 9,
             TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 6,
         }, card)
@@ -1549,7 +1548,7 @@ local function makeTab(title, desc, iconKind, accent)
         }, card)
         corner(box, RADIUS.control)
         local body = Text({
-            Font = UIFontMono, Position = UDim2.new(0, 10, 0, 8), Size = UDim2.new(1, -20, 1, -16),
+            Font = FONT.Mono, Position = UDim2.new(0, 10, 0, 8), Size = UDim2.new(1, -20, 1, -16),
             Text = "", TextColor3 = Theme.TextSecondary, TextSize = 10,
             TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
             TextWrapped = true, ZIndex = 7,
@@ -1593,12 +1592,12 @@ local function makeTab(title, desc, iconKind, accent)
         hairline(card, Theme.StrokeSoft, 1, 0.45)
         iconTile(card, ICON.Player, tab.color, 26, UDim2.new(0, 14, 0, 12), 6)
         Text({
-            Font = UIFontBold, Position = UDim2.new(0, 50, 0, 13), Size = UDim2.new(1, -140, 0, 16),
+            Font = FONT.Bold, Position = UDim2.new(0, 50, 0, 13), Size = UDim2.new(1, -140, 0, 16),
             Text = title, TextColor3 = Theme.TextPrimary, TextSize = 12,
             TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
         }, card)
         local count = Text({
-            Font = UIFontMono, Position = UDim2.new(1, -140, 0, 13), Size = UDim2.new(0, 126, 0, 16),
+            Font = FONT.Mono, Position = UDim2.new(1, -140, 0, 13), Size = UDim2.new(0, 126, 0, 16),
             Text = "", TextColor3 = Theme.TextFaint, TextSize = 9,
             TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 6,
         }, card)
@@ -1638,12 +1637,12 @@ local function makeTab(title, desc, iconKind, accent)
                             }, row)
                             corner(row.Lamp, RADIUS.pill)
                             row.Name = Text({
-                                Font = UIFontBold, Position = UDim2.new(0, 40, 0, 3), Size = UDim2.new(1, -180, 0, 13),
+                                Font = FONT.Bold, Position = UDim2.new(0, 40, 0, 3), Size = UDim2.new(1, -180, 0, 13),
                                 Text = "", TextColor3 = Theme.TextPrimary, TextSize = 10,
                                 TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 8,
                             }, row)
                             row.Info = Text({
-                                Font = UIFontMono, Position = UDim2.new(0, 40, 0, 15), Size = UDim2.new(1, -180, 0, 12),
+                                Font = FONT.Mono, Position = UDim2.new(0, 40, 0, 15), Size = UDim2.new(1, -180, 0, 12),
                                 Text = "", TextColor3 = Theme.TextFaint, TextSize = 9,
                                 TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 8,
                             }, row)
@@ -1651,7 +1650,7 @@ local function makeTab(title, desc, iconKind, accent)
                             for buttonIndex, action in ipairs(actions or {}) do
                                 local actionButton = new("TextButton", {
                                     AutoButtonColor = false, BackgroundColor3 = tint(tab.color, 0.88),
-                                    BorderSizePixel = 0, Font = UIFontBold,
+                                    BorderSizePixel = 0, Font = FONT.Bold,
                                     Position = UDim2.new(1, -132 + (buttonIndex - 1) * 30, 0.5, -9),
                                     Size = UDim2.new(0, 26, 0, 18), Text = action.label,
                                     TextColor3 = tab.color, TextSize = 9, ZIndex = 9,
@@ -1700,12 +1699,12 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 local NS = {}
 do
-    NS.AUTHOR = AUTHOR
-    NS.BUILD = BUILD
+    NS.AUTHOR = META.author
+    NS.BUILD = META.build
     NS.Camera = Camera
     NS.getCamera = refreshCamera
     NS.Config = Config
-    NS.GAME_NAME = GAME_NAME
+    NS.GAME_NAME = META.game
     NS.ICON = ICON
     NS.Lighting = Lighting
     NS.LocalPlayer = LocalPlayer
@@ -1715,7 +1714,7 @@ do
     NS.Tabs = Tabs
     NS.Theme = Theme
     NS.UserInput = UserInput
-    NS.VERSION = VERSION
+    NS.VERSION = META.version
     NS.Workspace = Workspace
     NS.buildWindow = buildWindow
     NS.corner = corner
@@ -1735,11 +1734,10 @@ end
 --     real ones.
 -- ═══════════════════════════════════════════════════════════════════════════
 
-local HttpService  = getService("HttpService")
-local Teleport     = getService("TeleportService")
-local Stats        = getService("Stats")
-local SoundService = getService("SoundService")
-local StarterGui   = getService("StarterGui")
+local SVC = {
+    Http = getService("HttpService"), Teleport = getService("TeleportService"),
+    Sound = getService("SoundService"),
+}
 
 local KNOWLEDGE = {
     -- 54 weapons on the roster as of Update 22/23; nickname matching is what
@@ -1897,6 +1895,8 @@ end
 
 local State = {
     alive = true,
+    beats = {},
+    lastTargets = {},
     started = os.clock(),
     lastAim = -100,
     lastTrigger = -100,
@@ -2027,18 +2027,16 @@ local World = {
     localTeam = nil, rank = nil,
 }
 
-local RaycastParams = RaycastParams
-local rayParams = nil
-local rayParamsCharacter = nil
+local RAY = { api = RaycastParams, params = nil, character = nil }
 
 local function visibilityParams()
     local character = getChar()
     local camera = refreshCamera()
     -- a respawn gives a brand-new model: a cached filter would keep ignoring the
     -- *old* body and let every ray hit the player's own arms instead
-    if rayParams and rayParamsCharacter == character then return rayParams end
+    if RAY.params and RAY.character == character then return RAY.params end
     local ok, params = pcall(function()
-        local created = RaycastParams.new()
+        local created = RAY.api.new()
         created.FilterType = Enum.RaycastFilterType.Exclude
         local ignore = {}
         if character then ignore[#ignore + 1] = character end
@@ -2047,9 +2045,9 @@ local function visibilityParams()
         return created
     end)
     if ok then
-        rayParams, rayParamsCharacter = params, character
+        RAY.params, RAY.character = params, character
     end
-    return rayParams
+    return RAY.params
 end
 
 local function isVisible(character, position)
@@ -2059,7 +2057,7 @@ local function isVisible(character, position)
     local origin = camera and camera.CFrame.Position or root.Position
     local delta = position - origin
     -- an executor without RaycastParams still gets a straight-line answer
-    if not RaycastParams then return true end
+    if not RAY.api then return true end
     local params = visibilityParams()
     if not params then return true end
     local ok, result = pcall(function() return Workspace:Raycast(origin, delta, params) end)
@@ -2256,7 +2254,9 @@ end
 local AC, findRemote, fireRemote, playSound, killEffect, hitSpark, patchWeaponStats
 
 local Aim = {
+    shotTimes = {},
     active = false, aimPosition = nil, recoil = nil,
+    renderBound = false, lastMethod = nil,
 }
 
 -- Every long-lived worker runs its frame through here. A single unexpected
@@ -2388,6 +2388,41 @@ local function pickTarget()
 end
 
 -- one frame of aim, with the rate limit applied in degrees per step
+-- Roblox headings: yaw 0 looks down -Z, turning right decreases yaw, pitch is
+-- positive upwards. math.atan2 is gone in Lua 5.4+, so the two-argument atan is
+-- the portable form; Luau keeps atan2, which is picked first.
+local atan2 = math.atan2 or function(y, x) return math.atan(y, x) end
+
+local function headingOf(direction)
+    local yaw = math.deg(atan2(-direction.X, -direction.Z))
+    local pitch = math.deg(math.asin(math.clamp(direction.Y, -1, 1)))
+    return yaw, pitch
+end
+
+local function wrapDegrees(angle)
+    angle = angle % 360
+    if angle > 180 then angle = angle - 360 end
+    return angle
+end
+
+-- The mouse only rotates the camera while the game has the cursor locked. In a
+-- menu the same call just drags the visible pointer across the screen, so the
+-- camera path is used there instead.
+local function mouseLocked()
+    if not UserInput then return true end
+    local behavior = UserInput.MouseBehavior
+    if behavior == nil then return true end
+    return behavior ~= Enum.MouseBehavior.Default
+end
+
+-- One frame of aim.
+--
+-- Camera writes survive only until the game's own camera script recomputes the
+-- view — in RIVALS that happens every frame, which is why a CFrame-only aim bot
+-- looks dead in a match while working fine in the lobby. Moving the *mouse*
+-- feeds the game's controller instead, so its internal yaw/pitch follow. Hybrid
+-- does that, measures how far the view actually turned, and falls back to a
+-- direct CFrame write the moment the cursor is not controlling the camera.
 local function stepAim(record, delta)
     local camera = refreshCamera()
     if not camera or not camera.Parent or not record then return false end
@@ -2395,44 +2430,98 @@ local function stepAim(record, delta)
     if not goalPosition then return false end
     Aim.aimPosition = goalPosition
 
-    if Config.AimMethod == "Mouse" then
-        if type(mousemoverel) ~= "function" then return false end
-        local point = screenOf(goalPosition)
-        if not point then return false end
-        local size = viewport()
-        local dx = (point.X - size.X / 2)
-        local dy = (point.Y - size.Y / 2)
-        local factor = math.clamp(1 - (tonumber(Config.AimSmooth) or 0.35), 0.05, 1)
-        local maxStep = (tonumber(Config.AimStepLimit) or 9) * 6 * factor
-        local magnitude = math.sqrt(dx * dx + dy * dy)
-        if magnitude > maxStep and magnitude > 0 then
-            dx, dy = dx / magnitude * maxStep, dy / magnitude * maxStep
-        end
+    local current = camera.CFrame
+    local origin = current.Position
+    local to = goalPosition - origin
+    if to.Magnitude < 0.05 then return false end
+    local want = to.Unit
+    local look = current.LookVector
+    local total = math.deg(math.acos(math.clamp(look:Dot(want), -1, 1)))
+
+    local smooth = math.clamp(tonumber(Config.AimSmooth) or 0.35, 0, 0.95)
+    local alpha = 1 - smooth
+    if Config.AimHumanize then alpha = alpha * (0.88 + math.random() * 0.24) end
+    local limit = math.max(1, tonumber(Config.AimStepLimit) or 9)
+    local step = total > 0.01 and math.min(total * alpha, limit) or 0
+
+    if Aim.mouseWorks == false and os.clock() >= (Aim.mouseRetry or 0) then
+        Aim.mouseWorks = nil   -- retry: the player may have entered a match
+        Aim.perPixel = nil
+    end
+    local method = Config.AimMethod or "Hybrid"
+    local wantMouse = (method == "Hybrid" or method == "Mouse")
+    local mouseReady = type(mousemoverel) == "function"
+        and Aim.mouseWorks ~= false and mouseLocked()
+
+    if wantMouse and mouseReady and step > 0 then
+        local yaw, pitch = headingOf(look)
+        local wantYaw, wantPitch = headingOf(want)
+        local dYaw = wrapDegrees(wantYaw - yaw)
+        local dPitch = wantPitch - pitch
+        local scale = step / math.max(total, 0.0001)
+        -- one pixel of mouse travel turns the view by `perPixel` degrees; the
+        -- number is measured back from the camera after every move, so an
+        -- unusual in-game sensitivity is learned instead of guessed
+        local perPixel = math.clamp(tonumber(Aim.perPixel) or tonumber(Config.AimMouseSensitivity)
+            or 0.35, 0.03, 3)
+        local px = -dYaw * scale / perPixel
+        local py = -dPitch * scale / perPixel
         if Config.AimHumanize then
-            dx = dx + math.random(-1, 1) * 0.6
-            dy = dy + math.random(-1, 1) * 0.6
+            px = px + (math.random() - 0.5) * 1.4
+            py = py + (math.random() - 0.5) * 1.4
         end
-        pcall(mousemoverel, dx, dy)
-        return true
+        if math.abs(px) >= 0.01 or math.abs(py) >= 0.01 then
+            local ok = pcall(mousemoverel, px, py)
+            if ok then
+                Aim.lastMethod = "mouse"
+                Aim.lastPixels = { x = px, y = py }
+                Aim.pending = { from = look, degrees = step, at = os.clock() }
+                State.perf.writes = (State.perf.writes or 0) + 1
+                return true
+            end
+        end
+        if method == "Mouse" then return false end
     end
 
-    local current = camera.CFrame
-    local goal = CFrame.lookAt(current.Position, goalPosition)
-    local alpha = math.clamp(1 - (tonumber(Config.AimSmooth) or 0.35), 0.02, 1)
-    if Config.AimHumanize then alpha = alpha * (0.85 + math.random() * 0.3) end
-    local look = current.LookVector
-    local want = goal.LookVector
-    local dot = math.clamp(look:Dot(want), -1, 1)
-    local angle = math.deg(math.acos(dot))
-    if Config.AcAimRateLimit and angle > 0 then
-        local limit = math.max(1, tonumber(Config.AimStepLimit) or 9)
-        alpha = math.min(alpha, limit / angle)
-    end
-    alpha = math.clamp(alpha, 0, 1)
-    local blended = current:Lerp(goal, alpha)
+    if step <= 0 then return false end
+    local goal = CFrame.lookAt(origin, goalPosition)
+    local writeAlpha = math.clamp(step / math.max(total, 0.0001), 0, 1)
+    local blended = current:Lerp(goal, writeAlpha)
     pcall(function() camera.CFrame = blended end)
-    State.perf.writes = State.perf.writes + 1
+    -- a little downward pull cancels the upward kick a real weapon applies
+    Aim.lastMethod = "camera"
+    State.perf.writes = (State.perf.writes or 0) + 1
     return true
+end
+
+-- Measured on the frame after a mouse move: how much of the requested rotation
+-- the camera actually performed. Three misses in a row mean the cursor is not
+-- driving the view (menu, Scriptable camera, third person without right click),
+-- and the CFrame path takes over until the mouse is worth trying again.
+local function noteMouseResult()
+    local pending = Aim.pending
+    if not pending then return end
+    Aim.pending = nil
+    if os.clock() - pending.at > 0.5 or pending.degrees < 0.6 then return end
+    local camera = refreshCamera()
+    if not camera then return end
+    local moved = math.deg(math.acos(math.clamp(pending.from:Dot(camera.CFrame.LookVector), -1, 1)))
+    local ratio = moved / pending.degrees
+    if ratio < 0.25 then
+        Aim.mouseFails = (Aim.mouseFails or 0) + 1
+        if Aim.mouseFails >= 3 then
+            Aim.mouseWorks = false
+            Aim.mouseRetry = os.clock() + 1.5
+            Aim.mouseFails = 0
+            State.perf.aimFallbacks = (State.perf.aimFallbacks or 0) + 1
+        end
+        return
+    end
+    Aim.mouseFails = 0
+    Aim.mouseWorks = true
+    if ratio > 0.5 and ratio < 4 then
+        Aim.perPixel = math.clamp((Aim.perPixel or tonumber(Config.AimMouseSensitivity) or 0.35) * ratio, 0.03, 3)
+    end
 end
 
 local function silentAimPosition()
@@ -2518,18 +2607,17 @@ local function scope(on)
 end
 
 -- ── fire cadence ──────────────────────────────────────────────────────────
-local ShotTimes = {}
 
 local function canShoot()
     local now = os.clock()
     local keep = {}
-    for _, time in ipairs(ShotTimes) do
+    for _, time in ipairs(Aim.shotTimes) do
         if now - time < 1 then keep[#keep + 1] = time end
     end
-    ShotTimes = keep
+    Aim.shotTimes = keep
     local cap = math.min(tonumber(Config.FireRateCap) or 14, tonumber(Config.AcShotRateLimit) or 10)
     if Config.AcSafeMode then cap = math.min(cap, 8) end
-    if #ShotTimes >= cap then
+    if #Aim.shotTimes >= cap then
         State.shotsBlocked = State.shotsBlocked + 1
         State.perf.skips = State.perf.skips + 1
         return false
@@ -2538,7 +2626,7 @@ local function canShoot()
 end
 
 local function markShot()
-    ShotTimes[#ShotTimes + 1] = os.clock()
+    Aim.shotTimes[#Aim.shotTimes + 1] = os.clock()
     State.shots = State.shots + 1
     State.lastShot = os.clock()
 end
@@ -2565,10 +2653,45 @@ local function fire()
 end
 
 -- ── recoil and spread ─────────────────────────────────────────────────────
+-- ── frame-rate aim ─────────────────────────────────────────────────────────
+-- The combat loop picks the target at 50 Hz; the rotation itself belongs on the
+-- render step, after the game's own camera update, or the game overwrites it.
+local function startRenderAim()
+    if Aim.renderBound then return true end
+    if not RunService then return false end
+    local function frame(delta)
+        Aim.renderSteps = (Aim.renderSteps or 0) + 1
+        noteMouseResult()
+        if not State.alive or not Config.AimEnabled then return end
+        local record = State.target
+        if not record or not record.root or not record.root.Parent then return end
+        if not isAlive() then return end
+        State.beats.aim = os.clock()
+        stepAim(record, math.clamp(delta or 0.016, 0.001, 0.05))
+    end
+    local ok, bound = pcall(function()
+        if type(RunService.BindToRenderStep) == "function" then
+            RunService:BindToRenderStep("SkillHubAim", 201, frame)
+            return true
+        end
+        if RunService.RenderStepped and type(RunService.RenderStepped.Connect) == "function" then
+            RunService.RenderStepped:Connect(frame)
+            return true
+        end
+        return false
+    end)
+    Aim.renderBound = ok == true and bound == true
+    if Aim.renderBound and Config.LogLevel >= 1 then
+        print("[Skill Hub] aim · render-step driver bound")
+    end
+    return Aim.renderBound
+end
+
 local function recoilLoop()
     task.spawn(function()
         while State.alive do
             task.wait(0.02)
+            State.beats.recoil = os.clock()
             protectLoop("recoil", function()
                 local camera = refreshCamera()
                 if Config.NoRecoil and Aim.recoil and camera then
@@ -2630,14 +2753,13 @@ function patchWeaponStats()
 end
 
 -- ── kill tracking ─────────────────────────────────────────────────────────
-local LastTargets = {}
 
 local function trackKills()
     local alive = {}
     for _, record in ipairs(World.players) do alive[record.userId] = record.name end
-    for userId, name in pairs(LastTargets) do
+    for userId, name in pairs(State.lastTargets) do
         if not alive[userId] then
-            LastTargets[userId] = nil
+            State.lastTargets[userId] = nil
             if os.clock() - (State.lastShot or 0) < 4 then
                 State.kills = State.kills + 1
                 State.streak = (State.streak or 0) + 1
@@ -2647,7 +2769,7 @@ local function trackKills()
         end
     end
     for _, record in ipairs(World.players) do
-        LastTargets[record.userId] = record.name
+        State.lastTargets[record.userId] = record.name
     end
 end
 
@@ -2656,6 +2778,7 @@ local function combatLoop()
         while State.alive do
             task.wait(0.02)
             if not State.alive then break end
+            State.beats.combat = os.clock()
             -- RIVALS hands out a new character when a match loads and after every
             -- death. Rebind here, once, so the aim, the movement write cache and
             -- the visibility filter all point at the body that is alive now.
@@ -2695,7 +2818,13 @@ local function combatLoop()
                         -- human pause: a few frames are skipped on purpose so the
                         -- camera does not track like a machine for minutes on end
                         local pause = Config.HumanPause and math.random() < 0.02
-                        if keep and not pause then stepAim(record, 0.02) end
+                        -- with the render-step driver bound the camera is moved
+                        -- at frame rate; stepping here too would double the speed
+                        if keep and not pause and not Aim.renderBound then
+                            noteMouseResult()
+                            State.beats.aim = os.clock()
+                            stepAim(record, 0.02)
+                        end
                         if Config.AutoScope then scope(true) end
                     elseif Config.AutoScope then
                         scope(false)
@@ -2851,6 +2980,7 @@ local function movementLoop()
     task.spawn(function()
         while State.alive do
             task.wait(0.05)
+            State.beats.movement = os.clock()
             protectLoop("movement", function()
             local character = getChar()
             if character and isAlive() then
@@ -2924,6 +3054,7 @@ local function fallGuard()
     task.spawn(function()
         while State.alive do
             task.wait(0.25)
+            State.beats.fall = os.clock()
             local humanoid, root = getHumanoid(), getRoot()
             if humanoid and root and Config.NoFallDamage and isAlive() then
                 if humanoid:GetState() == Enum.HumanoidStateType.Freefall then
@@ -3101,13 +3232,17 @@ local function namecallFilter(self, ...)
         method = getnamecallmethod()
     end
     -- only outgoing calls are filtered: blocking IsA / GetAttribute on a remote
-    -- named "…Report…" would break the game's own code and this hub's index
+    -- named "…Report…" would break the game's own code and this hub's index.
+    -- ClassName and Name are plain property reads, which cannot re-enter the
+    -- __namecall hook, and the hot path (every other method call in the game)
+    -- leaves after two string comparisons without allocating anything.
     local outgoing = method == "FireServer" or method == "InvokeServer"
-    local okClass, class = pcall(function() return self.ClassName end)
-    if outgoing and okClass
+    local class
+    if outgoing then class = self.ClassName end
+    if outgoing
         and (class == "RemoteEvent" or class == "UnreliableRemoteEvent" or class == "RemoteFunction") then
-        local okName, name = pcall(function() return self.Name end)
-        if okName and name then
+        local name = self.Name
+        if name then
             local low = lower(name)
             if Config.AcBlockReports then
                 local matched = containsAny(low, LOWER.Reports)
@@ -3278,6 +3413,7 @@ local function kickWatcher()
     task.spawn(function()
         while State.alive do
             task.wait(1)
+            State.beats.kick = os.clock()
             protectLoop("kick watcher", function()
                 if Config.AcKickGuard and LocalPlayer then
                     local ok, parent = pcall(function() return LocalPlayer.Parent end)
@@ -3626,6 +3762,7 @@ local function espLoop()
             local interval = math.clamp(tonumber(Config.EspInterval) or 0.25, 0.05, 1)
             task.wait(interval)
             if not State.alive then break end
+            State.beats.esp = os.clock()
             if Config.EspPlayers or Config.EspChams or Config.EspTracers or Config.FovCircle then
                 safeCall("esp", function()
                     scanWorld(false)
@@ -3771,7 +3908,7 @@ local function serverHop()
         notify("Server hop", "server list refused", 3, Theme.Warning)
         return false
     end
-    local decoded = safeCall("hop json", function() return HttpService:JSONDecode(body) end)
+    local decoded = safeCall("hop json", function() return SVC.Http:JSONDecode(body) end)
     local data = decoded and decoded.data
     if type(data) ~= "table" then return false end
     local chosen = nil
@@ -3786,7 +3923,7 @@ local function serverHop()
         return false
     end
     notify("Server hop", "travelling to " .. tostring(chosen.playing) .. "/" .. tostring(chosen.maxPlayers), 3, Theme.Success)
-    pcall(function() Teleport:TeleportToPlaceInstance(placeId, chosen.id, LocalPlayer) end)
+    pcall(function() SVC.Teleport:TeleportToPlaceInstance(placeId, chosen.id, LocalPlayer) end)
     return true
 end
 
@@ -3880,6 +4017,7 @@ local function utilityLoop()
     task.spawn(function()
         while State.alive do
             task.wait(0.4)
+            State.beats.utility = os.clock()
             protectLoop("utility", function()
             if Config.AutoQueue then safeCall("queue", function() joinQueue() return true end) end
             if Config.AutoGG then
@@ -3929,6 +4067,7 @@ local function staffWatchLoop()
     task.spawn(function()
         while State.alive do
             task.wait(2.5)
+            State.beats.staff = os.clock()
             if Config.StaffWatch and #World.players > 0 then
                 for _, record in ipairs(World.players) do
                     local player = record.player
@@ -3963,7 +4102,7 @@ function playSound(id, volume)
     sound.SoundId = "rbxassetid://" .. tostring(numeric)
     sound.Volume = math.clamp(tonumber(volume) or 0.5, 0, 3)
     local ok = pcall(function()
-        SoundService:PlayLocalSound(sound)
+        SVC.Sound:PlayLocalSound(sound)
         return true
     end)
     task.delay(3, function() pcall(function() sound:Destroy() end) end)
@@ -4058,6 +4197,7 @@ local function funLoop()
         local rainbowChar, rainbowParts = nil, nil
         while State.alive do
             task.wait(0.1)
+            State.beats.fun = os.clock()
             protectLoop("fun", function()
             hue = (hue + 0.006) % 1
             if Config.RainbowChar then
@@ -4189,7 +4329,7 @@ local function equipWeapon(name)
     return false
 end
 
-local selfTest, panic
+local selfTest, panic, doctor
 
 local function buildTabs()
     local Sliders = {}
@@ -4236,11 +4376,12 @@ local function buildTabs()
     toggleSwitch(combat, "Aim assist", "rotate the camera onto the chosen part", "AimEnabled", "swords")
     keybind(combat, "Aim key", "toggle, or hold when Aim toggle is off", "AimKey", "bolt")
     toggleSwitch(combat, "Aim toggle", "on = press once · off = hold the key", "AimToggle", "loop")
-    dropdown(combat, "Method", "camera is smoothest; silent rewrites the remote", { "Camera", "Mouse", "Silent" }, "AimMethod", "eye")
+    dropdown(combat, "Method", "hybrid moves the game's own mouse; silent rewrites the remote", { "Hybrid", "Camera", "Mouse", "Silent" }, "AimMethod", "eye")
     dropdown(combat, "Hit part", "where the camera looks", { "Head", "Torso", "Nearest", "Random" }, "AimPart", "spark")
     dropdown(combat, "Priority", "how the next target is chosen", { "Closest to crosshair", "Closest", "Lowest health" }, "AimPriority", "search")
     slider(combat, "Field of view", "degrees around the crosshair", 20, 360, "AimFov", "°", "eye")
     slider(combat, "Smoothing", "0 = snap · 1 = slow and deliberate", 0, 1, "AimSmooth", "", "wind")
+    slider(combat, "Mouse sensitivity", "degrees the view turns per pixel · the hub learns it anyway", 0.05, 2, "AimMouseSensitivity", "°/px", "bolt")
     slider(combat, "Max range", "studs", 50, 1500, "AimRange", "s", "compass")
     slider(combat, "Step limit", "hard ceiling on degrees turned per frame", 1, 45, "AimStepLimit", "°", "shield")
     toggleSwitch(combat, "Prediction", "lead the target by its velocity", "AimPrediction", "bolt")
@@ -4522,7 +4663,7 @@ local function buildTabs()
     misc:AddStatusPanel("Runtime", function()
         local target = State.target
         return {
-            { label = "build", value = BUILD },
+            { label = "build", value = META.build },
             { label = "players", value = tostring(#World.players) .. " · " .. tostring(World.visibleCount) .. " visible" },
             { label = "target", value = target and (target.name .. " · " .. math.floor(target.distance or 0) .. "s") or "none" },
             { label = "shots", value = tostring(State.shots) .. " · " .. tostring(State.shotsBlocked) .. " held by cadence" },
@@ -4530,6 +4671,10 @@ local function buildTabs()
             { label = "remotes", value = tostring(#Remotes.list) },
         }
     end, 128)
+    button(misc, "Diagnostics", "prints window, loops, camera and remotes to the console (F9)", function()
+        doctor()
+        notify("Diagnostics", "written to the console · F9", 5, Theme.Sky, "search")
+    end, "search")
     button(misc, "Run self-test", "thirty-nine checks against the live environment", function()
         local passed, total = selfTest()
         notify("Self-test", string.format("%d/%d passed — details in the console", passed, total), 6,
@@ -4705,26 +4850,170 @@ local function destroy()
     return true
 end
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- SAFE MODE — if the full interface cannot be built, this panel still gives
+-- access to the switches that matter. A window that fails to build must never
+-- mean "nothing works".
+-- ═══════════════════════════════════════════════════════════════════════════
+local function buildFallback(reason)
+    local parent = guiRoot()
+    if not parent then return nil end
+    local screen = new("ScreenGui", {
+        Name = "SkillHubRIVALS", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 999999,
+    }, parent)
+    local panel = new("Frame", {
+        Name = "SafeMode", Active = true,
+        AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.5, 0),
+        Size = UDim2.new(0, 330, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundColor3 = Theme.BgApp, BorderSizePixel = 0,
+    }, screen)
+    corner(panel, RADIUS.window)
+    new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, panel)
+    new("UIPadding", {
+        PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 14),
+        PaddingTop = UDim.new(0, 12), PaddingBottom = UDim.new(0, 12),
+    }, panel)
+    Text({ Font = UIFontBold, Text = "Skill Hub · safe mode", TextSize = 14,
+        TextColor3 = Theme.TextPrimary, TextXAlignment = Enum.TextXAlignment.Left,
+        Size = UDim2.new(1, 0, 0, 22), LayoutOrder = 1 }, panel)
+    Text({ Text = tostring(reason or ""), TextSize = 10, TextColor3 = Theme.TextMuted,
+        TextWrapped = true, Size = UDim2.new(1, 0, 0, 32), LayoutOrder = 2 }, panel)
+
+    local rows = {
+        { "Aim assist", "AimEnabled" }, { "Triggerbot", "TriggerBot" },
+        { "ESP players", "EspPlayers" }, { "Chams", "EspChams" },
+        { "Speed", "WalkSpeedEnabled" }, { "Fly", "FlyEnabled" },
+        { "No recoil", "NoRecoil" }, { "Report filter", "AcBlockReports" },
+    }
+    local order = 10
+    for _, row in ipairs(rows) do
+        local label, key = row[1], row[2]
+        local item = new("TextButton", {
+            Text = "", AutoButtonColor = false, BackgroundColor3 = Theme.BgElevated,
+            BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 26), LayoutOrder = order,
+            TextSize = 11, Font = UIFontBold, TextColor3 = Theme.TextPrimary,
+            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
+        }, panel)
+        order = order + 1
+        corner(item, RADIUS.control)
+        local pad = new("UIPadding", { PaddingLeft = UDim.new(0, 10) }, item)
+        pad.Name = "Pad"
+        local function paint()
+            item.Text = label .. (Config[key] and "    ON" or "    off")
+            item.TextColor3 = Config[key] and Theme.Success or Theme.TextSecondary
+        end
+        item.MouseButton1Click:Connect(function()
+            Config[key] = not Config[key]
+            paint()
+        end)
+        paint()
+    end
+    local close = new("TextButton", {
+        Text = "Close", AutoButtonColor = false, BackgroundColor3 = Theme.BgInset,
+        BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 24), LayoutOrder = order,
+        TextSize = 11, Font = UIFontBold, TextColor3 = Theme.TextSecondary,
+    }, panel)
+    corner(close, RADIUS.control)
+    close.MouseButton1Click:Connect(function()
+        State.alive = false
+        pcall(function() screen:Destroy() end)
+    end)
+    print("[Skill Hub] safe-mode panel built: " .. tostring(reason))
+    return screen
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- DOCTOR — one call that says what is alive. Used by the Diagnostics button and
+-- by anyone who has to report "it does not work": paste its output.
+-- ═══════════════════════════════════════════════════════════════════════════
+function doctor()
+    local function since(value)
+        if not value or value <= 0 then return "never" end
+        return string.format("%.1fs", os.clock() - value)
+    end
+    local lines = {}
+    local function row(label, value)
+        lines[#lines + 1] = string.format("%-11s %s", label, tostring(value))
+        print(string.format("[doctor] %-11s %s", label, tostring(value)))
+    end
+    local okBuild, win = pcall(getWindow)
+    row("build", META.version .. " / " .. META.build)
+    row("executor", string.format("hookmetamethod=%s getgc=%s mousemove=%s mouse1=%s gethui=%s drawing=%s",
+        tostring(type(hookmetamethod) == "function"), tostring(type(getgc) == "function"),
+        tostring(type(mousemoverel) == "function"), tostring(type(mouse1click) == "function"),
+        tostring(type(gethui) == "function"), tostring(type(Drawing) == "table")))
+    row("window", (okBuild and win and win.Root and win.Root.Parent) and "built" or "missing")
+    row("tabs", tostring(#Tabs) .. " tabs / " .. tostring(#Switches) .. " switches")
+    row("render aim", tostring(Aim.renderBound == true) .. " · " .. tostring(Aim.renderSteps or 0) .. " frames")
+    row("aim method", tostring(Aim.lastMethod or "—") .. " · " .. string.format("%.2f°/px", tonumber(Aim.perPixel) or tonumber(Config.AimMouseSensitivity) or 0.35)
+        .. " · fallbacks " .. tostring(State.perf.aimFallbacks or 0))
+    row("beats", string.format("combat %s esp %s move %s util %s",
+        since(State.beats.combat), since(State.beats.esp),
+        since(State.beats.movement), since(State.beats.utility)))
+    row("camera", (function()
+        local camera = refreshCamera()
+        return (camera and camera.Parent) and "ok" or "missing"
+    end)())
+    row("players", tostring(#World.players) .. " / target " .. tostring(State.target and State.target.name or "none"))
+    row("remotes", tostring(#Remotes.list) .. " indexed")
+    row("shots", tostring(State.shots) .. " fired / " .. tostring(State.shotsBlocked) .. " blocked")
+    row("method", tostring(Config.AimMethod) .. " / last " .. tostring(Aim.lastMethod or "none"))
+    row("ac", string.format("detectors=%s namecall=%s camo=%s limits=%s",
+        tostring(AC.armed and AC.armed.detectors), tostring(AC.armed and AC.armed.namecall),
+        tostring(AC.armed and AC.armed.camouflage), tostring(AC.armed and AC.armed.limits)))
+    local errors = SharedEnv and SharedEnv.__SkillHubErrorLog or {}
+    row("errors", tostring(#errors))
+    if #errors > 0 then
+        for index = 1, math.min(#errors, 5) do row("error " .. index, errors[index]) end
+    end
+    return table.concat(lines, "\n")
+end
+
 local function boot()
     local started = os.clock()
-    local ok, err = pcall(function()
-        buildWindow()
-        buildTabs()
-    end)
-    if not ok then
-        print("[Skill Hub] interface failed: " .. tostring(err))
-    end
 
-    armAntiCheat()
-    combatLoop()
-    movementLoop()
-    fallGuard()
-    espLoop()
-    utilityLoop()
-    funLoop()
-    staffWatchLoop()
-    kickWatcher()
-    recoilLoop()
+    -- exactly one instance: a second execution unloads the first, or two aim
+    -- loops end up writing to the same camera and the user sees "it broke"
+    local previous = SharedEnv and SharedEnv.SkillHubRivals
+    if previous and type(previous.destroy) == "function" then
+        pcall(previous.destroy)
+        print("[Skill Hub] previous instance unloaded")
+    end
+    if SharedEnv then SharedEnv.SkillHubRivals = nil end
+    if _G ~= SharedEnv then _G.SkillHubRivals = nil end
+
+    -- every subsystem in its own pcall: a failure in the anti-cheat layer must
+    -- not take the aim down with it, and a failure in the interface must not
+    -- stop the keybinds. Each line of the boot report is one step.
+    local steps = {
+        { "window", function() buildWindow() end },
+        { "tabs", function() buildTabs() end },
+        { "anti-cheat", function() armAntiCheat() end },
+        { "aim driver", function() startRenderAim() end },
+        { "combat", combatLoop },
+        { "movement", movementLoop },
+        { "fall guard", fallGuard },
+        { "esp", espLoop },
+        { "utility", utilityLoop },
+        { "fun", funLoop },
+        { "staff watch", staffWatchLoop },
+        { "kick watch", kickWatcher },
+        { "recoil", recoilLoop },
+    }
+    local report = {}
+    for _, step in ipairs(steps) do
+        local ok, err = pcall(step[2])
+        if ok then
+            report[#report + 1] = step[1]
+        else
+            report[#report + 1] = step[1] .. "!"
+            print("[Skill Hub] step failed · " .. step[1] .. " · " .. tostring(err))
+        end
+    end
+    if not getWindow() or #Tabs == 0 then
+        local okFallback = pcall(buildFallback, "the full interface did not build — this panel still works")
+        if okFallback then report[#report + 1] = "safe mode" end
+    end
 
     -- keys: show/hide, panic, aim. `gameProcessed` is the difference between a
     -- key press and someone typing the same letter into chat.
@@ -4796,8 +5085,9 @@ local function boot()
         end
     end)
 
-    local title = string.format("[Skill Hub] %s · %s · free build", GAME_NAME, VERSION)
+    local title = string.format("[Skill Hub] %s · %s · free build", META.game, META.version)
     print(title)
+    print("[Skill Hub] boot · " .. table.concat(report, " · "))
     local names = {}
     for _, tab in ipairs(Tabs) do names[#names + 1] = tab.title end
     print("[Skill Hub] tabs · " .. table.concat(names, " · "))
@@ -4808,10 +5098,16 @@ local function boot()
     return true
 end
 
-boot()
+
+-- the chunk must survive a boot failure: if something at the top of boot dies,
+-- the export and the doctor still exist and a second run can clean up
+do
+    local ok, err = pcall(boot)
+    if not ok then print("[Skill Hub] boot failed · " .. tostring(err)) end
+end
 
 local API = {
-    version = VERSION, build = BUILD, game = GAME_NAME,
+    version = META.version, build = META.build, game = META.game,
     config = Config, state = State, knowledge = KNOWLEDGE,
     world = function() return scanWorld(true) end,
     players = function() return World.players end,
@@ -4831,7 +5127,20 @@ local API = {
     ac = AC, acArm = armAntiCheat, acFilter = namecallFilter,
     findRemote = findRemote, fireRemote = fireRemote,
     travel = travelTo, queue = joinQueue, leave = leaveMatch, say = sayChat,
-    selfTest = selfTest, panic = panic, destroy = destroy,
+    selfTest = selfTest, panic = panic, destroy = destroy, doctor = doctor,
+    renderBound = function() return Aim.renderBound == true end,
+    renderSteps = function() return Aim.renderSteps or 0 end,
+    lastAimPixels = function()
+        local p = Aim.lastPixels
+        return p and p.x or 0, p and p.y or 0
+    end,
+    aimPoint = function() return Aim.aimPosition end,
+    fallbacks = function() return State.perf.aimFallbacks or 0 end,
+    character = function() return getChar() end,
+    fallback = buildFallback,
+    alive = function() return isAlive() end,
+    window = function() return getWindow() end,
+    method = function() return Aim.lastMethod end,
     tabs = Tabs,
     switchCount = function() return #Switches end,
     scan = function(force) return scanWorld(force == true) end,

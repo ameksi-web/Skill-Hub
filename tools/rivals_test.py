@@ -61,25 +61,31 @@ end
 -- Run the task body under xpcall *inside* the coroutine: a traceback taken from
 -- outside a dead coroutine only shows the resume site, which is useless when a
 -- background loop dies. Wrapping the body keeps yield working (Lua 5.2+).
+_G.__TASK_SOURCE = {}
 local function wrap_task(fn, ...)
     local args = table.pack(...)
-    return coroutine.create(function()
+    local thread
+    thread = coroutine.create(function()
         local function handler(err)
-            return tostring(err) .. "\n" .. debug.traceback("", 2)
+            return tostring(err) .. "\n" .. debug.traceback("", 1)
         end
         return xpcall(function() return fn(table.unpack(args, 1, args.n)) end, handler)
     end)
+    local info = debug.getinfo(fn, "Sl")
+    _G.__TASK_SOURCE[thread] = info and string.format("%s:%s", tostring(info.short_src), tostring(info.linedefined)) or "?"
+    return thread
 end
 
 local function step_thread(thread, label)
     local ok, first, second = coroutine.resume(thread)
+    local where = _G.__TASK_SOURCE and _G.__TASK_SOURCE[thread] or "?"
     if not ok then
-        table.insert(_G.__HARNESS_ERRORS, label .. ": " .. tostring(first))
+        table.insert(_G.__HARNESS_ERRORS, label .. " (" .. where .. "): " .. tostring(first))
         return nil
     end
     if first == false then
         -- xpcall caught it; the traceback came back as the second return value
-        table.insert(_G.__HARNESS_ERRORS, label .. ": " .. tostring(second))
+        table.insert(_G.__HARNESS_ERRORS, label .. " (" .. where .. "): " .. tostring(second))
         return nil
     end
     return first
@@ -1019,7 +1025,7 @@ end
 
 check("hub exported to getgenv", hub ~= nil)
 if hub then
-check("version", hub.version == "v1.1", tostring(hub.version))
+check("version", hub.version == "v1.2", tostring(hub.version))
 check("game name", hub.game == "RIVALS", tostring(hub.game))
 check("build tag", string.find(tostring(hub.build), "Update 23", 1, true) ~= nil, tostring(hub.build))
 
@@ -1057,6 +1063,7 @@ if target then
     local position = hub.aimPosition(target)
     check("aim position is a vector", position ~= nil and position.Magnitude ~= nil,
         position and string.format("%.1f", position.Magnitude) or "nil")
+    hub.config.AimMethod = "Camera"
     local before = _G.workspace.CurrentCamera.CFrame.LookVector
     hub.stepAim(target, 0.016)
     local after = _G.workspace.CurrentCamera.CFrame.LookVector
@@ -1064,6 +1071,7 @@ if target then
     check("camera turns toward the target", turned > 0.5, string.format("%.2f deg", turned))
     check("step limit respected", turned <= hub.config.AimStepLimit + 0.5,
         string.format("%.2f <= %s", turned, tostring(hub.config.AimStepLimit)))
+    hub.config.AimMethod = "Hybrid"
 end
 
 -- put the camera back on its starting heading: the step test above turned it
@@ -1191,6 +1199,8 @@ ammo.Value = 30
 
 -- ── movement ─────────────────────────────────────────────────────────────────
 hub.config.WalkSpeedEnabled, hub.config.WalkSpeed = true, 200
+hub.config.AcCamouflage = true
+hub.acArm()
 hub.config.AcSafeMode, hub.config.AcSpeedCeiling = true, 60
 for index = 1, 8 do pump(0.05) end
 local rawSpeed = rawget(props, "WalkSpeed")
@@ -1485,9 +1495,137 @@ local log = _G.__SkillHubErrorLog
 check("no entries in the error log", type(log) ~= "table" or #log == 0,
     type(log) == "table" and tostring(#log) or "none")
 
--- ── unload ──────────────────────────────────────────────────────────────────
+-- ── the window must survive what Roblox does to GUIs ───────────────────────
+local win = hub.window()
+check("window has ResetOnSpawn off",
+    win ~= nil and win.Screen ~= nil and win.Screen.ResetOnSpawn == false,
+    win and win.Screen and tostring(win.Screen.ResetOnSpawn) or "no window")
+check("window lists nine tabs", win ~= nil and win.Root ~= nil
+    and #win.Root:GetDescendants() > 300, win and win.Root and #win.Root:GetDescendants() or "no window")
+
+-- ── hybrid aim: the mouse delta follows the angle, not the screen distance ──
+local camera = _G.workspace.CurrentCamera
+hub.scan(true)
+hub.config.AimEnabled = true
+hub.config.AimMethod = "Hybrid"
+hub.config.AimTeamCheck = true
+hub.config.AimHumanize = false
+hub.config.AimSmooth = 0
+hub.config.AimStepLimit = 90
+hub.config.AimMouseSensitivity = 0.5
+camera.CFrame = CFrame.lookAt(Vector3.new(0, 10, 0), Vector3.new(0, 10, -100))
+local aimTarget = hub.pickTarget()
+hub.state.target = aimTarget
+if aimTarget then
+    local before = camera.CFrame.LookVector
+    hub.stepAim(aimTarget, 0.016)
+    local px, py = hub.lastAimPixels()
+    local point = hub.aimPoint()
+    local want = (point - camera.CFrame.Position).Unit
+    local angle = math.deg(math.acos(math.clamp(before:Dot(want), -1, 1)))
+    local sent = math.sqrt(px * px + py * py)
+    check("hybrid sends mouse pixels for the angle",
+        math.abs(sent - angle / 0.5) <= math.max(1.5, angle * 0.2),
+        string.format("%.1f px for %.1f°", sent, angle))
+    check("hybrid reports the mouse method", hub.method() == "mouse", tostring(hub.method()))
+else
+    check("hybrid sends mouse pixels for the angle", false, "no target")
+    check("hybrid reports the mouse method", false, "no target")
+end
+
+-- the harness mouse does not move the camera, which is exactly what an
+-- unlocked cursor looks like: three misses must switch to camera writes
+for _ = 1, 6 do pump(0.02) end
+check("mouse that does not turn the view falls back", hub.fallbacks() >= 1,
+    tostring(hub.fallbacks()) .. " fallbacks")
+check("fallback reports the camera method", hub.method() == "camera", tostring(hub.method()))
+
+-- ── the camera the game hands over after a match load ─────────────────────
+local oldCamera = camera
+local newCamera = _G.Instance.new("Camera")
+newCamera.ViewportSize = _G.Vector2.new(1280, 720)
+newCamera.Parent = _G.workspace
+newCamera.CFrame = CFrame.lookAt(Vector3.new(0, 10, 0), Vector3.new(0, 10, -100))
+_G.workspace.CurrentCamera = newCamera
+hub.config.AimMethod = "Camera"
+hub.config.AimSmooth = 0.5
+pump(0.02)
+local oldLook = oldCamera.CFrame.LookVector
+local newLook = newCamera.CFrame.LookVector
+if aimTarget then hub.stepAim(aimTarget, 0.016) end
+check("aim writes to the camera the game is rendering",
+    newCamera.CFrame.LookVector:Dot(newLook) < 0.9999 and oldCamera.CFrame.LookVector:Dot(oldLook) > 0.9999,
+    string.format("new %.4f · old %.4f", newCamera.CFrame.LookVector:Dot(newLook), oldCamera.CFrame.LookVector:Dot(oldLook)))
+_G.workspace.CurrentCamera = oldCamera
+
+-- ── a match hands the player a new character ──────────────────────────────
+local beforeChar = hub.character()
+local newChar = _G.__SPAWN_CHARACTER(_G.__LOCAL_PLAYER, "MatchCharacter", Vector3.new(0, 3, 0))
+for _ = 1, 6 do pump(0.05) end
+check("character rebinds when a match loads", hub.character() == newChar and beforeChar ~= newChar,
+    tostring(hub.character() and hub.character().Name))
+check("the new body is alive", hub.alive() == true)
+hub.scan(true)
+local respawnTarget = hub.pickTarget()
+check("aim finds a target after the swap", respawnTarget ~= nil,
+    respawnTarget and respawnTarget.name or "none")
+
+-- ── the render-step driver is real ─────────────────────────────────────────
+hub.state.target = respawnTarget
+camera.CFrame = CFrame.lookAt(Vector3.new(0, 10, 0), Vector3.new(0, 10, -100))
+local beforeRender = camera.CFrame.LookVector
+for _ = 1, 6 do pump(0.02) end
+local renderTurn = math.deg(math.acos(math.clamp(beforeRender:Dot(camera.CFrame.LookVector), -1, 1)))
+check("render-step driver is bound", hub.renderBound() == true, tostring(hub.renderBound()))
+check("aim turns the camera on the render step", renderTurn > 1,
+    string.format("%.1f deg over 6 frames", renderTurn))
+
+-- ── the doctor answers ────────────────────────────────────────────────────
+local report = hub.doctor()
+check("doctor prints a report", type(report) == "string" and string.find(report, "window", 1, true) ~= nil
+    and string.find(report, "tabs", 1, true) ~= nil and string.find(report, "aim method", 1, true) ~= nil,
+    type(report))
+
+-- ── one whole match start in a single pass: the game swaps the camera, the ──
+-- local body and every enemy body before the first frame of the round
+_G.workspace.CurrentCamera = newCamera
+local roster = _G.__HARNESS_PLAYERS
+local freshEnemy = _G.__SPAWN_CHARACTER(roster[2], "ArenaEnemy", Vector3.new(-14, 3, -36))
+freshEnemy:SetAttribute("Team", "Red")
+local freshLocal = _G.__SPAWN_CHARACTER(_G.__LOCAL_PLAYER, "ArenaLocal", Vector3.new(0, 3, 0))
+freshLocal:SetAttribute("Team", "Blue")
+newCamera.CFrame = CFrame.lookAt(Vector3.new(0, 10, 0), Vector3.new(0, 10, -100))
+hub.config.AimTeamCheck = true
+hub.config.AimMethod = "Camera"
+hub.config.AimEnabled = true
+for _ = 1, 8 do pump(0.05) end
+hub.scan(true)
+local matchTarget = hub.pickTarget()
+check("match start finds the respawned enemy", matchTarget ~= nil and matchTarget.name == "EnemyOne",
+    matchTarget and matchTarget.name or "none")
+if matchTarget then
+    -- look 30-odd degrees to the left of the crosshair: the enemy is still in
+    -- the cone, but the step has room to turn
+    newCamera.CFrame = CFrame.lookAt(Vector3.new(0, 10, 0), Vector3.new(-40, 10, -60))
+    hub.state.target = matchTarget
+    local before = newCamera.CFrame.LookVector
+    hub.stepAim(matchTarget, 0.016)
+    local turned = math.deg(math.acos(math.clamp(before:Dot(newCamera.CFrame.LookVector), -1, 1)))
+    check("match start turns the new camera", turned > 0.5, string.format("%.1f°", turned))
+else
+    check("match start turns the new camera", false, "no target")
+end
+_G.workspace.CurrentCamera = oldCamera
+
+-- ── the safe-mode panel, for when the window cannot be built at all ────────
+local fallbackScreen = hub.fallback("harness check")
+check("safe-mode panel builds", fallbackScreen ~= nil and #fallbackScreen:GetDescendants() >= 10,
+    fallbackScreen and #fallbackScreen:GetDescendants() .. " instances" or "nil")
+if fallbackScreen then pcall(function() fallbackScreen:Destroy() end) end
+
+-- ── unload ─────────────────────────────────────────────────────────────────
 local destroyed = hub.destroy()
-for index = 1, 4 do pump(0.05) end
+for _ = 1, 4 do pump(0.05) end
 local guiGone = true
 for _, child in ipairs(_G.gethui():GetChildren()) do
     if child.Name == "SkillHubRIVALS" then guiGone = false end
@@ -1506,7 +1644,7 @@ def main() -> int:
     runtime = LuaRuntime(unpack_returned_tuples=True)
     runtime.execute(PRELUDE)
 
-    loader = runtime.eval("function(src) return task_spawn(function() return load(src, 'SkillHub.lua')() end) end")
+    loader = runtime.eval("function(src) return task_spawn(function() local chunk, err = load(src, 'SkillHub.lua') if not chunk then error(err, 0) end local ok, result = xpcall(chunk, function(message) return debug.traceback(message, 1) end) if not ok then error(result, 0) end return result end) end")
     loader(source)
     boot_errors = [str(x) for x in runtime.eval("_G.__HARNESS_ERRORS").values()]
     if boot_errors:

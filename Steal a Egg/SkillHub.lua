@@ -257,9 +257,9 @@ local Config = {
     FpsBoost            = false,
 
     -- ── performance ───────────────────────────────────────────────────────
-    ScanInterval        = 1.5,
+    ScanInterval        = 2.5,
     RefreshInterval     = 0.3,
-    ScanBudget          = 1400,
+    ScanBudget          = 1200,
     PerfStats           = false,
 
     -- ── interface ─────────────────────────────────────────────────────────
@@ -3813,11 +3813,14 @@ end
 
 local function espPass()
     local wanted = {}
+    local maxDistance = tonumber(Config.EspMaxDistance) or 1500
+    local drawn = 0
     if Config.EspEggs then
         for _, record in ipairs(World.eggs) do
-            if record.dropped and not Config.EspDropped then
-                -- player-dropped eggs are their own colour, but they can be hidden
-            else
+            local visible = record.distance == nil or record.distance <= maxDistance
+            if record.dropped and not Config.EspDropped then visible = false end
+            if visible and drawn < 250 then          -- a full server has hundreds
+                drawn = drawn + 1
                 wanted[record.instance] = true
                 espForEgg(record)
             end

@@ -15,7 +15,9 @@ teammate, a rifle with an ammo value, gameplay and queue remotes, the report
 remotes, four detector scripts and the chat service.
 
 Checked: load · clicking the nine rail buttons, a toggle, a dropdown option, a
-preset and the aim key in the real ScreenGui · every switch on then off · the aim picker
+preset and the aim key in the real ScreenGui · a sweep of all 125 controls
+(on then off, both slider ends, every dropdown option, every button, every
+field) · one dropdown at a time · every switch on then off · the aim picker
 (visibility, team filter, crosshair priority, the FOV cone, hysteresis) · the
 per-frame step limit · mouse and silent paths · ESP highlights, tags, tracers,
 boxes and the FOV ring · fire cadence, reload, movement, fly, noclip, anti-void
@@ -1040,7 +1042,7 @@ end
 
 check("hub exported to getgenv", hub ~= nil)
 if hub then
-check("version", hub.version == "v1.3", tostring(hub.version))
+check("version", hub.version == "v1.4", tostring(hub.version))
 check("game name", hub.game == "RIVALS", tostring(hub.game))
 check("build tag", string.find(tostring(hub.build), "Update 23", 1, true) ~= nil, tostring(hub.build))
 
@@ -1265,6 +1267,40 @@ if selector and optionList then
     hub.config.AimMethod = "Hybrid"
 else
     check("gui · the Method dropdown sets the config", false, "no dropdown")
+end
+
+-- two dropdowns: opening the second has to close the first, or the top list
+-- swallows the click meant for the card underneath
+local function dropdownBits(title)
+    local label = findLabel(title)
+    local card = label and label.Parent
+    if not card then return nil end
+    local selector, list = nil, nil
+    for _, child in ipairs(card:GetChildren()) do
+        if child.ClassName == "TextButton" then
+            selector = child
+        elseif child.ClassName == "Frame" then
+            for _, row in ipairs(child:GetChildren()) do
+                if row.ClassName == "TextButton" then list = child end
+            end
+        end
+    end
+    return selector, list
+end
+local methodSelector, methodList = dropdownBits("Method")
+local presetSelector, presetList = dropdownBits("Preset")
+if methodSelector and presetSelector and methodList and presetList then
+    methodSelector.MouseButton1Click:Fire()
+    local firstOpen = methodList.Visible == true
+    presetSelector.MouseButton1Click:Fire()
+    local secondOpen = presetList.Visible == true
+    local firstClosed = methodList.Visible == false
+    presetSelector.MouseButton1Click:Fire()
+    check("gui · only one dropdown is open at a time",
+        firstOpen and secondOpen and firstClosed and presetList.Visible == false,
+        tostring(firstOpen) .. "/" .. tostring(secondOpen) .. "/" .. tostring(firstClosed))
+else
+    check("gui · only one dropdown is open at a time", false, "no dropdowns")
 end
 
 -- a preset button inside the Combat tab
@@ -1824,7 +1860,8 @@ check("aim turns the camera on the render step", renderTurn > 1,
 -- ── the doctor answers ────────────────────────────────────────────────────
 local report = hub.doctor()
 check("doctor prints a report", type(report) == "string" and string.find(report, "window", 1, true) ~= nil
-    and string.find(report, "tabs", 1, true) ~= nil and string.find(report, "aim method", 1, true) ~= nil,
+    and string.find(report, "tabs", 1, true) ~= nil and string.find(report, "aim method", 1, true) ~= nil
+    and string.find(report, "controls", 1, true) ~= nil and string.find(report, "0 fault", 1, true) ~= nil,
     type(report))
 
 -- ── one whole match start in a single pass: the game swaps the camera, the ──
@@ -1976,6 +2013,147 @@ local fallbackScreen = hub.fallback("harness check")
 check("safe-mode panel builds", fallbackScreen ~= nil and #fallbackScreen:GetDescendants() >= 10,
     fallbackScreen and #fallbackScreen:GetDescendants() .. " instances" or "nil")
 if fallbackScreen then pcall(function() fallbackScreen:Destroy() end) end
+
+-- ── every control in every tab, used the way a player uses it ─────────────
+-- switches: on then back · sliders: both ends then back · dropdowns: every
+-- option · buttons: pressed · inputs and keybinds: committed then restored.
+-- The hub guards these callbacks itself (CONTROLS.spawn), so a throw lands in
+-- its own counter — the sweep asserts the counter did not move.
+local controls = hub.controls()
+local kinds = { toggle = 0, slider = 0, dropdown = 0, button = 0, input = 0, keybind = 0 }
+local tabsSeen = {}
+for _, entry in ipairs(controls) do
+    kinds[entry.kind] = (kinds[entry.kind] or 0) + 1
+    tabsSeen[entry.tab] = true
+end
+local tabCount = 0
+for _ in pairs(tabsSeen) do tabCount = tabCount + 1 end
+check("the registry covers every tab and every kind", tabCount == #hub.tabs
+    and kinds.toggle >= 60 and kinds.slider >= 10 and kinds.dropdown >= 2
+    and kinds.button >= 8 and kinds.input >= 3 and kinds.keybind >= 2,
+    #controls .. " controls · " .. tabCount .. " tabs")
+
+-- the guard has to be real, or the sweep below proves nothing
+local probeBefore = hub.controlFaults()
+local probeOk = hub.controlGuard(function() error("injected control fault") end)
+local probeAfter, probeLast = hub.controlFaults()
+check("a throwing control callback is counted, not lost",
+    probeOk == false and probeAfter == probeBefore + 1 and tostring(probeLast):find("injected", 1, true) ~= nil,
+    tostring(probeBefore) .. " → " .. tostring(probeAfter))
+local probeLog = _G.__SkillHubErrorLog
+if probeLog then for index = #probeLog, 1, -1 do probeLog[index] = nil end end
+
+local faultsBefore, _ = hub.controlFaults()
+local altOnlySweep = hub.config.AltOnlyMode
+hub.config.AltOnlyMode = false                 -- loud switches must not refuse
+local stuck = {}
+for _, entry in ipairs(controls) do
+    local api = entry.api
+    if entry.title == "Panic — disable everything" then
+        -- it would tear the hub down mid-sweep; panic and destroy have their
+        -- own checks above and below
+    elseif entry.kind == "toggle" then
+        local was = api.get() == true
+        api.set(not was)
+        pump(0.02)
+        api.set(was)
+        pump(0.02)
+        if api.get() ~= was then stuck[#stuck + 1] = entry.title end
+    elseif entry.kind == "slider" then
+        local was = api.get()
+        api.set(-1000000)
+        pump(0.01)
+        api.set(1000000)
+        pump(0.01)
+        api.set(was)
+        pump(0.01)
+        if math.abs((api.get() or 0) - was) > 0.01 then stuck[#stuck + 1] = entry.title end
+    elseif entry.kind == "dropdown" then
+        local was = api.get()
+        local options = api.options or {}
+        for _, option in ipairs(options) do api.set(option) pump(0.01) end
+        api.set(was)
+        pump(0.01)
+        if api.get() ~= was then stuck[#stuck + 1] = entry.title end
+    elseif entry.kind == "button" then
+        api.press()
+        pump(0.05)
+    elseif entry.kind == "input" then
+        local was = api.get()
+        api.commit("1234567")
+        pump(0.01)
+        api.commit(was)
+        pump(0.01)
+    elseif entry.kind == "keybind" then
+        local was = api.get()
+        api.commit("Q")
+        pump(0.01)
+        api.commit(was)
+        pump(0.01)
+    end
+end
+hub.config.AltOnlyMode = altOnlySweep
+for _ = 1, 10 do pump(0.05) end
+local faultsAfter, lastFault = hub.controlFaults()
+local faultDelta = faultsAfter - faultsBefore
+check("every control in every tab responds", faultDelta == 0,
+    faultDelta == 0 and "125/125 used cleanly" or (faultDelta .. " fault(s) · " .. tostring(lastFault)))
+check("no control leaves its own state behind", #stuck == 0,
+    #stuck == 0 and "125/125" or table.concat(stuck, ", "))
+
+-- a real switch on a real tab whose callback throws: the fault is counted, the
+-- switch must flick back to where it was, and the hub keeps running
+local faultTab = hub.tabs[1]
+local faultToggle = faultTab:AddToggle("Harness fault", "callback throws on purpose", false,
+    function() error("toggle exploded") end)
+local failsBefore = hub.controlFaults()
+faultToggle.Set(true)
+pump(0.02)
+local failsAfter = hub.controlFaults()
+-- the first throw is counted and so is the reverted off-path if it throws too
+check("a toggle whose callback throws flips itself back",
+    failsAfter > failsBefore and faultToggle.Get() == false,
+    "+" .. tostring(failsAfter - failsBefore) .. " fault(s) · state=" .. tostring(faultToggle.Get()))
+local faultLog = _G.__SkillHubErrorLog
+if faultLog then for index = #faultLog, 1, -1 do faultLog[index] = nil end end
+hub.config.AimEnabled = false
+
+-- ── the window lives where the executor expects, under its own name ───────
+local win = hub.window()
+local screen = win and win.Screen
+check("the window is parented and survives a respawn",
+    screen ~= nil and screen.Parent ~= nil and screen.ResetOnSpawn == false
+    and win.Root ~= nil and win.Root.Parent == screen,
+    screen and (tostring(screen.Parent and screen.Parent.Name) .. " · ResetOnSpawn="
+        .. tostring(screen.ResetOnSpawn)) or "no window")
+
+-- ── a live panel repaints, and a bad provider cannot stop it ───────────────
+local panelTab = hub.tabs[4]
+local panel = panelTab:AddStatusPanel("Harness panel", function()
+    return { { label = "row", value = 7 }, "plain line" }
+end, 92)
+pump(0.6)
+local painted = type(panel.Text) == "string" and panel.Text:find("plain line", 1, true) ~= nil
+check("a live panel paints its rows", painted, tostring(panel.Text))
+-- the provider itself is pcall'd; this bomb throws in the paint code *after*
+-- the provider, which is exactly what used to kill the painter for good
+local calls = 0
+local bomb = setmetatable({}, { __index = function() error("paint exploded") end })
+local guardedBefore = select(1, hub.controlFaults())
+local guardedPanel = panelTab:AddStatusPanel("Harness guarded", function()
+    calls = calls + 1
+    if calls == 1 then return bomb end
+    return { "recovered line" }
+end, 92)   -- task.spawn runs the first frame right here
+pump(1.2)
+local guardedAfter = select(1, hub.controlFaults())
+pump(1.2)
+check("a panel survives a throw inside its own paint",
+    guardedAfter > guardedBefore and type(guardedPanel.Text) == "string"
+    and guardedPanel.Text:find("recovered", 1, true) ~= nil,
+    "+" .. tostring(guardedAfter - guardedBefore) .. " fault(s) · paint=" .. tostring(guardedPanel.Text))
+local panelLog = _G.__SkillHubErrorLog
+if panelLog then for index = #panelLog, 1, -1 do panelLog[index] = nil end end
 
 -- ── unload ─────────────────────────────────────────────────────────────────
 local destroyed = hub.destroy()

@@ -52,7 +52,7 @@
 ]]
 
 local META = {
-    version = "v1.3",
+    version = "v1.4",
     build   = "RIVALS · free · Update 23 build 17.10 · match aim + teardown",
     author  = "ameksi-web",
     game    = "RIVALS",
@@ -730,6 +730,56 @@ local function notify(title, message, duration, accent, iconKind)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- 4b · CONTROL HEALTH — every card reports in, every callback is guarded
+--      A callback used to die in its own thread: the switch stayed ON, the
+--      toast said "executed", and nothing happened. Now a throw is counted,
+--      logged, shown as a toast, and the build fails if any control in any
+--      tab cannot be used.
+-- ═══════════════════════════════════════════════════════════════════════════
+local ControlRegistry = {}
+
+local CONTROLS = { faults = 0, last = nil }
+function CONTROLS.register(kind, title, tab, api)
+    ControlRegistry[#ControlRegistry + 1] = {
+        kind = kind, title = title, tab = tab and tab.title or "?", api = api,
+    }
+    return api
+end
+function CONTROLS.run(label, fn, ...)
+    if not fn then return true end
+    local ok, err = pcall(fn, ...)
+    if ok then return true end
+    CONTROLS.faults = CONTROLS.faults + 1
+    CONTROLS.last = tostring(label) .. " · " .. tostring(err)
+    local log = SharedEnv.__SkillHubErrorLog
+    if log and #log < 40 then table.insert(log, CONTROLS.last) end
+    pcall(notify, "Control failed", tostring(label), 4, Theme.Danger, "shield")
+    return false
+end
+function CONTROLS.spawnWith(label, fn, onFail, ...)
+    if not fn then return end
+    local packed = table.pack(...)
+    task.spawn(function()
+        local ok = CONTROLS.run(label, fn, table.unpack(packed, 1, packed.n))
+        if not ok and onFail then pcall(onFail) end
+    end)
+end
+function CONTROLS.spawn(label, fn, ...)
+    CONTROLS.spawnWith(label, fn, nil, ...)
+end
+-- live panels repaint every half second: one bad frame must not end the
+-- painter, and it must not spam a toast either — it is counted and logged once
+function CONTROLS.tick(label, body)
+    local ok, err = pcall(body)
+    if ok then return true end
+    CONTROLS.faults = CONTROLS.faults + 1
+    CONTROLS.last = tostring(label) .. " · " .. tostring(err)
+    local log = SharedEnv.__SkillHubErrorLog
+    if log and #log < 40 then table.insert(log, CONTROLS.last) end
+    return false
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- 5 · WINDOW FRAMEWORK  (chrome + rail + components)
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -1176,26 +1226,40 @@ local function makeTab(title, desc, iconKind, accent)
         end
         render(false)
 
+        local function commit(target)
+            state = target
+            render(true)
+            CONTROLS.spawnWith("toggle · " .. title, callback, function()
+                -- a switch must never sit ON with a dead callback behind it:
+                -- put it back, and run the off path so the config agrees
+                state = not target
+                render(true)
+                CONTROLS.run("toggle · " .. title .. " (revert)", callback, not target)
+            end, target)
+        end
         local click = new("TextButton", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0), Text = "", ZIndex = 8 }, card)
         click.MouseButton1Click:Connect(function()
-            state = not state
-            render(true)
-            if callback then task.spawn(callback, state) end
+            commit(not state)
         end)
         click.MouseEnter:Connect(function() SafeTween(card, TweenInfo.new(0.14), { BackgroundColor3 = Theme.BgRaised }):Play() end)
         click.MouseLeave:Connect(function() SafeTween(card, TweenInfo.new(0.14), { BackgroundColor3 = Theme.BgElevated }):Play() end)
 
         local api = {}
         api.Set = function(v, silent)
-            state = v and true or false
-            render(true)
-            if not silent and callback then task.spawn(callback, state) end
+            local target = v and true or false
+            if silent then
+                state = target
+                render(true)
+            else
+                commit(target)
+            end
         end
         api.Get = function() return state end
         table.insert(tab.searchIndex, title)
         tab.toggles = tab.toggles or {}
         table.insert(tab.toggles, api)
         table.insert(ToggleRegistry, { title = title, tab = tab, set = api.Set, get = api.Get })
+        CONTROLS.register("toggle", title, tab, { set = api.Set, get = api.Get })
         return api
     end
 
@@ -1260,7 +1324,7 @@ local function makeTab(title, desc, iconKind, accent)
             current = min + (max - min) * rel
             if max - min > 20 then current = math.floor(current + 0.5) else current = round(current, 2) end
             render()
-            if callback then callback(current) end
+            CONTROLS.run("slider · " .. title, callback, current)
         end
         local hit = new("TextButton", {
             BackgroundTransparency = 1, Position = UDim2.new(0, -8, 0, -18), Size = UDim2.new(1, 16, 0, 40),
@@ -1285,8 +1349,16 @@ local function makeTab(title, desc, iconKind, accent)
             end)
         end
         table.insert(tab.searchIndex, title)
-        return { Set = function(v) current = clamp(v, min, max) render(); if callback then callback(current) end end,
-                 Get = function() return current end }
+        local api = {
+            Set = function(v)
+                current = clamp(tonumber(v) or min, min, max)
+                render()
+                CONTROLS.run("slider · " .. title, callback, current)
+            end,
+            Get = function() return current end,
+        }
+        CONTROLS.register("slider", title, tab, { set = api.Set, get = api.Get })
+        return api
     end
 
     function tab:AddButton(title, desc, callback, iconKind, danger)
@@ -1318,10 +1390,13 @@ local function makeTab(title, desc, iconKind, accent)
         action.MouseEnter:Connect(function() SafeTween(action, TweenInfo.new(0.14), { BackgroundTransparency = 0.2 }):Play() end)
         action.MouseLeave:Connect(function() SafeTween(action, TweenInfo.new(0.14), { BackgroundTransparency = 0 }):Play() end)
         action.MouseButton1Click:Connect(function()
-            if callback then task.spawn(callback) end
+            CONTROLS.spawn("button · " .. title, callback)
             notify(title, "executed", 2, danger and Theme.Danger or tab.color, iconKind or tab.icon)
         end)
         table.insert(tab.searchIndex, title)
+        CONTROLS.register("button", title, tab, {
+            press = function() CONTROLS.spawn("button · " .. title, callback) end,
+        })
         return action
     end
 
@@ -1373,6 +1448,13 @@ local function makeTab(title, desc, iconKind, accent)
         local listLayout = new("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder }, list)
         new("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4) }, list)
 
+        -- declared before the rows: their handlers compare against it
+        local function close()
+            expanded = false
+            list.Visible = false
+            list.Size = UDim2.new(0, 138, 0, 0)
+        end
+
         local api = {}
         function api.SetOptions(newOptions)
             for _, child in ipairs(list:GetChildren()) do
@@ -1390,10 +1472,9 @@ local function makeTab(title, desc, iconKind, accent)
                 row.MouseButton1Click:Connect(function()
                     current = option
                     selectorText.Text = tostring(option)
-                    expanded = false
-                    list.Visible = false
-                    list.Size = UDim2.new(0, 138, 0, 0)
-                    if callback then task.spawn(callback, option) end
+                    if CONTROLS.open == close then CONTROLS.open = nil end
+                    close()
+                    CONTROLS.spawn("dropdown · " .. title, callback, option)
                 end)
             end
         end
@@ -1402,20 +1483,29 @@ local function makeTab(title, desc, iconKind, accent)
         api.Set = function(option)
             current = option
             selectorText.Text = tostring(option)
-            if callback then task.spawn(callback, option) end
+            if CONTROLS.open == close then CONTROLS.open = nil end
+            close()
+            CONTROLS.spawn("dropdown · " .. title, callback, option)
         end
 
         selector.MouseButton1Click:Connect(function()
+            -- two open lists overlap and the one on top steals the click
+            if CONTROLS.open and CONTROLS.open ~= close then CONTROLS.open() end
             expanded = not expanded
+            if not expanded then close() CONTROLS.open = nil return end
             local rows = 0
             for _, child in ipairs(list:GetChildren()) do
                 if child:IsA("TextButton") then rows = rows + 1 end
             end
             local height = math.min(rows, 7) * 24 + 8
-            list.Visible = expanded
-            list.Size = UDim2.new(0, 138, 0, expanded and height or 0)
+            CONTROLS.open = close
+            list.Visible = true
+            list.Size = UDim2.new(0, 138, 0, height)
         end)
         table.insert(tab.searchIndex, title)
+        CONTROLS.register("dropdown", title, tab, {
+            set = api.Set, get = api.Get, options = options,
+        })
         return api
     end
 
@@ -1451,12 +1541,24 @@ local function makeTab(title, desc, iconKind, accent)
             Text = "", TextColor3 = Theme.TextPrimary, TextSize = 10,
             TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 8,
         }, shell)
+        local function commit()
+            if box.Text and #box.Text > 0 then
+                CONTROLS.spawn("input · " .. title, callback, box.Text)
+            end
+        end
         box.FocusLost:Connect(function()
             stroke.Color = Theme.StrokeSoft
-            if box.Text and #box.Text > 0 and callback then task.spawn(callback, box.Text) end
+            commit()
         end)
         box.Focused:Connect(function() stroke.Color = tab.color end)
         table.insert(tab.searchIndex, title)
+        CONTROLS.register("input", title, tab, {
+            get = function() return box.Text end,
+            commit = function(text)
+                if text ~= nil then box.Text = tostring(text) end
+                commit()
+            end,
+        })
         return box
     end
 
@@ -1491,20 +1593,27 @@ local function makeTab(title, desc, iconKind, accent)
             button.Text = "press a key…"
             button.TextColor3 = tab.color
         end)
+        local function accept(name)
+            capturing = false
+            button.Text = tostring(name)
+            button.TextColor3 = Theme.TextSecondary
+            CONTROLS.spawn("keybind · " .. title, callback, name)
+        end
         if UserInput then
             UserInput.InputBegan:Connect(function(input, gameProcessed)
                 -- while a rebind is armed the player is still allowed to type in
                 -- chat; a keystroke the game already consumed must not bind
                 if gameProcessed then return end
                 if capturing and input.UserInputType == Enum.UserInputType.Keyboard then
-                    capturing = false
-                    button.Text = input.KeyCode.Name
-                    button.TextColor3 = Theme.TextSecondary
-                    if callback then task.spawn(callback, input.KeyCode.Name) end
+                    accept(input.KeyCode.Name)
                 end
             end)
         end
         table.insert(tab.searchIndex, title)
+        CONTROLS.register("keybind", title, tab, {
+            get = function() return button.Text end,
+            commit = function(name) accept(name) end,
+        })
         return button
     end
 
@@ -1564,25 +1673,27 @@ local function makeTab(title, desc, iconKind, accent)
         task.spawn(function()
             local pulse = true
             while card.Parent do
-                local ok, lines = pcall(provider)
-                if ok then
-                    if type(lines) == "table" then
-                        -- accept both a plain list of strings and {label, value} rows
-                        local out = {}
-                        for _, line in ipairs(lines) do
-                            if type(line) == "table" then
-                                out[#out + 1] = string.format("%-14s %s", tostring(line.label or ""), tostring(line.value or ""))
-                            else
-                                out[#out + 1] = tostring(line)
+                CONTROLS.tick("status · " .. title, function()
+                    local ok, lines = pcall(provider)
+                    if ok then
+                        if type(lines) == "table" then
+                            -- accept both a plain list of strings and {label, value} rows
+                            local out = {}
+                            for _, line in ipairs(lines) do
+                                if type(line) == "table" then
+                                    out[#out + 1] = string.format("%-14s %s", tostring(line.label or ""), tostring(line.value or ""))
+                                else
+                                    out[#out + 1] = tostring(line)
+                                end
                             end
+                            body.Text = table.concat(out, "\n")
+                        else
+                            body.Text = tostring(lines)
                         end
-                        body.Text = table.concat(out, "\n")
-                    else
-                        body.Text = tostring(lines)
                     end
-                end
-                pulse = not pulse
-                dot.BackgroundColor3 = pulse and Theme.Success or tint(Theme.Success, 0.4)
+                    pulse = not pulse
+                    dot.BackgroundColor3 = pulse and Theme.Success or tint(Theme.Success, 0.4)
+                end)
                 task.wait(0.5)
             end
         end)
@@ -1622,65 +1733,67 @@ local function makeTab(title, desc, iconKind, accent)
         local rows = {}
         task.spawn(function()
             while card.Parent do
-                local ok, data = pcall(provider)
-                if ok and type(data) == "table" then
-                    count.Text = tostring(#data) .. " in server"
-                    for index, entry in ipairs(data) do
-                        local row = rows[index]
-                        if not row then
-                            row = new("Frame", {
-                                BackgroundColor3 = Theme.BgRaised, BackgroundTransparency = 0.4,
-                                BorderSizePixel = 0, LayoutOrder = index, Size = UDim2.new(1, 0, 0, 30), ZIndex = 7,
-                            }, list)
-                            corner(row, RADIUS.chip)
-                            row.Avatar = new("ImageLabel", {
-                                BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
-                                Position = UDim2.new(0, 5, 0.5, -10), Size = UDim2.new(0, 20, 0, 20), ZIndex = 8,
-                            }, row)
-                            corner(row.Avatar, RADIUS.pill)
-                            row.Lamp = new("Frame", {
-                                BackgroundColor3 = Theme.TextFaint, BorderSizePixel = 0,
-                                Position = UDim2.new(0, 29, 0.5, -3), Size = UDim2.new(0, 6, 0, 6), ZIndex = 8,
-                            }, row)
-                            corner(row.Lamp, RADIUS.pill)
-                            row.Name = Text({
-                                Font = FONT.Bold, Position = UDim2.new(0, 40, 0, 3), Size = UDim2.new(1, -180, 0, 13),
-                                Text = "", TextColor3 = Theme.TextPrimary, TextSize = 10,
-                                TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 8,
-                            }, row)
-                            row.Info = Text({
-                                Font = FONT.Mono, Position = UDim2.new(0, 40, 0, 15), Size = UDim2.new(1, -180, 0, 12),
-                                Text = "", TextColor3 = Theme.TextFaint, TextSize = 9,
-                                TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 8,
-                            }, row)
-                            row.Buttons = {}
-                            for buttonIndex, action in ipairs(actions or {}) do
-                                local actionButton = new("TextButton", {
-                                    AutoButtonColor = false, BackgroundColor3 = tint(tab.color, 0.88),
-                                    BorderSizePixel = 0, Font = FONT.Bold,
-                                    Position = UDim2.new(1, -132 + (buttonIndex - 1) * 30, 0.5, -9),
-                                    Size = UDim2.new(0, 26, 0, 18), Text = action.label,
-                                    TextColor3 = tab.color, TextSize = 9, ZIndex = 9,
+                CONTROLS.tick("players · " .. title, function()
+                    local ok, data = pcall(provider)
+                    if ok and type(data) == "table" then
+                        count.Text = tostring(#data) .. " in server"
+                        for index, entry in ipairs(data) do
+                            local row = rows[index]
+                            if not row then
+                                row = new("Frame", {
+                                    BackgroundColor3 = Theme.BgRaised, BackgroundTransparency = 0.4,
+                                    BorderSizePixel = 0, LayoutOrder = index, Size = UDim2.new(1, 0, 0, 30), ZIndex = 7,
+                                }, list)
+                                corner(row, RADIUS.chip)
+                                row.Avatar = new("ImageLabel", {
+                                    BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
+                                    Position = UDim2.new(0, 5, 0.5, -10), Size = UDim2.new(0, 20, 0, 20), ZIndex = 8,
                                 }, row)
-                                corner(actionButton, RADIUS.chip)
-                                actionButton.MouseButton1Click:Connect(function() action.callback(entry.player) end)
-                                table.insert(row.Buttons, actionButton)
+                                corner(row.Avatar, RADIUS.pill)
+                                row.Lamp = new("Frame", {
+                                    BackgroundColor3 = Theme.TextFaint, BorderSizePixel = 0,
+                                    Position = UDim2.new(0, 29, 0.5, -3), Size = UDim2.new(0, 6, 0, 6), ZIndex = 8,
+                                }, row)
+                                corner(row.Lamp, RADIUS.pill)
+                                row.Name = Text({
+                                    Font = FONT.Bold, Position = UDim2.new(0, 40, 0, 3), Size = UDim2.new(1, -180, 0, 13),
+                                    Text = "", TextColor3 = Theme.TextPrimary, TextSize = 10,
+                                    TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 8,
+                                }, row)
+                                row.Info = Text({
+                                    Font = FONT.Mono, Position = UDim2.new(0, 40, 0, 15), Size = UDim2.new(1, -180, 0, 12),
+                                    Text = "", TextColor3 = Theme.TextFaint, TextSize = 9,
+                                    TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 8,
+                                }, row)
+                                row.Buttons = {}
+                                for buttonIndex, action in ipairs(actions or {}) do
+                                    local actionButton = new("TextButton", {
+                                        AutoButtonColor = false, BackgroundColor3 = tint(tab.color, 0.88),
+                                        BorderSizePixel = 0, Font = FONT.Bold,
+                                        Position = UDim2.new(1, -132 + (buttonIndex - 1) * 30, 0.5, -9),
+                                        Size = UDim2.new(0, 26, 0, 18), Text = action.label,
+                                        TextColor3 = tab.color, TextSize = 9, ZIndex = 9,
+                                    }, row)
+                                    corner(actionButton, RADIUS.chip)
+                                    actionButton.MouseButton1Click:Connect(function() action.callback(entry.player) end)
+                                    table.insert(row.Buttons, actionButton)
+                                end
+                                rows[index] = row
                             end
-                            rows[index] = row
+                            row.Visible = true
+                            row.Name.Text = entry.name
+                            row.Info.Text = entry.info or ""
+                            row.Lamp.BackgroundColor3 = entry.color or Theme.TextFaint
+                            row.Avatar.Image = entry.avatar or ""
+                            row.LayoutOrder = index
+                            for _, actionButton in ipairs(row.Buttons) do
+                                local target = entry.player
+                                actionButton.Visible = target ~= nil
+                            end
                         end
-                        row.Visible = true
-                        row.Name.Text = entry.name
-                        row.Info.Text = entry.info or ""
-                        row.Lamp.BackgroundColor3 = entry.color or Theme.TextFaint
-                        row.Avatar.Image = entry.avatar or ""
-                        row.LayoutOrder = index
-                        for _, actionButton in ipairs(row.Buttons) do
-                            local target = entry.player
-                            actionButton.Visible = target ~= nil
-                        end
-                    end
-                    for index = #data + 1, #rows do rows[index].Visible = false end
+                        for index = #data + 1, #rows do rows[index].Visible = false end
                 end
+                end)
                 task.wait(1)
             end
         end)
@@ -1731,6 +1844,8 @@ do
     NS.new = new
     NS.notify = notify
     NS.safeCall = safeCall
+    NS.controls = ControlRegistry
+    NS.controlHealth = CONTROLS
 end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -4992,6 +5107,7 @@ function doctor()
         tostring(type(gethui) == "function"), tostring(type(Drawing) == "table")))
     row("window", (okBuild and win and win.Root and win.Root.Parent) and "built" or "missing")
     row("tabs", tostring(#Tabs) .. " tabs / " .. tostring(#Switches) .. " switches")
+    row("controls", tostring(#NS.controls) .. " cards / " .. tostring(NS.controlHealth.faults) .. " fault(s)")
     row("render aim", tostring(Aim.renderBound == true) .. " · " .. tostring(Aim.renderSteps or 0) .. " frames")
     row("aim method", tostring(Aim.lastMethod or "—") .. " · " .. string.format("%.2f°/px", tonumber(Aim.perPixel) or tonumber(Config.AimMouseSensitivity) or 0.35)
         .. " · fallbacks " .. tostring(State.perf.aimFallbacks or 0))
@@ -5203,6 +5319,9 @@ local API = {
     method = function() return Aim.lastMethod end,
     tabs = Tabs,
     switchCount = function() return #Switches end,
+    controls = function() return NS.controls end,
+    controlFaults = function() return NS.controlHealth.faults, NS.controlHealth.last end,
+    controlGuard = function(fn) return NS.controlHealth.run("probe", fn) end,
     scan = function(force) return scanWorld(force == true) end,
     tabTitles = function()
         local out = {}

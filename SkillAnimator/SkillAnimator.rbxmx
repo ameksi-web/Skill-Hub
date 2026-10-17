@@ -5,24 +5,33 @@
 			<string name="Name">SkillAnimator</string>
 			<bool name="Disabled">false</bool>
 			<ProtectedString name="Source"><![CDATA[--[[
-    Skill Animator — Roblox Studio Plugin (Moon Animator 2 Style)
-    File: SkillAnimator/init.lua
-    How to install in Roblox Studio:
-      1. Save this file as "SkillAnimator.lua" inside your Roblox Studio Plugins folder
-         (In Roblox Studio: Plugins Tab -> Plugins Folder -> drop SkillAnimator.lua inside)
-         OR right-click in Studio Explorer -> "Save as Local Plugin..."
-      2. Click the "Skill Animator" button on the Roblox Studio Plugins Toolbar!
-      3. Select any R6 / R15 / Custom Rig in the Explorer or 3D Viewport and click "+ Bind Selected Rig".
+    ═══════════════════════════════════════════════════════════════════════════
+    SKILL ANIMATOR STUDIO  ·  v2.0  ·  Roblox Studio plugin
+    ═══════════════════════════════════════════════════════════════════════════
+    A Moon Animator style keyframe editor that writes *native* Roblox animation
+    data — a KeyframeSequence inside the rig's AnimSaves, the same asset format
+    the Animation Editor publishes.
 
-    Features (Zero Pre-made Animations — Pure Custom Keyframe Studio):
-      • Native Roblox Studio DockWidgetPluginGui (Bottom Timeline Dock like Moon Animator 2)
-      • Full Studio Selection Service integration (bind any Dummy/Rig from Explorer/Viewport)
-      • Multi-track Motor6D Dope Sheet Timeline with Diamond Keyframes (◆) & Frame Ruler
-      • 3D Studio Viewport Gizmos (ArcHandles Rotation Rings & Handles Translation Arrows + SelectionBox)
-      • Precision X/Y/Z Rotation (-180°..180°) & Position Offset (-5..5) Inspector
-      • Easing Styles & Directions (Linear, Sine, Quad, Cubic, Back, Bounce, Elastic)
-      • 1-Click Export to native Roblox `KeyframeSequence` inside `Rig.AnimSaves` (ready to Publish to Roblox!)
-      • Full ChangeHistoryService Undo/Redo waypoint support
+    WHAT CHANGED IN v2 (and why it matters)
+      · the exported Pose tree is now actually correct. Roblox matches a Pose to
+        a Motor6D by NAME: the Pose is the joint's Part1, its PARENT Pose is the
+        joint's Part0. v1 did `poseInst.Parent = rootPose` for every joint (flat),
+        so only joints whose Part0 was the root ever played, and a rig rotated
+        wrong or not at all. v2 builds the real Part0 → Part1 tree.
+      · the root pose is detected from the joint graph (the part that is never a
+        Part1), with PrimaryPart / HumanoidRootPart as fallbacks.
+      · import: an existing KeyframeSequence (ours, or one made in the Animation
+        Editor) can be read back into the timeline.
+      · project save / load on the rig itself, so a session survives a restart.
+      · zoom, frame-rate and length controls, key navigation, duplicate key,
+        per-key easing edits, undo batching (one waypoint per action).
+      · everything that outlives the widget is torn down on close/unload:
+        the RenderStepped loop, Selection watcher, gizmos.
+
+    INSTALL
+      Drop SkillAnimator.rbxmx into Studio → Plugins → Plugins Folder, restart.
+      Put the file directly in that folder (nested .rbxmx files do not load).
+    ═══════════════════════════════════════════════════════════════════════════
 ]]
 
 local Selection            = game:GetService("Selection")
@@ -33,1070 +42,1834 @@ local UserInputService     = game:GetService("UserInputService")
 local CoreGui              = game:GetService("CoreGui")
 local Workspace            = game:GetService("Workspace")
 
--- ═══════════════════════════════════════════════════════════════════════════
---  CUSTOM VECTOR ICONS & MOON ANIMATOR 2 STUDIO THEME
--- ═══════════════════════════════════════════════════════════════════════════
+local PLUGIN_TITLE = "Skill Animator Studio"
+local VERSION      = "v2.0"
 
-local Icons = {
-    Logo       = "rbxassetid://10723354551",
-    Play       = "rbxassetid://10734923549",
-    Pause      = "rbxassetid://10734919336",
-    Stop       = "rbxassetid://10734972627",
-    Loop       = "rbxassetid://10734940376",
-    AddKey     = "rbxassetid://10734924532",
-    Trash      = "rbxassetid://10747362393",
-    Bone       = "rbxassetid://10723397898",
-    Export     = "rbxassetid://10734950309",
-    RadialGlow = "rbxassetid://5028857084",
-}
-
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 1 · THEME — calm dark, the Skill Hub accent
+-- ═══════════════════════════════════════════════════════════════════════════
 local Theme = {
-    BgMain        = Color3.fromRGB(15, 14, 24),
-    BgHeader      = Color3.fromRGB(22, 20, 35),
-    BgToolbar     = Color3.fromRGB(27, 24, 43),
-    BgTrackList   = Color3.fromRGB(19, 17, 30),
-    BgRowEven     = Color3.fromRGB(23, 21, 37),
-    BgRowOdd      = Color3.fromRGB(19, 17, 31),
-    BgInspector   = Color3.fromRGB(20, 18, 32),
-    BgControl     = Color3.fromRGB(12, 11, 20),
-    MoonAccent    = Color3.fromRGB(168, 85, 247),
-    MoonCyan      = Color3.fromRGB(56, 189, 248),
-    MoonPink      = Color3.fromRGB(236, 72, 153),
-    PlayheadRed   = Color3.fromRGB(244, 63, 94),
-    KeyframeGold  = Color3.fromRGB(250, 204, 21),
-    SuccessGreen  = Color3.fromRGB(34, 197, 94),
-    TextPrimary   = Color3.fromRGB(243, 244, 246),
-    TextSecondary = Color3.fromRGB(156, 163, 175),
-    TextMuted     = Color3.fromRGB(107, 114, 128),
-    Border        = Color3.fromRGB(45, 40, 70),
+    Bg        = Color3.fromRGB(16, 17, 22),
+    BgHeader  = Color3.fromRGB(22, 23, 30),
+    BgBar     = Color3.fromRGB(26, 27, 35),
+    BgPanel   = Color3.fromRGB(19, 20, 26),
+    BgInset   = Color3.fromRGB(12, 13, 18),
+    RowEven   = Color3.fromRGB(24, 25, 33),
+    RowOdd    = Color3.fromRGB(20, 21, 28),
+    Accent    = Color3.fromRGB(126, 141, 255),
+    AccentDim = Color3.fromRGB(58, 66, 110),
+    Cyan      = Color3.fromRGB(120, 196, 232),
+    Gold      = Color3.fromRGB(226, 190, 110),
+    Green     = Color3.fromRGB(122, 190, 146),
+    Red       = Color3.fromRGB(223, 118, 116),
+    Text      = Color3.fromRGB(236, 238, 244),
+    Sub       = Color3.fromRGB(158, 164, 178),
+    Muted     = Color3.fromRGB(108, 114, 128),
+    Border    = Color3.fromRGB(46, 48, 60),
 }
 
-local EASING_STYLES = {
-    {Tween = Enum.EasingStyle.Linear,  Pose = Enum.PoseEasingStyle.Linear},
-    {Tween = Enum.EasingStyle.Sine,    Pose = Enum.PoseEasingStyle.Sine},
-    {Tween = Enum.EasingStyle.Quad,    Pose = Enum.PoseEasingStyle.Quad},
-    {Tween = Enum.EasingStyle.Cubic,   Pose = Enum.PoseEasingStyle.Cubic},
-    {Tween = Enum.EasingStyle.Back,    Pose = Enum.PoseEasingStyle.Back},
-    {Tween = Enum.EasingStyle.Bounce,  Pose = Enum.PoseEasingStyle.Bounce},
-    {Tween = Enum.EasingStyle.Elastic, Pose = Enum.PoseEasingStyle.Elastic},
+local EASING = {
+    { Name = "Linear",  Tween = Enum.EasingStyle.Linear,  Pose = Enum.PoseEasingStyle.Linear },
+    { Name = "Sine",    Tween = Enum.EasingStyle.Sine,    Pose = Enum.PoseEasingStyle.Sine },
+    { Name = "Quad",    Tween = Enum.EasingStyle.Quad,    Pose = Enum.PoseEasingStyle.Quad },
+    { Name = "Cubic",   Tween = Enum.EasingStyle.Cubic,   Pose = Enum.PoseEasingStyle.Cubic },
+    { Name = "Back",    Tween = Enum.EasingStyle.Back,    Pose = Enum.PoseEasingStyle.Back },
+    { Name = "Bounce",  Tween = Enum.EasingStyle.Bounce,  Pose = Enum.PoseEasingStyle.Bounce },
+    { Name = "Elastic", Tween = Enum.EasingStyle.Elastic, Pose = Enum.PoseEasingStyle.Elastic },
 }
 
-local EASING_DIRECTIONS = {
-    {Tween = Enum.EasingDirection.Out,   Pose = Enum.PoseEasingDirection.Out},
-    {Tween = Enum.EasingDirection.InOut, Pose = Enum.PoseEasingDirection.InOut},
-    {Tween = Enum.EasingDirection.In,    Pose = Enum.PoseEasingDirection.In},
+local DIRECTIONS = {
+    { Name = "Out",   Tween = Enum.EasingDirection.Out,   Pose = Enum.PoseEasingDirection.Out },
+    { Name = "InOut", Tween = Enum.EasingDirection.InOut, Pose = Enum.PoseEasingDirection.InOut },
+    { Name = "In",    Tween = Enum.EasingDirection.In,    Pose = Enum.PoseEasingDirection.In },
 }
+
+local ZOOM_LEVELS = { 1, 2, 4, 8 }
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SKILL ANIMATOR STUDIO STATE & RIG ENGINE
+-- 2 · SMALL HELPERS
 -- ═══════════════════════════════════════════════════════════════════════════
+local function clamp(value, minimum, maximum)
+    if value < minimum then return minimum end
+    if value > maximum then return maximum end
+    return value
+end
 
-local StudioAnimator = {
-    ActiveRig        = nil,
-    AnimationName    = "SkillAnimation_01",
-    FPS              = 30,
-    TotalFrames      = 60,
-    CurrentFrame     = 0,
-    IsPlaying        = false,
-    Loop             = true,
-    AutoKey          = true,
-    GizmoMode        = "Rotate", -- "Rotate" | "Move" | "Off"
-    EasingStyleIdx   = 2,        -- Sine
-    EasingDirIdx     = 1,        -- Out
+local function round(value)
+    return math.floor((tonumber(value) or 0) + 0.5)
+end
 
-    Joints           = {},       -- { [jointKey] = { Motor=m6d, Part0=p0, Part1=p1, BaseC0=cf, BaseTransform=cf, Pose=pose } }
-    JointOrder       = {},
-    SelectedJoint    = nil,
-    TrackKeyframes   = {},       -- { [jointKey] = { [frameInt] = { RX, RY, RZ, PX, PY, PZ, StyleIdx, DirIdx } } }
-    CopiedPose       = nil,
-}
+local function degToRad(degrees) return math.rad(degrees or 0) end
+local function radToDeg(radians) return math.deg(radians or 0) end
 
-local function degToRad(d) return math.rad(d or 0) end
-local function radToDeg(r) return math.floor(math.deg(r or 0) + 0.5) end
+local function roundTo(value, places)
+    local scale = 10 ^ (places or 0)
+    return math.floor((tonumber(value) or 0) * scale + 0.5) / scale
+end
 
-local function makeEmptyPose()
+local function validNumber(value, fallback, minimum, maximum)
+    local number = tonumber(value)
+    if not number or number ~= number then return fallback end
+    if minimum and number < minimum then number = minimum end
+    if maximum and number > maximum then number = maximum end
+    return number
+end
+
+local function newInstance(class, properties, parent)
+    local instance = Instance.new(class)
+    for key, value in pairs(properties or {}) do
+        pcall(function() instance[key] = value end)
+    end
+    if parent then pcall(function() instance.Parent = parent end) end
+    return instance
+end
+
+local function corner(parent, radius)
+    local instance = Instance.new("UICorner")
+    instance.CornerRadius = UDim.new(0, radius or 6)
+    instance.Parent = parent
+    return instance
+end
+
+local function stroke(parent, color, thickness, transparency)
+    local instance = Instance.new("UIStroke")
+    instance.Color = color or Theme.Border
+    instance.Thickness = thickness or 1
+    instance.Transparency = transparency or 0
+    instance.Parent = parent
+    return instance
+end
+
+local function label(parent, text, properties)
+    properties = properties or {}
+    properties.BackgroundTransparency = 1
+    properties.Text = text
+    properties.Font = properties.Font or Enum.Font.Gotham
+    properties.TextSize = properties.TextSize or 11
+    properties.TextColor3 = properties.TextColor3 or Theme.Text
+    properties.TextXAlignment = properties.TextXAlignment or Enum.TextXAlignment.Left
+    return newInstance("TextLabel", properties, parent)
+end
+
+local function button(parent, text, properties, onClick)
+    properties = properties or {}
+    properties.Text = text
+    properties.AutoButtonColor = false
+    properties.BorderSizePixel = 0
+    properties.Font = properties.Font or Enum.Font.GothamBold
+    properties.TextSize = properties.TextSize or 11
+    properties.TextColor3 = properties.TextColor3 or Theme.Text
+    properties.BackgroundColor3 = properties.BackgroundColor3 or Theme.BgInset
+    local instance = newInstance("TextButton", properties, parent)
+    corner(instance, 6)
+    if onClick then
+        instance.MouseButton1Click:Connect(function()
+            local ok, err = pcall(onClick, instance)
+            if not ok then
+                if _G.SkillAnimatorWarn then _G.SkillAnimatorWarn("button", err) end
+                warn("[Skill Animator] " .. tostring(err))
+            end
+        end)
+    end
+    return instance
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 3 · POSE MATH
+--     A pose stores degrees + studs. It becomes a CFrame the same way the
+--     animation system expects: translation then rotation, XYZ order.
+-- ═══════════════════════════════════════════════════════════════════════════
+local function emptyPose()
+    return { RX = 0, RY = 0, RZ = 0, PX = 0, PY = 0, PZ = 0, Style = 2, Dir = 1 }
+end
+
+local function clonePose(pose)
+    pose = pose or emptyPose()
     return {
-        RX = 0, RY = 0, RZ = 0,
-        PX = 0, PY = 0, PZ = 0,
-        StyleIdx = StudioAnimator.EasingStyleIdx,
-        DirIdx   = StudioAnimator.EasingDirIdx,
+        RX = pose.RX or 0, RY = pose.RY or 0, RZ = pose.RZ or 0,
+        PX = pose.PX or 0, PY = pose.PY or 0, PZ = pose.PZ or 0,
+        Style = pose.Style or 2, Dir = pose.Dir or 1,
     }
 end
 
-local function clonePose(p)
-    return {
-        RX = p.RX or 0, RY = p.RY or 0, RZ = p.RZ or 0,
-        PX = p.PX or 0, PY = p.PY or 0, PZ = p.PZ or 0,
-        StyleIdx = p.StyleIdx or StudioAnimator.EasingStyleIdx,
-        DirIdx   = p.DirIdx or StudioAnimator.EasingDirIdx,
-    }
+local function poseToCFrame(pose)
+    pose = pose or emptyPose()
+    return CFrame.new(pose.PX or 0, pose.PY or 0, pose.PZ or 0)
+        * CFrame.Angles(degToRad(pose.RX), degToRad(pose.RY), degToRad(pose.RZ))
 end
 
-local function setStudioWaypoint(actionName)
+-- `CFrame:ToEulerAnglesXYZ` is the exact inverse of `CFrame.Angles(x, y, z)`.
+-- Older runtimes may not expose it, hence the guarded fallback.
+local function poseFromCFrame(frame)
+    local pose = emptyPose()
+    if not frame then return pose end
+    local position = frame.Position
+    pose.PX, pose.PY, pose.PZ = position.X, position.Y, position.Z
+    local ok, rx, ry, rz = pcall(function() return frame:ToEulerAnglesXYZ() end)
+    if ok and rx then
+        pose.RX, pose.RY, pose.RZ = radToDeg(rx), radToDeg(ry), radToDeg(rz)
+    else
+        -- fallback: read the rotation columns directly
+        local right, up = frame.RightVector, frame.UpVector
+        if right and up then
+            pose.RX = radToDeg(math.atan2(up.Z, up.Y))
+            pose.RY = radToDeg(math.asin(clamp(-right.Z, -1, 1)))
+            pose.RZ = radToDeg(math.atan2(-right.Y, right.X))
+        end
+    end
+    return pose
+end
+
+local function lerp(a, b, t) return a + (b - a) * t end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 4 · THE ANIMATOR STATE
+-- ═══════════════════════════════════════════════════════════════════════════
+local Animator = {
+    Rig          = nil,
+    AnimationName = "SkillAnimation_01",
+    FPS          = 30,
+    Length       = 60,
+    Frame        = 0,
+    Playing      = false,
+    Looping      = true,
+    AutoKey      = true,
+    Gizmo        = "Rotate",        -- Rotate | Move | Off
+    EasingIndex  = 2,               -- Sine
+    DirIndex     = 1,               -- Out
+    ZoomIndex    = 1,
+    ViewStart    = 0,
+    Follow       = true,
+    Selected     = nil,
+
+    Joints       = {},              -- key → { Key, Part0Name, Part1Name, Motor, Part0, Part1, BaseC0, Pose }
+    Order        = {},              -- keys, root first, depth-first
+    Children     = {},              -- partName → { child part names }
+    ByPart       = {},              -- partName → joint key
+    RootPartName = nil,
+    Tracks       = {},              -- joint key → { [frame] = pose }
+    TracksDirty  = true,
+    Copied       = nil,
+
+    -- live objects / connections, torn down on close
+    Main         = nil,
+    Parts        = {},
+    Connections  = {},
+    Status       = nil,
+}
+
+Animator.Warn = function(category, err)
+    warn(string.format("[Skill Animator] %s: %s", tostring(category), tostring(err)))
+end
+
+function Animator:Status(text, color)
+    if self.StatusLabel and self.StatusLabel.Parent then
+        self.StatusLabel.Text = tostring(text)
+        self.StatusLabel.TextColor3 = color or Theme.Sub
+    end
+end
+
+local function keepConnection(connection)
+    if connection and Animator.Connections then
+        table.insert(Animator.Connections, connection)
+    end
+    return connection
+end
+
+function Animator:DisconnectAll()
+    for _, connection in ipairs(self.Connections or {}) do
+        pcall(function() connection:Disconnect() end)
+    end
+    self.Connections = {}
+    if self.PlayConnection then
+        pcall(function() self.PlayConnection:Disconnect() end)
+        self.PlayConnection = nil
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 5 · UNDO  — one waypoint per user action, not one per gizmo pixel
+-- ═══════════════════════════════════════════════════════════════════════════
+local batchDepth = 0
+local batchLabel = nil
+
+function Animator:Waypoint(name)
+    if batchDepth > 0 then
+        batchLabel = batchLabel or name
+        return
+    end
     pcall(function()
-        ChangeHistoryService:SetWaypoint("SkillAnimator: " .. tostring(actionName))
+        ChangeHistoryService:SetWaypoint("[Skill Animator] " .. tostring(name or "edit"))
     end)
 end
 
--- Find a valid Rig model from Roblox Studio Selection or Workspace
-function StudioAnimator:FindRigFromSelection()
-    local selected = {}
-    pcall(function() selected = Selection:Get() end)
+function Animator:BeginBatch(name)
+    batchDepth = batchDepth + 1
+    batchLabel = batchLabel or name
+end
 
-    for _, obj in ipairs(selected) do
-        if obj:IsA("Model") and obj:FindFirstChildOfClass("Humanoid") then
-            return obj
-        elseif obj:IsA("BasePart") and obj.Parent and obj.Parent:IsA("Model") then
-            return obj.Parent
+function Animator:EndBatch()
+    batchDepth = math.max(0, batchDepth - 1)
+    if batchDepth == 0 and batchLabel then
+        local name = batchLabel
+        batchLabel = nil
+        pcall(function()
+            ChangeHistoryService:SetWaypoint("[Skill Animator] " .. tostring(name))
+        end)
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 6 · RIG BINDING
+-- ═══════════════════════════════════════════════════════════════════════════
+function Animator:FindRig(selectedOnly)
+    local chosen = nil
+    pcall(function()
+        for _, instance in ipairs(Selection:Get()) do
+            if instance:IsA("Model") and instance:FindFirstChildOfClass("Humanoid") then
+                chosen = instance
+                break
+            elseif instance:IsA("BasePart") and instance.Parent and instance.Parent:IsA("Model") then
+                chosen = instance.Parent
+                break
+            end
+        end
+    end)
+    if chosen then return chosen end
+    if selectedOnly then return nil end
+    -- convenience: a baseplate with exactly one rig binds itself
+    local found = {}
+    for _, instance in ipairs(Workspace:GetChildren()) do
+        if instance:IsA("Model") and instance:FindFirstChildOfClass("Humanoid") then
+            table.insert(found, instance)
         end
     end
-
-    -- Fallback: search Workspace for any Dummy / Rig with Motor6D
-    for _, child in ipairs(Workspace:GetChildren()) do
-        if child:IsA("Model") and child:FindFirstChildOfClass("Humanoid") then
-            return child
-        end
-    end
+    if #found == 1 then return found[1] end
     return nil
 end
 
-function StudioAnimator:BindRig(rigModel)
-    if not rigModel or not rigModel:IsA("Model") then return false end
-    self.ActiveRig = rigModel
-    self.Joints = {}
-    self.JointOrder = {}
-    self.TrackKeyframes = {}
+local function motorRecord(motor)
+    return {
+        Key      = motor.Part1.Name,
+        Part0Name = motor.Part0.Name,
+        Part1Name = motor.Part1.Name,
+        Motor    = motor,
+        Part0    = motor.Part0,
+        Part1    = motor.Part1,
+        BaseC0   = motor.C0,
+        Pose     = emptyPose(),
+    }
+end
 
-    for _, desc in ipairs(rigModel:GetDescendants()) do
-        if desc:IsA("Motor6D") and desc.Part0 and desc.Part1 then
-            local partName = desc.Part1.Name
-            local key = partName
+-- The root of an animation is the part that is never a Part1 of any joint:
+-- HumanoidRootPart on R15, Torso on R6, whatever you built on a custom rig.
+local function detectRoot(rig, joints)
+    local isChild = {}
+    for _, joint in ipairs(joints) do
+        isChild[joint.Part1Name] = true
+    end
+    local preferred = { "HumanoidRootPart", "Torso", "UpperTorso", "Head" }
+    local candidates = {}
+    for _, joint in ipairs(joints) do
+        if not isChild[joint.Part0Name] then
+            candidates[joint.Part0Name] = joint.Part0
+        end
+    end
+    for _, name in ipairs(preferred) do
+        if candidates[name] then return name end
+    end
+    if rig.PrimaryPart and candidates[rig.PrimaryPart.Name] then
+        return rig.PrimaryPart.Name
+    end
+    for name in pairs(candidates) do
+        return name
+    end
+    return (rig.PrimaryPart and rig.PrimaryPart.Name) or "HumanoidRootPart"
+end
+
+-- depth-first order so the timeline reads root → extremity
+local function orderJoints(children, rootName, byPart)
+    local order, seen = {}, {}
+    local function walk(partName)
+        local key = byPart[partName]
+        if key and not seen[key] then
+            seen[key] = true
+            table.insert(order, key)
+        end
+        local list = children[partName]
+        if not list then return end
+        table.sort(list)
+        for _, childName in ipairs(list) do
+            if not seen[childName] then walk(childName) end
+        end
+    end
+    walk(rootName)
+    -- a rig with two roots (a standalone prop, an accessory) still gets every joint
+    for _, partName in ipairs((function()
+        local names = {}
+        for name in pairs(byPart) do table.insert(names, name) end
+        table.sort(names)
+        return names
+    end)()) do
+        if not seen[byPart[partName]] then walk(partName) end
+    end
+    return order
+end
+
+function Animator:BindRig(rig)
+    if not rig or not rig:IsA("Model") then
+        self:Status("Select a rig (Model with a Humanoid and Motor6D joints).", Theme.Red)
+        return false
+    end
+
+    self:ResetRig(true)
+    self.Rig = rig
+    self.Joints, self.Order, self.Children, self.ByPart = {}, {}, {}, {}
+    self.Tracks = {}
+
+    local joints = {}
+    for _, descendant in ipairs(rig:GetDescendants()) do
+        if descendant:IsA("Motor6D") and descendant.Part0 and descendant.Part1 then
+            local joint = motorRecord(descendant)
+            local key = joint.Part1Name
             if self.Joints[key] then
-                key = partName .. " (" .. desc.Name .. ")"
+                key = joint.Part1Name .. " (" .. descendant.Name .. ")"
             end
-            self.Joints[key] = {
-                Key    = key,
-                PartName = partName,
-                Motor  = desc,
-                Part0  = desc.Part0,
-                Part1  = desc.Part1,
-                BaseC0 = desc.C0,
-                Pose   = makeEmptyPose(),
-            }
-            table.insert(self.JointOrder, key)
-            self.TrackKeyframes[key] = {}
+            joint.Key = key
+            self.Joints[key] = joint
+            self.ByPart[joint.Part1Name] = key
+            self.Children[joint.Part0Name] = self.Children[joint.Part0Name] or {}
+            table.insert(self.Children[joint.Part0Name], joint.Part1Name)
+            table.insert(joints, joint)
         end
     end
 
-    table.sort(self.JointOrder)
-    self.SelectedJoint = self.JointOrder[1]
-    setStudioWaypoint("Bind Rig " .. rigModel.Name)
-    return #self.JointOrder > 0
+    if #joints == 0 then
+        self.Rig = nil
+        self:Status("That model has no Motor6D joints — it cannot be animated.", Theme.Red)
+        return false
+    end
+
+    self.RootPartName = detectRoot(rig, joints)
+    self.Order = orderJoints(self.Children, self.RootPartName, self.ByPart)
+
+    for _, key in ipairs(self.Order) do
+        self.Tracks[key] = {}
+    end
+    self.Selected = self.Order[1]
+    self.Frame = 0
+    self.ViewStart = 0
+    self:Waypoint("Bind rig " .. rig.Name)
+    self:Status(string.format("Bound %s · %d joints · root %s", rig.Name, #self.Order, tostring(self.RootPartName)), Theme.Green)
+    return true
 end
 
-function StudioAnimator:EvaluateJointPoseAtFrame(jointKey, frameFloat)
-    local track = self.TrackKeyframes[jointKey]
+function Animator:ResetRig(silent)
+    if not self.Rig then return end
+    for _, joint in pairs(self.Joints) do
+        if joint.Motor and joint.Motor.Parent then
+            pcall(function() joint.Motor.C0 = joint.BaseC0 end)
+        end
+        joint.Pose = emptyPose()
+    end
+    if not silent then self:Waypoint("Reset rig") end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 7 · TIMELINE MODEL
+-- ═══════════════════════════════════════════════════════════════════════════
+function Animator:TrackOrder(jointKey)
+    local track = self.Tracks[jointKey]
+    if not track then return {} end
+    if track.__order and track.__dirty ~= true then return track.__order end
+    local order = {}
+    for frame in pairs(track) do
+        if type(frame) == "number" then table.insert(order, frame) end
+    end
+    table.sort(order)
+    track.__order = order
+    track.__dirty = false
+    return order
+end
+
+function Animator:MarkDirty(jointKey)
+    local track = self.Tracks[jointKey]
+    if track then track.__dirty = true end
+end
+
+function Animator:Evaluate(jointKey, frameFloat)
+    local track = self.Tracks[jointKey]
     if not track then return nil end
+    local order = self:TrackOrder(jointKey)
+    if #order == 0 then return nil end
+    if frameFloat <= order[1] then return clonePose(track[order[1]]) end
+    if frameFloat >= order[#order] then return clonePose(track[order[#order]]) end
 
-    local keys = {}
-    for f in pairs(track) do table.insert(keys, f) end
-    if #keys == 0 then return nil end
-    table.sort(keys)
-
-    if frameFloat <= keys[1] then return clonePose(track[keys[1]]) end
-    if frameFloat >= keys[#keys] then return clonePose(track[keys[#keys]]) end
-
-    local prevF, nextF = keys[1], keys[#keys]
-    for i = 1, #keys - 1 do
-        if frameFloat >= keys[i] and frameFloat <= keys[i + 1] then
-            prevF = keys[i]
-            nextF = keys[i + 1]
+    local previousFrame, nextFrame = order[1], order[#order]
+    for index = 1, #order - 1 do
+        if frameFloat >= order[index] and frameFloat <= order[index + 1] then
+            previousFrame, nextFrame = order[index], order[index + 1]
             break
         end
     end
 
-    if prevF == nextF then return clonePose(track[prevF]) end
+    local first, second = track[previousFrame], track[nextFrame]
+    if previousFrame == nextFrame or not first or not second then
+        return clonePose(second or first or emptyPose())
+    end
 
-    local p0 = track[prevF]
-    local p1 = track[nextF]
-    local rawAlpha = (frameFloat - prevF) / (nextF - prevF)
-    local styleEntry = EASING_STYLES[p1.StyleIdx or 2] or EASING_STYLES[2]
-    local dirEntry   = EASING_DIRECTIONS[p1.DirIdx or 1] or EASING_DIRECTIONS[1]
-    local alpha = TweenService:GetValue(rawAlpha, styleEntry.Tween, dirEntry.Tween)
-
-    local function lerp(a, b, t) return a + (b - a) * t end
+    local raw = (frameFloat - previousFrame) / (nextFrame - previousFrame)
+    local style = EASING[second.Style or self.EasingIndex] or EASING[2]
+    local direction = DIRECTIONS[second.Dir or self.DirIndex] or DIRECTIONS[1]
+    local alpha = raw
+    pcall(function()
+        alpha = TweenService:GetValue(raw, style.Tween, direction.Tween)
+    end)
 
     return {
-        RX = lerp(p0.RX, p1.RX, alpha),
-        RY = lerp(p0.RY, p1.RY, alpha),
-        RZ = lerp(p0.RZ, p1.RZ, alpha),
-        PX = lerp(p0.PX, p1.PX, alpha),
-        PY = lerp(p0.PY, p1.PY, alpha),
-        PZ = lerp(p0.PZ, p1.PZ, alpha),
-        StyleIdx = p1.StyleIdx,
-        DirIdx   = p1.DirIdx,
+        RX = lerp(first.RX, second.RX, alpha),
+        RY = lerp(first.RY, second.RY, alpha),
+        RZ = lerp(first.RZ, second.RZ, alpha),
+        PX = lerp(first.PX, second.PX, alpha),
+        PY = lerp(first.PY, second.PY, alpha),
+        PZ = lerp(first.PZ, second.PZ, alpha),
+        Style = second.Style, Dir = second.Dir,
     }
 end
 
-function StudioAnimator:ApplyJointPose(jointKey, pose)
-    local jData = self.Joints[jointKey]
-    if not jData or not jData.Motor or not jData.Motor.Parent then return end
-    jData.Pose = clonePose(pose)
-    local deltaCF = CFrame.new(pose.PX, pose.PY, pose.PZ)
-        * CFrame.Angles(degToRad(pose.RX), degToRad(pose.RY), degToRad(pose.RZ))
-    jData.Motor.C0 = jData.BaseC0 * deltaCF
+function Animator:ApplyPose(jointKey, pose)
+    local joint = self.Joints[jointKey]
+    if not joint or not joint.Motor or not joint.Motor.Parent then return end
+    joint.Pose = clonePose(pose)
+    local target = joint.BaseC0 * poseToCFrame(pose)
+    pcall(function() joint.Motor.C0 = target end)
 end
 
-function StudioAnimator:ApplyFrameToRig(frameFloat)
-    for _, jKey in ipairs(self.JointOrder) do
-        local evalPose = self:EvaluateJointPoseAtFrame(jKey, frameFloat)
-        if evalPose then
-            self:ApplyJointPose(jKey, evalPose)
+function Animator:ApplyFrame(frameFloat)
+    for _, key in ipairs(self.Order) do
+        local pose = self:Evaluate(key, frameFloat)
+        if pose then self:ApplyPose(key, pose) end
+    end
+end
+
+function Animator:RecordKey(jointKey, frame, poseOverride)
+    jointKey = jointKey or self.Selected
+    if not jointKey or not self.Joints[jointKey] then return false end
+    frame = clamp(round(tonumber(frame) or self.Frame), 0, self.Length)
+    local pose = clonePose(poseOverride or self.Joints[jointKey].Pose)
+    pose.Style = pose.Style or self.EasingIndex
+    pose.Dir = pose.Dir or self.DirIndex
+    self.Tracks[jointKey] = self.Tracks[jointKey] or {}
+    self.Tracks[jointKey][frame] = pose
+    self:MarkDirty(jointKey)
+    self:Waypoint("Key " .. jointKey .. " @ " .. frame)
+    return true
+end
+
+function Animator:DeleteKey(jointKey, frame)
+    jointKey = jointKey or self.Selected
+    frame = round(tonumber(frame) or self.Frame)
+    local track = self.Tracks[jointKey]
+    if not track or not track[frame] then return false end
+    track[frame] = nil
+    self:MarkDirty(jointKey)
+    self:Waypoint("Delete key")
+    return true
+end
+
+function Animator:DuplicateKey(jointKey, fromFrame, toFrame)
+    jointKey = jointKey or self.Selected
+    local track = self.Tracks[jointKey]
+    if not track then return false end
+    fromFrame = round(tonumber(fromFrame) or self.Frame)
+    local source = track[fromFrame]
+    if not source then return false end
+    toFrame = clamp(round(tonumber(toFrame) or (fromFrame + 5)), 0, self.Length)
+    track[toFrame] = clonePose(source)
+    self:MarkDirty(jointKey)
+    self:Waypoint("Duplicate key")
+    return true
+end
+
+function Animator:KeyFrames()
+    local seen, list = {}, {}
+    for _, key in ipairs(self.Order) do
+        for frame in pairs(self.Tracks[key] or {}) do
+            if type(frame) == "number" and not seen[frame] then
+                seen[frame] = true
+                table.insert(list, frame)
+            end
         end
     end
+    table.sort(list)
+    return list
 end
 
-function StudioAnimator:RecordKeyframe(jointKey, frameInt, poseOverride)
-    if not jointKey or not self.Joints[jointKey] then return end
-    frameInt = math.clamp(math.floor(frameInt + 0.5), 0, self.TotalFrames)
-    self.TrackKeyframes[jointKey] = self.TrackKeyframes[jointKey] or {}
-    local srcPose = poseOverride or self.Joints[jointKey].Pose or makeEmptyPose()
-    srcPose.StyleIdx = self.EasingStyleIdx
-    srcPose.DirIdx   = self.EasingDirIdx
-    self.TrackKeyframes[jointKey][frameInt] = clonePose(srcPose)
-    setStudioWaypoint("Record Keyframe")
-end
-
-function StudioAnimator:DeleteKeyframe(jointKey, frameInt)
-    if not jointKey or not self.TrackKeyframes[jointKey] then return end
-    frameInt = math.clamp(math.floor(frameInt + 0.5), 0, self.TotalFrames)
-    self.TrackKeyframes[jointKey][frameInt] = nil
-    setStudioWaypoint("Delete Keyframe")
-end
-
-function StudioAnimator:ResetJoint(jointKey)
-    local jData = self.Joints[jointKey]
-    if not jData then return end
-    local zero = makeEmptyPose()
-    self:ApplyJointPose(jointKey, zero)
-    if self.AutoKey then
-        self:RecordKeyframe(jointKey, self.CurrentFrame, zero)
-    end
-end
-
-function StudioAnimator:ResetEntireRig()
-    self.IsPlaying = false
-    for _, jKey in ipairs(self.JointOrder) do
-        local jData = self.Joints[jKey]
-        if jData and jData.Motor and jData.Motor.Parent then
-            jData.Motor.C0 = jData.BaseC0
-            jData.Pose = makeEmptyPose()
+function Animator:NeighbourKey(direction)
+    local frames = self:KeyFrames()
+    if #frames == 0 then return nil end
+    local current = self.Frame
+    if direction > 0 then
+        for _, frame in ipairs(frames) do
+            if frame > current + 0.001 then return frame end
         end
+        return nil
     end
-    setStudioWaypoint("Reset Rig")
+    for index = #frames, 1, -1 do
+        if frames[index] < current - 0.001 then return frames[index] end
+    end
+    return nil
 end
 
--- Export directly to native Roblox Studio `KeyframeSequence` inside `Rig.AnimSaves`!
-function StudioAnimator:ExportToKeyframeSequence()
-    if not self.ActiveRig then return nil end
+function Animator:ClearAllKeys()
+    for key in pairs(self.Tracks) do
+        self.Tracks[key] = {}
+    end
+    self:Waypoint("Clear timeline")
+end
 
-    local animSaves = self.ActiveRig:FindFirstChild("AnimSaves")
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 8 · EXPORT — a KeyframeSequence whose Pose tree matches the joint graph
+-- ═══════════════════════════════════════════════════════════════════════════
+function Animator:ExportSequence()
+    if not self.Rig then
+        self:Status("Bind a rig before exporting.", Theme.Red)
+        return nil
+    end
+    local frames = self:KeyFrames()
+    if #frames == 0 then
+        frames = { 0 }
+    end
+
+    local animSaves = self.Rig:FindFirstChild("AnimSaves")
     if not animSaves then
-        animSaves = Instance.new("Model")
-        animSaves.Name = "AnimSaves"
-        animSaves.Parent = self.ActiveRig
+        animSaves = newInstance("Model", { Name = "AnimSaves" }, self.Rig)
     end
+    local previous = animSaves:FindFirstChild(self.AnimationName)
+    if previous then previous:Destroy() end
 
-    local existing = animSaves:FindFirstChild(self.AnimationName)
-    if existing then existing:Destroy() end
+    local sequence = newInstance("KeyframeSequence", {
+        Name = self.AnimationName,
+        Loop = self.Looping,
+        Priority = Enum.AnimationPriority.Action,
+    })
+    sequence:SetAttribute("SkillAnimatorVersion", VERSION)
 
-    local kfs = Instance.new("KeyframeSequence")
-    kfs.Name = self.AnimationName
-    kfs.Loop = self.Loop
-    kfs.Priority = Enum.AnimationPriority.Action
+    for _, frame in ipairs(frames) do
+        local keyframe = newInstance("Keyframe", {
+            Name = "Keyframe_" .. tostring(frame),
+            Time = frame / math.max(self.FPS, 1),
+        })
 
-    -- Gather all unique frames across all tracks
-    local allFramesMap = {[0] = true}
-    for _, track in pairs(self.TrackKeyframes) do
-        for f in pairs(track) do
-            allFramesMap[f] = true
+        -- one Pose per joint, named after the joint's Part1
+        local poses = {}
+        for _, jointKey in ipairs(self.Order) do
+            local joint = self.Joints[jointKey]
+            local pose = self:Evaluate(jointKey, frame) or emptyPose()
+            local instance = newInstance("Pose", {
+                Name = joint.Part1Name,
+                Weight = 1,
+                CFrame = poseToCFrame(pose),
+            })
+            local style = EASING[pose.Style or self.EasingIndex] or EASING[2]
+            local direction = DIRECTIONS[pose.Dir or self.DirIndex] or DIRECTIONS[1]
+            pcall(function()
+                instance.EasingStyle = style.Pose
+                instance.EasingDirection = direction.Pose
+            end)
+            poses[joint.Part1Name] = { instance = instance, joint = joint }
         end
-    end
 
-    local sortedFrames = {}
-    for f in pairs(allFramesMap) do table.insert(sortedFrames, f) end
-    table.sort(sortedFrames)
+        -- the root pose is the part that is never a Part1
+        local rootPose = newInstance("Pose", {
+            Name = self.RootPartName or "HumanoidRootPart",
+            Weight = 1,
+        })
+        if poses[rootPose.Name] then
+            -- a rig where the root itself is driven (a custom prop rig)
+            rootPose.CFrame = poses[rootPose.Name].instance.CFrame
+            poses[rootPose.Name].instance:Destroy()
+            poses[rootPose.Name] = nil
+        end
+        rootPose.Parent = keyframe
 
-    for _, frameInt in ipairs(sortedFrames) do
-        local kf = Instance.new("Keyframe")
-        kf.Name = "Keyframe_" .. tostring(frameInt)
-        kf.Time = frameInt / math.max(self.FPS, 1)
-
-        -- Build hierarchical or flat Pose instances for each joint at this frame
-        local rootPart = self.ActiveRig.PrimaryPart or self.ActiveRig:FindFirstChild("HumanoidRootPart")
-        local rootPose = Instance.new("Pose")
-        rootPose.Name = rootPart and rootPart.Name or "HumanoidRootPart"
-        rootPose.Weight = 1
-        rootPose.Parent = kf
-
-        for _, jKey in ipairs(self.JointOrder) do
-            local jData = self.Joints[jKey]
-            local evalPose = self:EvaluateJointPoseAtFrame(jKey, frameInt)
-            if jData and evalPose then
-                local poseInst = Instance.new("Pose")
-                poseInst.Name = jData.PartName
-                poseInst.Weight = 1
-                poseInst.CFrame = CFrame.new(evalPose.PX, evalPose.PY, evalPose.PZ)
-                    * CFrame.Angles(degToRad(evalPose.RX), degToRad(evalPose.RY), degToRad(evalPose.RZ))
-
-                local st = EASING_STYLES[evalPose.StyleIdx or 2] or EASING_STYLES[2]
-                local dr = EASING_DIRECTIONS[evalPose.DirIdx or 1] or EASING_DIRECTIONS[1]
-                poseInst.EasingStyle = st.Pose
-                poseInst.EasingDirection = dr.Pose
-                poseInst.Parent = rootPose
+        local placed = {}
+        local function attach(partName, parentPose, depth)
+            if depth > 64 then return end
+            local entry = poses[partName]
+            if entry and not placed[partName] then
+                placed[partName] = true
+                entry.instance.Parent = parentPose
+                local children = self.Children[partName]
+                if children then
+                    for _, childName in ipairs(children) do
+                        attach(childName, entry.instance, depth + 1)
+                    end
+                end
             end
         end
 
-        kf.Parent = kfs
+        local children = self.Children[rootPose.Name]
+        if children then
+            for _, childName in ipairs(children) do
+                attach(childName, rootPose, 0)
+            end
+        end
+        -- rigs with several top-level branches: attach anything still loose
+        for _, jointKey in ipairs(self.Order) do
+            local joint = self.Joints[jointKey]
+            if not placed[joint.Part1Name] then
+                attach(joint.Part1Name, rootPose, 0)
+            end
+        end
+
+        keyframe.Parent = sequence
     end
 
-    kfs.Parent = animSaves
-    pcall(function() Selection:Set({kfs}) end)
-    setStudioWaypoint("Export KeyframeSequence to AnimSaves")
-    return kfs
+    sequence.Parent = animSaves
+    pcall(function() Selection:Set({ sequence }) end)
+    self:Waypoint("Export " .. self.AnimationName)
+    self:Status(string.format("Exported %s · %d keyframe(s) → %s/AnimSaves", self.AnimationName, #frames, self.Rig.Name), Theme.Green)
+    return sequence
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  3D STUDIO VIEWPORT GIZMOS (SELECTIONBOX + ARCHANDLES + HANDLES)
+-- 9 · IMPORT — read a KeyframeSequence back into the timeline
 -- ═══════════════════════════════════════════════════════════════════════════
+function Animator:ImportSequence(sequence)
+    sequence = sequence or (function()
+        local selected = nil
+        pcall(function()
+            for _, instance in ipairs(Selection:Get()) do
+                if instance:IsA("KeyframeSequence") then selected = instance break end
+            end
+        end)
+        return selected
+    end)()
+    if not sequence and self.Rig then
+        local animSaves = self.Rig:FindFirstChild("AnimSaves")
+        if animSaves then
+            sequence = animSaves:FindFirstChild(self.AnimationName)
+        end
+    end
+    if not sequence or not sequence:IsA("KeyframeSequence") then
+        self:Status("Select a KeyframeSequence (AnimSaves) to import.", Theme.Red)
+        return false
+    end
 
-local GizmoFolder = CoreGui:FindFirstChild("SkillAnimator_StudioGizmos")
+    local restored, frameCount = 0, 0
+    for key in pairs(self.Tracks) do self.Tracks[key] = {} end
+
+    local keyframes = {}
+    for _, child in ipairs(sequence:GetChildren()) do
+        if child:IsA("Keyframe") then table.insert(keyframes, child) end
+    end
+    table.sort(keyframes, function(a, b) return a.Time < b.Time end)
+
+    for _, keyframe in ipairs(keyframes) do
+        local frame = clamp(round(keyframe.Time * self.FPS), 0, self.Length)
+        frameCount = frameCount + 1
+        local poseInstances = {}
+        for _, descendant in ipairs(keyframe:GetDescendants()) do
+            if descendant:IsA("Pose") then table.insert(poseInstances, descendant) end
+        end
+        if #poseInstances == 0 then
+            for _, child in ipairs(keyframe:GetChildren()) do
+                if child:IsA("Pose") then
+                    table.insert(poseInstances, child)
+                    for _, deep in ipairs(child:GetDescendants()) do
+                        if deep:IsA("Pose") then table.insert(poseInstances, deep) end
+                    end
+                end
+            end
+        end
+        for _, poseInstance in ipairs(poseInstances) do
+            local jointKey = self.ByPart[poseInstance.Name]
+            if jointKey then
+                local pose = poseFromCFrame(poseInstance.CFrame)
+                local styleName = tostring(poseInstance.EasingStyle)
+                local directionName = tostring(poseInstance.EasingDirection)
+                for index, style in ipairs(EASING) do
+                    if style.Name == styleName then pose.Style = index break end
+                end
+                for index, direction in ipairs(DIRECTIONS) do
+                    if direction.Name == directionName then pose.Dir = index break end
+                end
+                self.Tracks[jointKey] = self.Tracks[jointKey] or {}
+                self.Tracks[jointKey][frame] = pose
+                self:MarkDirty(jointKey)
+                restored = restored + 1
+            end
+        end
+    end
+
+    self.AnimationName = sequence.Name
+    self:Waypoint("Import " .. sequence.Name)
+    self:Status(string.format("Imported %s · %d keyframe(s) · %d pose(s)", sequence.Name, frameCount, restored), Theme.Green)
+    return restored > 0
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 10 · PROJECT SAVE / LOAD (an attribute on the rig, survives a restart)
+-- ═══════════════════════════════════════════════════════════════════════════
+local PROJECT_ATTRIBUTE = "SkillAnimatorProject"
+local PROJECT_HEADER = "SKA2"
+
+local function escapeField(text)
+    return (tostring(text):gsub(";", "%%3B"):gsub(",", "%%2C"):gsub("|", "%%7C"):gsub("\n", " "))
+end
+
+local function unescapeField(text)
+    return (tostring(text):gsub("%%3B", ";"):gsub("%%2C", ","):gsub("%%7C", "|"))
+end
+
+function Animator:ProjectString()
+    local keys = self:KeyFrames()
+    local lines = {
+        PROJECT_HEADER,
+        escapeField(self.AnimationName),
+        tostring(self.FPS),
+        tostring(self.Length),
+        tostring(self.Looping),
+        tostring(#keys),
+    }
+    for _, jointKey in ipairs(self.Order) do
+        local track = self.Tracks[jointKey]
+        if track then
+            for _, frame in ipairs(self:TrackOrder(jointKey)) do
+                local pose = track[frame]
+                if pose then
+                    table.insert(lines, table.concat({
+                        escapeField(jointKey), tostring(frame),
+                        tostring(roundTo(pose.RX, 2)), tostring(roundTo(pose.RY, 2)), tostring(roundTo(pose.RZ, 2)),
+                        tostring(roundTo(pose.PX, 3)), tostring(roundTo(pose.PY, 3)), tostring(roundTo(pose.PZ, 3)),
+                        tostring(pose.Style or 2), tostring(pose.Dir or 1),
+                    }, ","))
+                end
+            end
+        end
+    end
+    table.insert(lines, "END")
+    return table.concat(lines, "\n")
+end
+
+function Animator:SaveProject()
+    if not self.Rig then
+        self:Status("Bind a rig before saving a project.", Theme.Red)
+        return false
+    end
+    local encoded = self:ProjectString()
+    local ok = pcall(function() self.Rig:SetAttribute(PROJECT_ATTRIBUTE, encoded) end)
+    self:Status(ok and ("Project saved on " .. self.Rig.Name) or "Could not write the project attribute.", ok and Theme.Green or Theme.Red)
+    if ok then self:Waypoint("Save project") end
+    return ok
+end
+
+function Animator:LoadProject()
+    if not self.Rig then return false end
+    local encoded = nil
+    pcall(function() encoded = self.Rig:GetAttribute(PROJECT_ATTRIBUTE) end)
+    if type(encoded) ~= "string" or encoded == "" then
+        self:Status("No saved project on this rig.", Theme.Red)
+        return false
+    end
+    local lines = {}
+    for line in string.gmatch(encoded, "[^\n]+") do table.insert(lines, line) end
+    if lines[1] ~= PROJECT_HEADER then
+        self:Status("Saved project has an unknown format.", Theme.Red)
+        return false
+    end
+
+    for key in pairs(self.Tracks) do self.Tracks[key] = {} end
+    self.AnimationName = unescapeField(lines[2] or self.AnimationName)
+    self.FPS = validNumber(lines[3], self.FPS, 1, 240)
+    self.Length = validNumber(lines[4], self.Length, 1, 6000)
+    self.Looping = lines[5] == "true"
+    local restored = 0
+    for index = 7, #lines do
+        local line = lines[index]
+        if line == "END" then break end
+        local fields = {}
+        for field in string.gmatch(line, "[^,]+") do table.insert(fields, field) end
+        if #fields >= 10 then
+            local jointKey = unescapeField(fields[1])
+            if self.Joints[jointKey] then
+                local frame = clamp(round(validNumber(fields[2], 0, 0, self.Length)), 0, self.Length)
+                self.Tracks[jointKey] = self.Tracks[jointKey] or {}
+                self.Tracks[jointKey][frame] = {
+                    RX = validNumber(fields[3], 0, -360, 360),
+                    RY = validNumber(fields[4], 0, -360, 360),
+                    RZ = validNumber(fields[5], 0, -360, 360),
+                    PX = validNumber(fields[6], 0, -64, 64),
+                    PY = validNumber(fields[7], 0, -64, 64),
+                    PZ = validNumber(fields[8], 0, -64, 64),
+                    Style = validNumber(fields[9], 2, 1, #EASING),
+                    Dir = validNumber(fields[10], 1, 1, #DIRECTIONS),
+                }
+                self:MarkDirty(jointKey)
+                restored = restored + 1
+            end
+        end
+    end
+    self:Waypoint("Load project")
+    self:Status(string.format("Project loaded · %d key(s)", restored), restored > 0 and Theme.Green or Theme.Sub)
+    return restored > 0
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 11 · VIEWPORT GIZMOS
+-- ═══════════════════════════════════════════════════════════════════════════
+local GizmoFolder = CoreGui:FindFirstChild("SkillAnimatorGizmos")
 if GizmoFolder then GizmoFolder:Destroy() end
-GizmoFolder = Instance.new("Folder")
-GizmoFolder.Name = "SkillAnimator_StudioGizmos"
-GizmoFolder.Parent = CoreGui
+GizmoFolder = newInstance("Folder", { Name = "SkillAnimatorGizmos" }, CoreGui)
 
-local SelectionBox = Instance.new("SelectionBox", GizmoFolder)
-SelectionBox.Color3 = Theme.MoonAccent
-SelectionBox.LineThickness = 0.03
-SelectionBox.SurfaceColor3 = Theme.MoonAccent
-SelectionBox.SurfaceTransparency = 0.85
-
-local ArcHandles = Instance.new("ArcHandles", GizmoFolder)
-ArcHandles.Color3 = Theme.MoonCyan
-ArcHandles.Visible = false
-
-local MoveHandles = Instance.new("Handles", GizmoFolder)
-MoveHandles.Color3 = Theme.MoonPink
-MoveHandles.Style = Enum.HandlesStyle.Movement
-MoveHandles.Visible = false
+local SelectionBox = newInstance("SelectionBox", { Color3 = Theme.Accent, LineThickness = 0.03,
+    SurfaceColor3 = Theme.Accent, SurfaceTransparency = 0.88 }, GizmoFolder)
+local RotateHandles = newInstance("ArcHandles", { Color3 = Theme.Cyan, Visible = false }, GizmoFolder)
+local MoveHandles = newInstance("Handles", { Color3 = Theme.Accent, Style = Enum.HandlesStyle.Movement,
+    Visible = false }, GizmoFolder)
 
 local gizmoStartPose = nil
-local refreshInspectorUI = nil
-local refreshTimelineMarkers = nil
 
-ArcHandles.MouseButton1Down:Connect(function()
-    local jKey = StudioAnimator.SelectedJoint
-    if jKey and StudioAnimator.Joints[jKey] then
-        gizmoStartPose = clonePose(StudioAnimator.Joints[jKey].Pose)
-    end
-end)
+local refreshTimeline = nil
+local refreshInspector = nil
 
-ArcHandles.MouseDrag:Connect(function(axis, relativeAngle)
-    local jKey = StudioAnimator.SelectedJoint
-    if not jKey or not gizmoStartPose then return end
-    local degDelta = radToDeg(relativeAngle)
-    local newPose = clonePose(gizmoStartPose)
-
-    if axis == Enum.Axis.X then
-        newPose.RX = math.clamp(gizmoStartPose.RX + degDelta, -180, 180)
-    elseif axis == Enum.Axis.Y then
-        newPose.RY = math.clamp(gizmoStartPose.RY + degDelta, -180, 180)
-    elseif axis == Enum.Axis.Z then
-        newPose.RZ = math.clamp(gizmoStartPose.RZ + degDelta, -180, 180)
-    end
-
-    StudioAnimator:ApplyJointPose(jKey, newPose)
-    if StudioAnimator.AutoKey then
-        StudioAnimator:RecordKeyframe(jKey, StudioAnimator.CurrentFrame, newPose)
-        if refreshTimelineMarkers then refreshTimelineMarkers() end
-    end
-    if refreshInspectorUI then refreshInspectorUI() end
-end)
-
-MoveHandles.MouseButton1Down:Connect(function()
-    local jKey = StudioAnimator.SelectedJoint
-    if jKey and StudioAnimator.Joints[jKey] then
-        gizmoStartPose = clonePose(StudioAnimator.Joints[jKey].Pose)
-    end
-end)
-
-MoveHandles.MouseDrag:Connect(function(face, distance)
-    local jKey = StudioAnimator.SelectedJoint
-    if not jKey or not gizmoStartPose then return end
-    local normal = Vector3.FromNormalId(face) * distance
-    local newPose = clonePose(gizmoStartPose)
-    newPose.PX = math.clamp(gizmoStartPose.PX + normal.X, -5, 5)
-    newPose.PY = math.clamp(gizmoStartPose.PY + normal.Y, -5, 5)
-    newPose.PZ = math.clamp(gizmoStartPose.PZ + normal.Z, -5, 5)
-
-    StudioAnimator:ApplyJointPose(jKey, newPose)
-    if StudioAnimator.AutoKey then
-        StudioAnimator:RecordKeyframe(jKey, StudioAnimator.CurrentFrame, newPose)
-        if refreshTimelineMarkers then refreshTimelineMarkers() end
-    end
-    if refreshInspectorUI then refreshInspectorUI() end
-end)
-
-local function update3DGizmoAdornee()
-    local jKey = StudioAnimator.SelectedJoint
-    local jData = jKey and StudioAnimator.Joints[jKey]
-    local part = jData and jData.Part1
-
-    if not part or StudioAnimator.GizmoMode == "Off" then
+local function updateGizmos()
+    local joint = Animator.Selected and Animator.Joints[Animator.Selected]
+    local part = joint and joint.Part1
+    local mode = Animator.Gizmo
+    if not part or mode == "Off" then
         SelectionBox.Adornee = nil
-        ArcHandles.Adornee = nil
-        ArcHandles.Visible = false
+        RotateHandles.Adornee = nil
+        RotateHandles.Visible = false
         MoveHandles.Adornee = nil
         MoveHandles.Visible = false
         return
     end
-
     SelectionBox.Adornee = part
-    if StudioAnimator.GizmoMode == "Rotate" then
-        ArcHandles.Adornee = part
-        ArcHandles.Visible = true
+    if mode == "Rotate" then
+        RotateHandles.Adornee = part
+        RotateHandles.Visible = true
         MoveHandles.Adornee = nil
         MoveHandles.Visible = false
-    elseif StudioAnimator.GizmoMode == "Move" then
+    else
         MoveHandles.Adornee = part
         MoveHandles.Visible = true
-        ArcHandles.Adornee = nil
-        ArcHandles.Visible = false
+        RotateHandles.Adornee = nil
+        RotateHandles.Visible = false
     end
 end
 
+local function beginGizmoDrag()
+    local joint = Animator.Selected and Animator.Joints[Animator.Selected]
+    if joint then gizmoStartPose = clonePose(joint.Pose) end
+    Animator:BeginBatch("Gizmo edit")
+end
+
+RotateHandles.MouseButton1Down:Connect(beginGizmoDrag)
+MoveHandles.MouseButton1Down:Connect(beginGizmoDrag)
+
+-- studio fires no "drag ended" on handles; the mouse release is the end
+local function endGizmoDrag()
+    if gizmoStartPose then
+        gizmoStartPose = nil
+        Animator:EndBatch()
+    end
+end
+local endDragConnection = UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then endGizmoDrag() end
+end)
+
+RotateHandles.MouseDrag:Connect(function(axis, angle)
+    local jointKey = Animator.Selected
+    local joint = jointKey and Animator.Joints[jointKey]
+    if not joint or not gizmoStartPose then return end
+    local pose = clonePose(gizmoStartPose)
+    local delta = radToDeg(angle)
+    if axis == Enum.Axis.X then
+        pose.RX = clamp(gizmoStartPose.RX + delta, -180, 180)
+    elseif axis == Enum.Axis.Y then
+        pose.RY = clamp(gizmoStartPose.RY + delta, -180, 180)
+    elseif axis == Enum.Axis.Z then
+        pose.RZ = clamp(gizmoStartPose.RZ + delta, -180, 180)
+    end
+    Animator:ApplyPose(jointKey, pose)
+    if Animator.AutoKey then Animator:RecordKey(jointKey, Animator.Frame, pose) end
+    if refreshInspector then refreshInspector() end
+    if refreshTimeline then refreshTimeline() end
+end)
+
+MoveHandles.MouseDrag:Connect(function(face, distance)
+    local jointKey = Animator.Selected
+    local joint = jointKey and Animator.Joints[jointKey]
+    if not joint or not gizmoStartPose then return end
+    local normal = Vector3.FromNormalId(face) * distance
+    local pose = clonePose(gizmoStartPose)
+    pose.PX = clamp(gizmoStartPose.PX + normal.X, -4, 4)
+    pose.PY = clamp(gizmoStartPose.PY + normal.Y, -4, 4)
+    pose.PZ = clamp(gizmoStartPose.PZ + normal.Z, -4, 4)
+    Animator:ApplyPose(jointKey, pose)
+    if Animator.AutoKey then Animator:RecordKey(jointKey, Animator.Frame, pose) end
+    if refreshInspector then refreshInspector() end
+    if refreshTimeline then refreshTimeline() end
+end)
+
 -- ═══════════════════════════════════════════════════════════════════════════
---  BUILD STUDIO DOCK WIDGET OR STANDALONE STUDIO GUI
+-- 12 · THE INTERFACE
 -- ═══════════════════════════════════════════════════════════════════════════
+local UI = {}
 
-function StudioAnimator:BuildEditorInterface(containerParent)
-    local Main = Instance.new("Frame", containerParent)
-    Main.Name = "SkillAnimatorRoot"
-    Main.Size = UDim2.new(1, 0, 1, 0)
-    Main.BackgroundColor3 = Theme.BgMain
-    Main.BorderSizePixel = 0
+function Animator:BuildUI(parent)
+    local main = newInstance("Frame", {
+        Name = "SkillAnimatorRoot",
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundColor3 = Theme.Bg,
+        BorderSizePixel = 0,
+    }, parent)
+    self.Main = main
 
-    -- Top Header Bar
-    local Header = Instance.new("Frame", Main)
-    Header.Size = UDim2.new(1, 0, 0, 34)
-    Header.BackgroundColor3 = Theme.BgHeader
-    Header.BorderSizePixel = 0
+    -- header ───────────────────────────────────────────────────────────────
+    local header = newInstance("Frame", {
+        Size = UDim2.new(1, 0, 0, 28),
+        BackgroundColor3 = Theme.BgHeader,
+        BorderSizePixel = 0,
+    }, main)
+    label(header, "SKILL ANIMATOR", {
+        Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = Theme.Text,
+        Position = UDim2.new(0, 12, 0, 0), Size = UDim2.new(0, 150, 1, 0),
+    })
+    label(header, VERSION .. " · native KeyframeSequence export", {
+        TextSize = 10, TextColor3 = Theme.Muted,
+        Position = UDim2.new(0, 120, 0, 0), Size = UDim2.new(0, 260, 1, 0),
+    })
+    local rigLabel = label(header, "Rig: none", {
+        Font = Enum.Font.Code, TextSize = 10, TextColor3 = Theme.Cyan,
+        Position = UDim2.new(1, -430, 0, 0), Size = UDim2.new(0, 420, 1, 0),
+        TextXAlignment = Enum.TextXAlignment.Right,
+    })
+    self.RigLabel = rigLabel
 
-    local TitleLbl = Instance.new("TextLabel", Header)
-    TitleLbl.Size = UDim2.new(0, 380, 1, 0)
-    TitleLbl.Position = UDim2.new(0, 14, 0, 0)
-    TitleLbl.BackgroundTransparency = 1
-    TitleLbl.Font = Enum.Font.GothamBlack
-    TitleLbl.TextSize = 13
-    TitleLbl.TextColor3 = Theme.TextPrimary
-    TitleLbl.TextXAlignment = Enum.TextXAlignment.Left
-    TitleLbl.Text = "🌙 SKILL ANIMATOR STUDIO  •  ROBLOX STUDIO PLUGIN"
+    -- toolbar A ────────────────────────────────────────────────────────────
+    local barA = newInstance("ScrollingFrame", {
+        Name = "ToolbarA",
+        Size = UDim2.new(1, 0, 0, 32),
+        Position = UDim2.new(0, 0, 0, 28),
+        BackgroundColor3 = Theme.BgBar,
+        BorderSizePixel = 0,
+        ScrollingDirection = Enum.ScrollingDirection.X,
+        AutomaticCanvasSize = Enum.AutomaticSize.X,
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        ScrollBarThickness = 0,
+        VerticalScrollBarInset = Enum.ScrollBarInset.None,
+        ClipsDescendants = true,
+    }, main)
+    newInstance("UIListLayout", {
+        FillDirection = Enum.FillDirection.Horizontal,
+        VerticalAlignment = Enum.VerticalAlignment.Center,
+        Padding = UDim.new(0, 4),
+    }, barA)
+    newInstance("UIPadding", { PaddingLeft = UDim.new(0, 10) }, barA)
 
-    local RigStatusLbl = Instance.new("TextLabel", Header)
-    RigStatusLbl.Size = UDim2.new(0, 340, 1, 0)
-    RigStatusLbl.Position = UDim2.new(1, -354, 0, 0)
-    RigStatusLbl.BackgroundTransparency = 1
-    RigStatusLbl.Font = Enum.Font.Code
-    RigStatusLbl.TextSize = 11
-    RigStatusLbl.TextColor3 = Theme.MoonCyan
-    RigStatusLbl.TextXAlignment = Enum.TextXAlignment.Right
-    RigStatusLbl.Text = "Rig: None  |  Frame: 0 / 60 (30 FPS)"
-
-    -- Second Row: Moon Animator Transport & Rig Toolbar
-    local Toolbar = Instance.new("Frame", Main)
-    Toolbar.Size = UDim2.new(1, 0, 0, 36)
-    Toolbar.Position = UDim2.new(0, 0, 0, 34)
-    Toolbar.BackgroundColor3 = Theme.BgToolbar
-    Toolbar.BorderSizePixel = 0
-
-    local tbLayout = Instance.new("UIListLayout", Toolbar)
-    tbLayout.FillDirection = Enum.FillDirection.Horizontal
-    tbLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-    tbLayout.Padding = UDim.new(0, 5)
-
-    local tbPad = Instance.new("UIPadding", Toolbar)
-    tbPad.PaddingLeft = UDim.new(0, 10)
-
-    local function makeToolBtn(txt, width, bgCol, callback)
-        local b = Instance.new("TextButton", Toolbar)
-        b.Size = UDim2.new(0, width, 0, 26)
-        b.BackgroundColor3 = bgCol or Theme.BgControl
-        b.Font = Enum.Font.GothamBold
-        b.TextSize = 11
-        b.TextColor3 = Theme.TextPrimary
-        b.Text = txt
-        b.BorderSizePixel = 0
-        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
-        local st = Instance.new("UIStroke", b)
-        st.Color = Theme.Border
-        st.Thickness = 1
-        b.MouseButton1Click:Connect(function()
-            if callback then callback(b) end
+    local playButton
+    local function makeRowOne()
+        button(barA, "Bind selected rig", { Size = UDim2.new(0, 116, 0, 24), BackgroundColor3 = Theme.AccentDim,
+            Name = "BindButton" }, function()
+            if self:BindRig(self:FindRig(true) or self:FindRig(false)) then
+                self:RefreshAll()
+            end
         end)
-        return b
+        playButton = button(barA, "▶ Play", { Size = UDim2.new(0, 62, 0, 24), BackgroundColor3 = Theme.AccentDim,
+            Name = "PlayButton" }, function(instance)
+            Animator.Playing = not Animator.Playing
+            instance.Text = Animator.Playing and "⏸ Pause" or "▶ Play"
+            instance.BackgroundColor3 = Animator.Playing and Theme.AccentDim or Theme.BgInset
+        end)
+        button(barA, "⏮ 0", { Size = UDim2.new(0, 46, 0, 24), Name = "StopButton" }, function()
+            Animator.Playing = false
+            if playButton then
+                playButton.Text = "▶ Play"
+                playButton.BackgroundColor3 = Theme.BgInset
+            end
+            Animator.Frame = 0
+            Animator:ApplyFrame(0)
+            Animator:RefreshAll()
+        end)
+        button(barA, "◀ key", { Size = UDim2.new(0, 52, 0, 24), Name = "PrevKeyButton" }, function()
+            local frame = Animator:NeighbourKey(-1)
+            if frame then
+                Animator.Frame = frame
+                Animator:ApplyFrame(frame)
+                Animator:RefreshAll()
+            end
+        end)
+        button(barA, "key ▶", { Size = UDim2.new(0, 52, 0, 24), Name = "NextKeyButton" }, function()
+            local frame = Animator:NeighbourKey(1)
+            if frame then
+                Animator.Frame = frame
+                Animator:ApplyFrame(frame)
+                Animator:RefreshAll()
+            end
+        end)
+        local loopButton
+        loopButton = button(barA, "Loop on", { Size = UDim2.new(0, 66, 0, 24), Name = "LoopButton" }, function(instance)
+            Animator.Looping = not Animator.Looping
+            instance.Text = Animator.Looping and "Loop on" or "Loop off"
+            instance.TextColor3 = Animator.Looping and Theme.Text or Theme.Muted
+        end)
+        button(barA, "Gizmo: rot", { Size = UDim2.new(0, 84, 0, 24), Name = "GizmoButton" }, function(instance)
+            if Animator.Gizmo == "Rotate" then Animator.Gizmo = "Move"
+            elseif Animator.Gizmo == "Move" then Animator.Gizmo = "Off"
+            else Animator.Gizmo = "Rotate" end
+            instance.Text = "Gizmo: " .. string.lower(Animator.Gizmo)
+            updateGizmos()
+        end)
+        button(barA, "Easing: Sine", { Size = UDim2.new(0, 96, 0, 24), Name = "EasingButton" }, function(instance)
+            Animator.EasingIndex = (Animator.EasingIndex % #EASING) + 1
+            instance.Text = "Easing: " .. EASING[Animator.EasingIndex].Name
+        end)
+        button(barA, "Direction: Out", { Size = UDim2.new(0, 104, 0, 24), Name = "DirectionButton" }, function(instance)
+            Animator.DirIndex = (Animator.DirIndex % #DIRECTIONS) + 1
+            instance.Text = "Direction: " .. DIRECTIONS[Animator.DirIndex].Name
+        end)
+        button(barA, "Reset rig", { Size = UDim2.new(0, 74, 0, 24), Name = "ResetButton" }, function()
+            Animator:ResetRig()
+            Animator:RefreshAll()
+        end)
+    end
+    makeRowOne()
+
+    -- toolbar B ────────────────────────────────────────────────────────────
+    local barB = newInstance("ScrollingFrame", {
+        Name = "ToolbarB",
+        Size = UDim2.new(1, 0, 0, 32),
+        Position = UDim2.new(0, 0, 0, 60),
+        BackgroundColor3 = Theme.BgBar,
+        BorderSizePixel = 0,
+        ScrollingDirection = Enum.ScrollingDirection.X,
+        AutomaticCanvasSize = Enum.AutomaticSize.X,
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        ScrollBarThickness = 0,
+        VerticalScrollBarInset = Enum.ScrollBarInset.None,
+        ClipsDescendants = true,
+    }, main)
+    newInstance("UIListLayout", {
+        FillDirection = Enum.FillDirection.Horizontal,
+        VerticalAlignment = Enum.VerticalAlignment.Center,
+        Padding = UDim.new(0, 4),
+    }, barB)
+    newInstance("UIPadding", { PaddingLeft = UDim.new(0, 10) }, barB)
+
+    button(barB, "◆ Add key", { Size = UDim2.new(0, 74, 0, 24), Name = "AddKeyButton" }, function()
+        if Animator:RecordKey() then Animator:RefreshAll() end
+    end)
+    button(barB, "⧉ Duplicate", { Size = UDim2.new(0, 80, 0, 24), Name = "DuplicateButton" }, function()
+        local nextFrame = Animator.Frame + math.max(1, round(Animator.FPS / 6))
+        if Animator:DuplicateKey(Animator.Selected, Animator.Frame, nextFrame) then
+            Animator.Frame = clamp(nextFrame, 0, Animator.Length)
+            Animator:ApplyFrame(Animator.Frame)
+            Animator:RefreshAll()
+        end
+    end)
+    button(barB, "✕ Delete key", { Size = UDim2.new(0, 80, 0, 24), Name = "DeleteButton" }, function()
+        if Animator:DeleteKey() then Animator:RefreshAll() end
+    end)
+    button(barB, "Copy pose", { Size = UDim2.new(0, 78, 0, 24), Name = "CopyPoseButton" }, function()
+        local joint = Animator.Selected and Animator.Joints[Animator.Selected]
+        if joint then
+            Animator.Copied = clonePose(joint.Pose)
+            Animator:Status("Pose copied from " .. joint.Key, Theme.Sub)
+        end
+    end)
+    button(barB, "Paste pose", { Size = UDim2.new(0, 82, 0, 24), Name = "PastePoseButton" }, function()
+        local jointKey = Animator.Selected
+        if jointKey and Animator.Copied then
+            Animator:ApplyPose(jointKey, Animator.Copied)
+            Animator:RecordKey(jointKey, Animator.Frame, Animator.Copied)
+            Animator:RefreshAll()
+        end
+    end)
+    button(barB, "Export → AnimSaves", { Size = UDim2.new(0, 92, 0, 24), BackgroundColor3 = Theme.AccentDim,
+        Name = "ExportButton" }, function()
+        if Animator:ExportSequence() then Animator:RefreshAll() end
+    end)
+    button(barB, "Import from AnimSaves", { Size = UDim2.new(0, 92, 0, 24), Name = "ImportButton" }, function()
+        if Animator:ImportSequence() then Animator:RefreshAll() end
+    end)
+    button(barB, "Save project", { Size = UDim2.new(0, 78, 0, 24), Name = "SaveProjectButton" }, function()
+        Animator:SaveProject()
+    end)
+    button(barB, "Load project", { Size = UDim2.new(0, 78, 0, 24), Name = "LoadProjectButton" }, function()
+        if Animator:LoadProject() then Animator:RefreshAll() end
+    end)
+    button(barB, "Zoom −", { Size = UDim2.new(0, 50, 0, 24), Name = "ZoomOutButton" }, function()
+        Animator.ZoomIndex = clamp(Animator.ZoomIndex - 1, 1, #ZOOM_LEVELS)
+        Animator:RefreshAll()
+    end)
+    button(barB, "Zoom +", { Size = UDim2.new(0, 50, 0, 24), Name = "ZoomInButton" }, function()
+        Animator.ZoomIndex = clamp(Animator.ZoomIndex + 1, 1, #ZOOM_LEVELS)
+        Animator:RefreshAll()
+    end)
+    local followButton
+    followButton = button(barB, "Follow: on", { Size = UDim2.new(0, 70, 0, 24), Name = "FollowButton" }, function(instance)
+        Animator.Follow = not Animator.Follow
+        instance.Text = Animator.Follow and "Follow: on" or "Follow: off"
+    end)
+
+    -- body: timeline + inspector ────────────────────────────────────────────
+    local body = newInstance("Frame", {
+        Name = "Body",
+        Size = UDim2.new(1, 0, 1, -114),
+        Position = UDim2.new(0, 0, 0, 92),
+        BackgroundTransparency = 1,
+    }, main)
+
+    local timeline = newInstance("Frame", {
+        Size = UDim2.new(1, -246, 1, 0),
+        BackgroundColor3 = Theme.BgPanel,
+        BorderSizePixel = 0,
+    }, body)
+    self.Timeline = timeline
+
+    local ruler = newInstance("Frame", {
+        Name = "Ruler",
+        Size = UDim2.new(1, 0, 0, 24),
+        BackgroundColor3 = Theme.BgHeader,
+        BorderSizePixel = 0,
+    }, timeline)
+    label(ruler, "JOINTS", {
+        Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = Theme.Accent,
+        Position = UDim2.new(0, 10, 0, 0), Size = UDim2.new(0, 170, 1, 0),
+    })
+    local rulerBar = newInstance("TextButton", {
+        Name = "RulerBar",
+        Text = "", AutoButtonColor = false, BorderSizePixel = 0,
+        BackgroundColor3 = Theme.BgInset,
+        Position = UDim2.new(0, 180, 0, 0),
+        Size = UDim2.new(1, -180, 1, 0),
+    }, ruler)
+    self.RulerBar = rulerBar
+
+    local playhead = newInstance("Frame", {
+        Name = "Playhead",
+        Size = UDim2.new(0, 2, 1, 0),
+        Position = UDim2.new(0, 180, 0, 0),
+        BackgroundColor3 = Theme.Red,
+        BorderSizePixel = 0,
+        ZIndex = 30,
+    }, timeline)
+    self.Playhead = playhead
+
+    local trackScroll = newInstance("ScrollingFrame", {
+        Name = "Tracks",
+        BackgroundTransparency = 1, BorderSizePixel = 0,
+        Position = UDim2.new(0, 0, 0, 24), Size = UDim2.new(1, 0, 1, -24),
+        ScrollBarThickness = 3, ScrollBarImageColor3 = Theme.AccentDim,
+        CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    }, timeline)
+    newInstance("UIListLayout", { Padding = UDim.new(0, 1), SortOrder = Enum.SortOrder.LayoutOrder }, trackScroll)
+    self.TrackScroll = trackScroll
+    self.Rows = {}
+
+    -- inspector ────────────────────────────────────────────────────────────
+    local inspector = newInstance("Frame", {
+        Size = UDim2.new(0, 246, 1, 0),
+        Position = UDim2.new(1, -246, 0, 0),
+        BackgroundColor3 = Theme.BgPanel,
+        BorderSizePixel = 0,
+    }, body)
+    label(inspector, "TRANSFORM", {
+        Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = Theme.Accent,
+        Position = UDim2.new(0, 12, 0, 6), Size = UDim2.new(1, -24, 0, 14),
+    })
+    self.JointLabel = label(inspector, "Joint: —", {
+        TextSize = 11, TextColor3 = Theme.Text,
+        Position = UDim2.new(0, 12, 0, 22), Size = UDim2.new(1, -24, 0, 14),
+    })
+
+    -- settings: FPS / length / name
+    local settings = newInstance("Frame", {
+        BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
+        Position = UDim2.new(0, 8, 0, 42), Size = UDim2.new(1, -16, 0, 58),
+    }, inspector)
+    corner(settings, 8)
+    local function field(parent, caption, value, x, onCommit, width)
+        label(parent, caption, {
+            TextSize = 9, TextColor3 = Theme.Muted,
+            Position = UDim2.new(0, x, 0, 5), Size = UDim2.new(0, width or 64, 0, 12),
+        })
+        local box = newInstance("TextBox", {
+            Text = value, Font = Enum.Font.Code, TextSize = 10, TextColor3 = Theme.Text,
+            BackgroundColor3 = Theme.Bg, BorderSizePixel = 0, ClearTextOnFocus = false,
+            Position = UDim2.new(0, x, 0, 18),
+            Size = UDim2.new(0, width or 64, 0, 18),
+        }, parent)
+        corner(box, 4)
+        box.FocusLost:Connect(function()
+            local ok, result = pcall(onCommit, box.Text)
+            if not ok then
+                Animator.Warn("field", result)
+            end
+            box.Text = tostring(result or box.Text)
+        end)
+        return box
+    end
+    self.FpsBox = field(settings, "FPS", tostring(self.FPS), 8, function(text)
+        Animator.FPS = clamp(round(validNumber(text, Animator.FPS, 1, 240)), 1, 240)
+        Animator:RefreshAll()
+        return Animator.FPS
+    end, 54)
+    self.LengthBox = field(settings, "Frames", tostring(self.Length), 70, function(text)
+        Animator.Length = clamp(round(validNumber(text, Animator.Length, 1, 6000)), 1, 6000)
+        Animator.Frame = clamp(Animator.Frame, 0, Animator.Length)
+        Animator:RefreshAll()
+        return Animator.Length
+    end, 54)
+    self.NameBox = field(settings, "Animation name", self.AnimationName, 132, function(text)
+        local cleaned = tostring(text):gsub("[^%w_%-%. ]", "")
+        if cleaned == "" then cleaned = Animator.AnimationName end
+        Animator.AnimationName = cleaned:sub(1, 48)
+        return Animator.AnimationName
+    end, 96)
+
+    local sliderHolder = newInstance("ScrollingFrame", {
+        BackgroundTransparency = 1, BorderSizePixel = 0,
+        Position = UDim2.new(0, 8, 0, 106), Size = UDim2.new(1, -16, 1, -150),
+        ScrollingDirection = Enum.ScrollingDirection.Y,
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        ScrollBarThickness = 3, ScrollBarImageColor3 = Theme.AccentDim,
+    }, inspector)
+    newInstance("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, sliderHolder)
+
+    local sliderSetters = {}
+    local function axisSlider(caption, key, minimum, maximum, color, decimals)
+        local box = newInstance("Frame", {
+            BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
+            Size = UDim2.new(1, 0, 0, 30),
+        }, sliderHolder)
+        corner(box, 6)
+        label(box, caption, { Font = Enum.Font.GothamBold, TextSize = 9, TextColor3 = Theme.Sub,
+            Position = UDim2.new(0, 8, 0, 2), Size = UDim2.new(0, 120, 0, 12) })
+        local valueLabel = label(box, "0", { Font = Enum.Font.Code, TextSize = 9, TextColor3 = color,
+            Position = UDim2.new(1, -70, 0, 2), Size = UDim2.new(0, 60, 0, 12),
+            TextXAlignment = Enum.TextXAlignment.Right })
+        local track = newInstance("Frame", {
+            BackgroundColor3 = Theme.Bg, BorderSizePixel = 0,
+            Position = UDim2.new(0, 8, 0, 18), Size = UDim2.new(1, -16, 0, 5),
+        }, box)
+        corner(track, 3)
+        local fill = newInstance("Frame", {
+            BackgroundColor3 = color, BorderSizePixel = 0,
+            Size = UDim2.new(0.5, 0, 1, 0),
+        }, track)
+        corner(fill, 3)
+
+        local function commit(relative)
+            local jointKey = Animator.Selected
+            if not jointKey or not Animator.Joints[jointKey] then return end
+            local raw = minimum + (maximum - minimum) * clamp(relative, 0, 1)
+            local value = decimals and roundTo(raw, decimals) or round(raw)
+            local pose = clonePose(Animator.Joints[jointKey].Pose)
+            pose[key] = value
+            Animator:ApplyPose(jointKey, pose)
+            if Animator.AutoKey then Animator:RecordKey(jointKey, Animator.Frame, pose) end
+            if sliderSetters[key] then sliderSetters[key](value) end
+            if refreshTimeline then refreshTimeline() end
+        end
+
+        local dragging = false
+        local function relativeAt(x)
+            local width = math.max(track.AbsoluteSize.X, 1)
+            return (x - track.AbsolutePosition.X) / width
+        end
+        track.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                dragging = true
+                Animator:BeginBatch("Slider edit")
+                commit(relativeAt(input.Position.X))
+            end
+        end)
+        keepConnection(UserInputService.InputChanged:Connect(function(input)
+            if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+                commit(relativeAt(input.Position.X))
+            end
+        end))
+        keepConnection(UserInputService.InputEnded:Connect(function(input)
+            if dragging and input.UserInputType == Enum.UserInputType.MouseButton1 then
+                dragging = false
+                Animator:EndBatch()
+            end
+        end))
+
+        sliderSetters[key] = function(value)
+            local relative = clamp(((tonumber(value) or 0) - minimum) / (maximum - minimum), 0, 1)
+            fill.Size = UDim2.new(relative, 0, 1, 0)
+            valueLabel.Text = decimals and string.format("%." .. decimals .. "f", tonumber(value) or 0)
+                or (tostring(round(value)) .. "°")
+        end
     end
 
-    local buildTrackRows
+    axisSlider("Rotate X", "RX", -180, 180, Color3.fromRGB(240, 130, 130), 0)
+    axisSlider("Rotate Y", "RY", -180, 180, Color3.fromRGB(130, 210, 150), 0)
+    axisSlider("Rotate Z", "RZ", -180, 180, Color3.fromRGB(120, 180, 240), 0)
+    axisSlider("Offset X", "PX", -4, 4, Color3.fromRGB(240, 170, 110), 2)
+    axisSlider("Offset Y", "PY", -4, 4, Color3.fromRGB(180, 150, 240), 2)
+    axisSlider("Offset Z", "PZ", -4, 4, Color3.fromRGB(230, 130, 190), 2)
+    self.SliderSetters = sliderSetters
 
-    makeToolBtn("➕ Bind Selected Rig", 132, Theme.SuccessGreen, function()
-        local rig = StudioAnimator:FindRigFromSelection()
-        if rig and StudioAnimator:BindRig(rig) then
-            RigStatusLbl.Text = string.format("Rig: %s (%d Motor6Ds)  |  Frame: %d / %d", rig.Name, #StudioAnimator.JointOrder, StudioAnimator.CurrentFrame, StudioAnimator.TotalFrames)
-            if buildTrackRows then buildTrackRows() end
-            if refreshInspectorUI then refreshInspectorUI() end
-            if refreshTimelineMarkers then refreshTimelineMarkers() end
-            update3DGizmoAdornee()
-        else
-            RigStatusLbl.Text = "⚠ Select a Rig/Dummy with Motor6D in Studio Explorer!"
-        end
+    button(inspector, "Reset joint", {
+        Size = UDim2.new(1, -16, 0, 24), Position = UDim2.new(0, 8, 1, -32),
+        BackgroundColor3 = Theme.BgBar, Name = "ResetJointButton",
+    }, function()
+        local jointKey = Animator.Selected
+        if not jointKey then return end
+        Animator:ApplyPose(jointKey, emptyPose())
+        if Animator.AutoKey then Animator:RecordKey(jointKey, Animator.Frame, emptyPose()) end
+        Animator:RefreshAll()
     end)
 
-    local PlayBtn = makeToolBtn("▶ Play", 66, Theme.MoonAccent, function(btn)
-        StudioAnimator.IsPlaying = not StudioAnimator.IsPlaying
-        btn.Text = StudioAnimator.IsPlaying and "⏸ Pause" or "▶ Play"
-        btn.BackgroundColor3 = StudioAnimator.IsPlaying and Theme.PlayheadRed or Theme.MoonAccent
-    end)
+    -- status bar ────────────────────────────────────────────────────────────
+    local status = newInstance("Frame", {
+        Size = UDim2.new(1, 0, 0, 22),
+        Position = UDim2.new(0, 0, 1, -22),
+        BackgroundColor3 = Theme.BgHeader,
+        BorderSizePixel = 0,
+    }, main)
+    self.StatusLabel = label(status, "Select a rig, then press Bind selected rig.", {
+        TextSize = 10, TextColor3 = Theme.Sub,
+        Position = UDim2.new(0, 12, 0, 0), Size = UDim2.new(1, -24, 1, 0),
+    })
 
-    makeToolBtn("⏮ 0", 42, Theme.BgControl, function()
-        StudioAnimator.IsPlaying = false
-        PlayBtn.Text = "▶ Play"
-        PlayBtn.BackgroundColor3 = Theme.MoonAccent
-        StudioAnimator.CurrentFrame = 0
-        StudioAnimator:ApplyFrameToRig(0)
-        if refreshInspectorUI then refreshInspectorUI() end
-    end)
-
-    makeToolBtn("🔁 Loop: ON", 80, Theme.BgControl, function(btn)
-        StudioAnimator.Loop = not StudioAnimator.Loop
-        btn.Text = StudioAnimator.Loop and "🔁 Loop: ON" or "🔁 Loop: OFF"
-    end)
-
-    makeToolBtn("◆ +Key", 66, Color3.fromRGB(202, 138, 4), function()
-        if StudioAnimator.SelectedJoint then
-            StudioAnimator:RecordKeyframe(StudioAnimator.SelectedJoint, StudioAnimator.CurrentFrame)
-            if refreshTimelineMarkers then refreshTimelineMarkers() end
-        end
-    end)
-
-    makeToolBtn("🗑 Del Key", 72, Theme.BgControl, function()
-        if StudioAnimator.SelectedJoint then
-            StudioAnimator:DeleteKeyframe(StudioAnimator.SelectedJoint, StudioAnimator.CurrentFrame)
-            if refreshTimelineMarkers then refreshTimelineMarkers() end
-        end
-    end)
-
-    makeToolBtn("📋 Copy", 58, Theme.BgControl, function()
-        local j = StudioAnimator.SelectedJoint
-        if j and StudioAnimator.Joints[j] then
-            StudioAnimator.CopiedPose = clonePose(StudioAnimator.Joints[j].Pose)
-        end
-    end)
-
-    makeToolBtn("📌 Paste", 60, Theme.BgControl, function()
-        local j = StudioAnimator.SelectedJoint
-        if j and StudioAnimator.CopiedPose then
-            StudioAnimator:ApplyJointPose(j, StudioAnimator.CopiedPose)
-            StudioAnimator:RecordKeyframe(j, StudioAnimator.CurrentFrame, StudioAnimator.CopiedPose)
-            if refreshInspectorUI then refreshInspectorUI() end
-            if refreshTimelineMarkers then refreshTimelineMarkers() end
-        end
-    end)
-
-    makeToolBtn("🌐 Gizmo: Rotate", 108, Theme.BgControl, function(btn)
-        if StudioAnimator.GizmoMode == "Rotate" then
-            StudioAnimator.GizmoMode = "Move"
-        elseif StudioAnimator.GizmoMode == "Move" then
-            StudioAnimator.GizmoMode = "Off"
-        else
-            StudioAnimator.GizmoMode = "Rotate"
-        end
-        btn.Text = "🌐 Gizmo: " .. StudioAnimator.GizmoMode
-        update3DGizmoAdornee()
-    end)
-
-    makeToolBtn("📈 Sine", 72, Theme.BgControl, function(btn)
-        StudioAnimator.EasingStyleIdx = (StudioAnimator.EasingStyleIdx % #EASING_STYLES) + 1
-        btn.Text = "📈 " .. EASING_STYLES[StudioAnimator.EasingStyleIdx].Tween.Name
-    end)
-
-    makeToolBtn("🔄 Reset Rig", 80, Theme.BgControl, function()
-        StudioAnimator:ResetEntireRig()
-        if refreshInspectorUI then refreshInspectorUI() end
-    end)
-
-    makeToolBtn("💾 Save to AnimSaves", 136, Theme.MoonCyan, function(btn)
-        local kfs = StudioAnimator:ExportToKeyframeSequence()
-        if kfs then
-            btn.Text = "✅ Saved in AnimSaves!"
-            task.delay(1.8, function()
-                if btn and btn.Parent then btn.Text = "💾 Save to AnimSaves" end
-            end)
-        end
-    end)
-
-    -- 3-Column Workspace Area
-    local WorkspaceArea = Instance.new("Frame", Main)
-    WorkspaceArea.Size = UDim2.new(1, 0, 1, -70)
-    WorkspaceArea.Position = UDim2.new(0, 0, 0, 70)
-    WorkspaceArea.BackgroundTransparency = 1
-
-    -- Left + Center: Track Hierarchy & Dope Sheet Timeline
-    local TimelineContainer = Instance.new("Frame", WorkspaceArea)
-    TimelineContainer.Size = UDim2.new(1, -230, 1, 0)
-    TimelineContainer.BackgroundColor3 = Theme.BgTrackList
-    TimelineContainer.BorderSizePixel = 0
-
-    local RulerHeader = Instance.new("Frame", TimelineContainer)
-    RulerHeader.Size = UDim2.new(1, 0, 0, 26)
-    RulerHeader.BackgroundColor3 = Theme.BgHeader
-    RulerHeader.BorderSizePixel = 0
-
-    local TrackColLabel = Instance.new("TextLabel", RulerHeader)
-    TrackColLabel.Size = UDim2.new(0, 175, 1, 0)
-    TrackColLabel.Position = UDim2.new(0, 10, 0, 0)
-    TrackColLabel.BackgroundTransparency = 1
-    TrackColLabel.Font = Enum.Font.GothamBold
-    TrackColLabel.TextSize = 11
-    TrackColLabel.TextColor3 = Theme.MoonAccent
-    TrackColLabel.TextXAlignment = Enum.TextXAlignment.Left
-    TrackColLabel.Text = "MOTOR6D RIG TRACKS"
-
-    local RulerBar = Instance.new("TextButton", RulerHeader)
-    RulerBar.Size = UDim2.new(1, -195, 1, 0)
-    RulerBar.Position = UDim2.new(0, 185, 0, 0)
-    RulerBar.BackgroundColor3 = Theme.BgControl
-    RulerBar.Text = ""
-    RulerBar.AutoButtonColor = false
-    RulerBar.BorderSizePixel = 0
-
-    for f = 0, StudioAnimator.TotalFrames, 10 do
-        local pct = f / StudioAnimator.TotalFrames
-        local tickLbl = Instance.new("TextLabel", RulerBar)
-        tickLbl.Size = UDim2.new(0, 24, 1, 0)
-        tickLbl.Position = UDim2.new(pct, -12, 0, 0)
-        tickLbl.BackgroundTransparency = 1
-        tickLbl.Font = Enum.Font.Code
-        tickLbl.TextSize = 10
-        tickLbl.TextColor3 = Theme.TextSecondary
-        tickLbl.Text = tostring(f)
+    -- ── timeline behaviour ─────────────────────────────────────────────────
+    local function visibleFrames()
+        return math.max(1, Animator.Length / ZOOM_LEVELS[Animator.ZoomIndex] * 1.0)
     end
 
-    local PlayheadLine = Instance.new("Frame", TimelineContainer)
-    PlayheadLine.Size = UDim2.new(0, 2, 1, 0)
-    PlayheadLine.Position = UDim2.new(0, 185, 0, 0)
-    PlayheadLine.BackgroundColor3 = Theme.PlayheadRed
-    PlayheadLine.BorderSizePixel = 0
-    PlayheadLine.ZIndex = 30
-
-    local PlayheadCap = Instance.new("Frame", PlayheadLine)
-    PlayheadCap.Size = UDim2.new(0, 10, 0, 10)
-    PlayheadCap.Position = UDim2.new(0.5, -5, 0, 8)
-    PlayheadCap.Rotation = 45
-    PlayheadCap.BackgroundColor3 = Theme.PlayheadRed
-    PlayheadCap.BorderSizePixel = 0
-    PlayheadCap.ZIndex = 31
-
-    local function updatePlayheadVisual()
-        local barWidth = RulerBar.AbsoluteSize.X
-        local pct = math.clamp(StudioAnimator.CurrentFrame / math.max(StudioAnimator.TotalFrames, 1), 0, 1)
-        PlayheadLine.Position = UDim2.new(0, 185 + math.floor(barWidth * pct), 0, 0)
-        local rigName = StudioAnimator.ActiveRig and StudioAnimator.ActiveRig.Name or "None"
-        RigStatusLbl.Text = string.format(
-            "Rig: %s  |  Frame: %d / %d (%d FPS)",
-            rigName,
-            math.floor(StudioAnimator.CurrentFrame + 0.5),
-            StudioAnimator.TotalFrames,
-            StudioAnimator.FPS
-        )
+    local function frameToScale(frame)
+        local start = Animator.ViewStart
+        return clamp((frame - start) / visibleFrames(), 0, 1)
     end
 
-    local scrubbingTimeline = false
-    local function scrubFromMouseX(xPos)
-        local rel = math.clamp((xPos - RulerBar.AbsolutePosition.X) / math.max(RulerBar.AbsoluteSize.X, 1), 0, 1)
-        StudioAnimator.CurrentFrame = math.floor(rel * StudioAnimator.TotalFrames + 0.5)
-        StudioAnimator:ApplyFrameToRig(StudioAnimator.CurrentFrame)
-        updatePlayheadVisual()
-        if refreshInspectorUI then refreshInspectorUI() end
+    local function scaleToFrame(scale)
+        return Animator.ViewStart + clamp(scale, 0, 1) * visibleFrames()
     end
 
-    RulerBar.InputBegan:Connect(function(inp)
-        if inp.UserInputType == Enum.UserInputType.MouseButton1 then
-            scrubbingTimeline = true
-            StudioAnimator.IsPlaying = false
-            PlayBtn.Text = "▶ Play"
-            PlayBtn.BackgroundColor3 = Theme.MoonAccent
-            scrubFromMouseX(inp.Position.X)
+    self.FrameToScale = frameToScale
+
+    function Animator:EnsureVisible()
+        local visible = visibleFrames()
+        local start = self.ViewStart
+        if self.Frame < start then
+            self.ViewStart = clamp(self.Frame, 0, self.Length - visible)
+        elseif self.Frame > start + visible then
+            self.ViewStart = clamp(self.Frame - visible, 0, self.Length - visible)
+        end
+    end
+
+    local function updatePlayhead()
+        local scale = frameToScale(Animator.Frame)
+        local width = math.max(rulerBar.AbsoluteSize.X, 1)
+        playhead.Position = UDim2.new(0, 180 + math.floor(width * scale), 0, 0)
+        rigLabel.Text = string.format(
+            "Rig: %s   ·   frame %d / %d   ·   %d FPS   ·   %d key(s)",
+            Animator.Rig and Animator.Rig.Name or "none",
+            round(Animator.Frame), Animator.Length, Animator.FPS, #Animator:KeyFrames())
+    end
+    self.UpdatePlayhead = updatePlayhead
+
+    local function buildRuler()
+        for _, child in ipairs(rulerBar:GetChildren()) do child:Destroy() end
+        local visible = visibleFrames()
+        local step = 1
+        for _, candidate in ipairs({ 1, 2, 5, 10, 15, 20, 30, 60, 120, 300 }) do
+            step = candidate
+            if visible / candidate <= 12 then break end
+        end
+        local first = math.floor(Animator.ViewStart / step) * step
+        local frame = first
+        while frame <= Animator.ViewStart + visible + step do
+            if frame >= Animator.ViewStart then
+                local tick = newInstance("TextLabel", {
+                    Text = tostring(frame), Font = Enum.Font.Code, TextSize = 9,
+                    TextColor3 = Theme.Muted, BackgroundTransparency = 1,
+                    Position = UDim2.new(frameToScale(frame), -10, 0, 0),
+                    Size = UDim2.new(0, 24, 1, 0),
+                }, rulerBar)
+                tick.Name = "Tick" .. tostring(frame)
+            end
+            frame = frame + step
+        end
+    end
+
+    -- scrub
+    local scrubbing = false
+    local function scrubTo(x)
+        local width = math.max(rulerBar.AbsoluteSize.X, 1)
+        local scale = (x - rulerBar.AbsolutePosition.X) / width
+        Animator.Frame = clamp(round(scaleToFrame(scale)), 0, Animator.Length)
+        Animator.Playing = false
+        if playButton then
+            playButton.Text = "▶ Play"
+            playButton.BackgroundColor3 = Theme.BgInset
+        end
+        Animator:ApplyFrame(Animator.Frame)
+        updatePlayhead()
+        if refreshInspector then refreshInspector() end
+        if refreshTimeline then refreshTimeline() end
+    end
+    rulerBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            scrubbing = true
+            scrubTo(input.Position.X)
         end
     end)
-    UserInputService.InputChanged:Connect(function(inp)
-        if scrubbingTimeline and inp.UserInputType == Enum.UserInputType.MouseMovement then
-            scrubFromMouseX(inp.Position.X)
+    keepConnection(UserInputService.InputChanged:Connect(function(input)
+        if scrubbing and input.UserInputType == Enum.UserInputType.MouseMovement then
+            scrubTo(input.Position.X)
         end
-    end)
-    UserInputService.InputEnded:Connect(function(inp)
-        if inp.UserInputType == Enum.UserInputType.MouseButton1 then
-            scrubbingTimeline = false
+    end))
+    keepConnection(UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then scrubbing = false end
+    end))
+
+    -- tracks
+    local function selectJoint(jointKey)
+        Animator.Selected = jointKey
+        for key, row in pairs(Animator.Rows) do
+            local active = key == jointKey
+            row.name.TextColor3 = active and Theme.Cyan or Theme.Text
+            row.name.Font = active and Enum.Font.GothamBold or Enum.Font.Gotham
+            row.back.BackgroundColor3 = active and Theme.AccentDim or row.backColor
         end
-    end)
+        updateGizmos()
+        if refreshInspector then refreshInspector() end
+    end
+    self.SelectJoint = selectJoint
 
-    local TracksScroll = Instance.new("ScrollingFrame", TimelineContainer)
-    TracksScroll.Size = UDim2.new(1, 0, 1, -26)
-    TracksScroll.Position = UDim2.new(0, 0, 0, 26)
-    TracksScroll.BackgroundTransparency = 1
-    TracksScroll.BorderSizePixel = 0
-    TracksScroll.ScrollBarThickness = 4
-    TracksScroll.ScrollBarImageColor3 = Theme.MoonAccent
-    TracksScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-
-    local tracksLayout = Instance.new("UIListLayout", TracksScroll)
-    tracksLayout.Padding = UDim.new(0, 1)
-    tracksLayout.SortOrder = Enum.SortOrder.LayoutOrder
-
-    local trackRowMap = {}
-
-    buildTrackRows = function()
-        for _, child in ipairs(TracksScroll:GetChildren()) do
+    local function buildRows()
+        for _, child in ipairs(trackScroll:GetChildren()) do
             if child:IsA("Frame") then child:Destroy() end
         end
-        trackRowMap = {}
+        Animator.Rows = {}
+        if not Animator.Rig then return end
+        for index, jointKey in ipairs(Animator.Order) do
+            local rowColor = (index % 2 == 0) and Theme.RowEven or Theme.RowOdd
+            local row = newInstance("Frame", {
+                Name = "Row_" .. jointKey,
+                Size = UDim2.new(1, -6, 0, 24),
+                BackgroundColor3 = rowColor,
+                BorderSizePixel = 0,
+                LayoutOrder = index,
+            }, trackScroll)
+            local nameButton = newInstance("TextButton", {
+                Name = "Name_" .. jointKey,
+                Text = "  " .. jointKey,
+                BackgroundTransparency = 1, BorderSizePixel = 0,
+                Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = Theme.Text,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                Size = UDim2.new(0, 174, 1, 0),
+            }, row)
+            local lane = newInstance("TextButton", {
+                Name = "Lane_" .. jointKey,
+                Text = "", AutoButtonColor = false, BackgroundTransparency = 1,
+                Size = UDim2.new(1, -180, 1, 0),
+                Position = UDim2.new(0, 180, 0, 0),
+            }, row)
+            local rowRecord = { back = row, backColor = rowColor, name = nameButton, lane = lane }
+            Animator.Rows[jointKey] = rowRecord
 
-        for idx, jKey in ipairs(StudioAnimator.JointOrder) do
-            local row = Instance.new("Frame", TracksScroll)
-            row.Size = UDim2.new(1, -6, 0, 26)
-            row.BackgroundColor3 = (idx % 2 == 0) and Theme.BgRowEven or Theme.BgRowOdd
-            row.BorderSizePixel = 0
-            row.LayoutOrder = idx
-
-            local nameBtn = Instance.new("TextButton", row)
-            nameBtn.Size = UDim2.new(0, 180, 1, 0)
-            nameBtn.BackgroundTransparency = 1
-            nameBtn.Font = Enum.Font.GothamMedium
-            nameBtn.TextSize = 11
-            nameBtn.TextColor3 = (StudioAnimator.SelectedJoint == jKey) and Theme.MoonCyan or Theme.TextPrimary
-            nameBtn.TextXAlignment = Enum.TextXAlignment.Left
-            nameBtn.Text = "  🦴 " .. jKey
-
-            local lane = Instance.new("TextButton", row)
-            lane.Size = UDim2.new(1, -190, 1, 0)
-            lane.Position = UDim2.new(0, 185, 0, 0)
-            lane.BackgroundTransparency = 1
-            lane.Text = ""
-
-            nameBtn.MouseButton1Click:Connect(function()
-                StudioAnimator.SelectedJoint = jKey
-                for kName, rObj in pairs(trackRowMap) do
-                    rObj.nameBtn.TextColor3 = (kName == jKey) and Theme.MoonCyan or Theme.TextPrimary
-                    rObj.nameBtn.Font = (kName == jKey) and Enum.Font.GothamBold or Enum.Font.GothamMedium
-                end
-                update3DGizmoAdornee()
-                if refreshInspectorUI then refreshInspectorUI() end
-            end)
-
-            lane.InputBegan:Connect(function(inp)
-                if inp.UserInputType == Enum.UserInputType.MouseButton1 then
-                    StudioAnimator.SelectedJoint = jKey
-                    for kName, rObj in pairs(trackRowMap) do
-                        rObj.nameBtn.TextColor3 = (kName == jKey) and Theme.MoonCyan or Theme.TextPrimary
-                    end
-                    scrubFromMouseX(inp.Position.X)
-                    update3DGizmoAdornee()
-                    if refreshInspectorUI then refreshInspectorUI() end
+            nameButton.MouseButton1Click:Connect(function() selectJoint(jointKey) end)
+            lane.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                    selectJoint(jointKey)
+                    scrubTo(input.Position.X)
                 end
             end)
-
-            trackRowMap[jKey] = {row = row, nameBtn = nameBtn, lane = lane}
         end
     end
 
-    refreshTimelineMarkers = function()
-        for jKey, rObj in pairs(trackRowMap) do
-            for _, ch in ipairs(rObj.lane:GetChildren()) do
-                ch:Destroy()
+    local function refreshLane(jointKey)
+        local row = Animator.Rows[jointKey]
+        if not row then return end
+        for _, child in ipairs(row.lane:GetChildren()) do child:Destroy() end
+        local trackData = Animator.Tracks[jointKey]
+        if not trackData then return end
+        for _, frame in ipairs(Animator:TrackOrder(jointKey)) do
+            if frame >= Animator.ViewStart - 1 and frame <= Animator.ViewStart + visibleFrames() + 1 then
+                local scale = frameToScale(frame)
+                local diamond = newInstance("TextButton", {
+                    Name = "Key_" .. tostring(frame),
+                    Text = "", AutoButtonColor = false, BorderSizePixel = 0,
+                    BackgroundColor3 = Theme.Gold, Rotation = 45, ZIndex = 15,
+                    Size = UDim2.new(0, 8, 0, 8),
+                    Position = UDim2.new(scale, -4, 0.5, -4),
+                }, row.lane)
+                diamond.MouseButton1Click:Connect(function()
+                    selectJoint(jointKey)
+                    Animator.Frame = frame
+                    Animator:ApplyFrame(frame)
+                    updatePlayhead()
+                    if refreshInspector then refreshInspector() end
+                    if refreshTimeline then refreshTimeline() end
+                end)
             end
-            local track = StudioAnimator.TrackKeyframes[jKey]
-            if track then
-                for frameInt in pairs(track) do
-                    local pct = math.clamp(frameInt / math.max(StudioAnimator.TotalFrames, 1), 0, 1)
-                    local diamond = Instance.new("TextButton", rObj.lane)
-                    diamond.Size = UDim2.new(0, 9, 0, 9)
-                    diamond.Position = UDim2.new(pct, -4, 0.5, -4)
-                    diamond.Rotation = 45
-                    diamond.BackgroundColor3 = Theme.KeyframeGold
-                    diamond.Text = ""
-                    diamond.BorderSizePixel = 0
-                    diamond.ZIndex = 15
+        end
+    end
 
-                    diamond.MouseButton1Click:Connect(function()
-                        StudioAnimator.SelectedJoint = jKey
-                        StudioAnimator.CurrentFrame = frameInt
-                        StudioAnimator:ApplyFrameToRig(frameInt)
-                        updatePlayheadVisual()
-                        update3DGizmoAdornee()
-                        if refreshInspectorUI then refreshInspectorUI() end
-                    end)
+    refreshTimeline = function()
+        if not Animator.Rig then return end
+        Animator:EnsureVisible()
+        for _, jointKey in ipairs(Animator.Order) do refreshLane(jointKey) end
+        updatePlayhead()
+    end
+
+    refreshInspector = function()
+        local jointKey = Animator.Selected
+        self.JointLabel.Text = "Joint: " .. tostring(jointKey or "—")
+        local joint = jointKey and self.Joints[jointKey]
+        local pose = joint and joint.Pose or emptyPose()
+        for key, setter in pairs(sliderSetters) do setter(pose[key] or 0) end
+        self.FpsBox.Text = tostring(self.FPS)
+        self.LengthBox.Text = tostring(self.Length)
+    end
+
+    function Animator:RefreshAll()
+        if not self.Main or not self.Main.Parent then return end
+        buildRows()
+        buildRuler()
+        if self.Selected then selectJoint(self.Selected) end
+        refreshTimeline()
+        refreshInspector()
+        updateGizmos()
+    end
+
+    -- playback loop ────────────────────────────────────────────────────────
+    self.PlayConnection = RunService.RenderStepped:Connect(function(delta)
+        if not main.Parent then return end
+        if not Animator.Playing then return end
+        Animator.Frame = Animator.Frame + delta * Animator.FPS
+        if Animator.Frame >= Animator.Length then
+            if Animator.Looping then
+                Animator.Frame = 0
+            else
+                Animator.Frame = Animator.Length
+                Animator.Playing = false
+                if playButton then
+                    playButton.Text = "▶ Play"
+                    playButton.BackgroundColor3 = Theme.BgInset
                 end
             end
         end
-    end
-
-    -- Right Inspector: Rotation X/Y/Z & Position Offset X/Y/Z
-    local Inspector = Instance.new("Frame", WorkspaceArea)
-    Inspector.Size = UDim2.new(0, 230, 1, 0)
-    Inspector.Position = UDim2.new(1, -230, 0, 0)
-    Inspector.BackgroundColor3 = Theme.BgInspector
-    Inspector.BorderSizePixel = 0
-
-    local InspHeader = Instance.new("TextLabel", Inspector)
-    InspHeader.Size = UDim2.new(1, -16, 0, 24)
-    InspHeader.Position = UDim2.new(0, 10, 0, 4)
-    InspHeader.BackgroundTransparency = 1
-    InspHeader.Font = Enum.Font.GothamBold
-    InspHeader.TextSize = 11
-    InspHeader.TextColor3 = Theme.MoonCyan
-    InspHeader.TextXAlignment = Enum.TextXAlignment.Left
-    InspHeader.Text = "TRANSFORM INSPECTOR"
-
-    local SelectedJointLbl = Instance.new("TextLabel", Inspector)
-    SelectedJointLbl.Size = UDim2.new(1, -16, 0, 18)
-    SelectedJointLbl.Position = UDim2.new(0, 10, 0, 24)
-    SelectedJointLbl.BackgroundTransparency = 1
-    SelectedJointLbl.Font = Enum.Font.GothamMedium
-    SelectedJointLbl.TextSize = 11
-    SelectedJointLbl.TextColor3 = Theme.TextPrimary
-    SelectedJointLbl.TextXAlignment = Enum.TextXAlignment.Left
-    SelectedJointLbl.Text = "Joint: None"
-
-    local SlidersHolder = Instance.new("Frame", Inspector)
-    SlidersHolder.Size = UDim2.new(1, -16, 1, -86)
-    SlidersHolder.Position = UDim2.new(0, 8, 0, 44)
-    SlidersHolder.BackgroundTransparency = 1
-
-    local slLayout = Instance.new("UIListLayout", SlidersHolder)
-    slLayout.Padding = UDim.new(0, 4)
-
-    local sliderUpdaters = {}
-
-    local function createAxisSlider(label, propKey, minVal, maxVal, barColor, isFloat)
-        local box = Instance.new("Frame", SlidersHolder)
-        box.Size = UDim2.new(1, 0, 0, 32)
-        box.BackgroundColor3 = Theme.BgControl
-        box.BorderSizePixel = 0
-        Instance.new("UICorner", box).CornerRadius = UDim.new(0, 6)
-
-        local l = Instance.new("TextLabel", box)
-        l.Size = UDim2.new(0.55, 0, 0, 15)
-        l.Position = UDim2.new(0, 8, 0, 2)
-        l.BackgroundTransparency = 1
-        l.Font = Enum.Font.GothamBold
-        l.TextSize = 10
-        l.TextColor3 = Theme.TextSecondary
-        l.TextXAlignment = Enum.TextXAlignment.Left
-        l.Text = label
-
-        local vLbl = Instance.new("TextLabel", box)
-        vLbl.Size = UDim2.new(0.4, -8, 0, 15)
-        vLbl.Position = UDim2.new(0.6, 0, 0, 2)
-        vLbl.BackgroundTransparency = 1
-        vLbl.Font = Enum.Font.Code
-        vLbl.TextSize = 10
-        vLbl.TextColor3 = barColor
-        vLbl.TextXAlignment = Enum.TextXAlignment.Right
-        vLbl.Text = "0"
-
-        local track = Instance.new("Frame", box)
-        track.Size = UDim2.new(1, -16, 0, 6)
-        track.Position = UDim2.new(0, 8, 0, 20)
-        track.BackgroundColor3 = Theme.BgMain
-        track.BorderSizePixel = 0
-        Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
-
-        local fill = Instance.new("Frame", track)
-        fill.Size = UDim2.new(0.5, 0, 1, 0)
-        fill.BackgroundColor3 = barColor
-        fill.BorderSizePixel = 0
-        Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
-
-        local draggingAxis = false
-        local function setByX(xPos)
-            local jKey = StudioAnimator.SelectedJoint
-            if not jKey or not StudioAnimator.Joints[jKey] then return end
-            local rel = math.clamp((xPos - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1), 0, 1)
-            local raw = minVal + (maxVal - minVal) * rel
-            local val = isFloat and (math.floor(raw * 100 + 0.5) / 100) or math.floor(raw + 0.5)
-
-            fill.Size = UDim2.new(rel, 0, 1, 0)
-            vLbl.Text = isFloat and string.format("%.2f", val) or (tostring(val) .. "°")
-
-            local pose = clonePose(StudioAnimator.Joints[jKey].Pose)
-            pose[propKey] = val
-            StudioAnimator:ApplyJointPose(jKey, pose)
-            if StudioAnimator.AutoKey then
-                StudioAnimator:RecordKeyframe(jKey, StudioAnimator.CurrentFrame, pose)
-                if refreshTimelineMarkers then refreshTimelineMarkers() end
-            end
-        end
-
-        track.InputBegan:Connect(function(inp)
-            if inp.UserInputType == Enum.UserInputType.MouseButton1 then
-                draggingAxis = true
-                setByX(inp.Position.X)
-            end
-        end)
-        UserInputService.InputChanged:Connect(function(inp)
-            if draggingAxis and inp.UserInputType == Enum.UserInputType.MouseMovement then
-                setByX(inp.Position.X)
-            end
-        end)
-        UserInputService.InputEnded:Connect(function(inp)
-            if inp.UserInputType == Enum.UserInputType.MouseButton1 then
-                draggingAxis = false
-            end
-        end)
-
-        sliderUpdaters[propKey] = function(val)
-            local rel = math.clamp((val - minVal) / (maxVal - minVal), 0, 1)
-            fill.Size = UDim2.new(rel, 0, 1, 0)
-            vLbl.Text = isFloat and string.format("%.2f", val) or (tostring(math.floor(val + 0.5)) .. "°")
-        end
-    end
-
-    createAxisSlider("Rotate X (Pitch)", "RX", -180, 180, Color3.fromRGB(248, 113, 113), false)
-    createAxisSlider("Rotate Y (Yaw)",   "RY", -180, 180, Color3.fromRGB(74, 222, 128),  false)
-    createAxisSlider("Rotate Z (Roll)",  "RZ", -180, 180, Color3.fromRGB(56, 189, 248),  false)
-    createAxisSlider("Offset X (Studs)", "PX", -4,   4,   Color3.fromRGB(251, 146, 60),  true)
-    createAxisSlider("Offset Y (Studs)", "PY", -4,   4,   Color3.fromRGB(168, 85, 247),  true)
-    createAxisSlider("Offset Z (Studs)", "PZ", -4,   4,   Color3.fromRGB(236, 72, 153),  true)
-
-    local ResetJointBtn = Instance.new("TextButton", Inspector)
-    ResetJointBtn.Size = UDim2.new(1, -16, 0, 26)
-    ResetJointBtn.Position = UDim2.new(0, 8, 1, -34)
-    ResetJointBtn.BackgroundColor3 = Theme.BgToolbar
-    ResetJointBtn.Font = Enum.Font.GothamBold
-    ResetJointBtn.TextSize = 11
-    ResetJointBtn.TextColor3 = Theme.TextPrimary
-    ResetJointBtn.Text = "Reset Joint (0°, 0, 0)"
-    ResetJointBtn.BorderSizePixel = 0
-    Instance.new("UICorner", ResetJointBtn).CornerRadius = UDim.new(0, 6)
-
-    ResetJointBtn.MouseButton1Click:Connect(function()
-        if StudioAnimator.SelectedJoint then
-            StudioAnimator:ResetJoint(StudioAnimator.SelectedJoint)
-            if refreshInspectorUI then refreshInspectorUI() end
-            if refreshTimelineMarkers then refreshTimelineMarkers() end
-        end
+        Animator:ApplyFrame(Animator.Frame)
+        updatePlayhead()
+        if refreshInspector then refreshInspector() end
+        if refreshTimeline then refreshTimeline() end
     end)
 
-    refreshInspectorUI = function()
-        local jKey = StudioAnimator.SelectedJoint
-        SelectedJointLbl.Text = "Joint: " .. tostring(jKey or "None")
-        local jData = jKey and StudioAnimator.Joints[jKey]
-        local p = (jData and jData.Pose) or makeEmptyPose()
-        for k, fn in pairs(sliderUpdaters) do
-            fn(p[k] or 0)
-        end
-    end
-
-    -- Auto-bind initial rig if one is selected in Studio
-    local initialRig = self:FindRigFromSelection()
-    if initialRig then
-        self:BindRig(initialRig)
-    end
-    buildTrackRows()
-    refreshInspectorUI()
-    refreshTimelineMarkers()
-    update3DGizmoAdornee()
-    task.defer(updatePlayheadVisual)
-
-    -- 60Hz Playback Interpolation Loop in Studio
-    RunService.RenderStepped:Connect(function(dt)
-        if not Main.Parent then return end
-        if StudioAnimator.IsPlaying then
-            StudioAnimator.CurrentFrame = StudioAnimator.CurrentFrame + dt * StudioAnimator.FPS
-            if StudioAnimator.CurrentFrame >= StudioAnimator.TotalFrames then
-                if StudioAnimator.Loop then
-                    StudioAnimator.CurrentFrame = 0
-                else
-                    StudioAnimator.CurrentFrame = StudioAnimator.TotalFrames
-                    StudioAnimator.IsPlaying = false
-                    PlayBtn.Text = "▶ Play"
-                    PlayBtn.BackgroundColor3 = Theme.MoonAccent
-                end
-            end
-            StudioAnimator:ApplyFrameToRig(StudioAnimator.CurrentFrame)
-            updatePlayheadVisual()
-            refreshInspectorUI()
-        end
-    end)
-
-    return Main
+    -- initial state ────────────────────────────────────────────────────────
+    self:RefreshAll()
+    return main
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  ROBLOX STUDIO PLUGIN REGISTRATION (plugin:CreateToolbar / DockWidget)
+-- 13 · SELECTION WATCHER — select a part, it becomes the active joint
 -- ═══════════════════════════════════════════════════════════════════════════
+function Animator:WatchSelection()
+    local ok, connection = pcall(function()
+        return Selection.SelectionChanged:Connect(function()
+            if not self.Rig or not self.Follow then return end
+            local selected = nil
+            pcall(function() selected = Selection:Get() end)
+            for _, instance in ipairs(selected or {}) do
+                local partName = nil
+                if instance:IsA("BasePart") then
+                    partName = instance.Name
+                elseif instance:IsA("Model") and instance:FindFirstChildOfClass("Humanoid") then
+                    if instance ~= self.Rig then
+                        self:BindRig(instance)
+                        self:RefreshAll()
+                    end
+                    return
+                end
+                local jointKey = partName and self.ByPart[partName]
+                if jointKey then
+                    self.Selected = jointKey
+                    if self.SelectJoint then self.SelectJoint(jointKey) end
+                    updateGizmos()
+                    return
+                end
+            end
+        end)
+    end)
+    if ok and connection then
+        table.insert(self.Connections, connection)
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 14 · PLUGIN REGISTRATION
+-- ═══════════════════════════════════════════════════════════════════════════
+local function buildInterface(parent)
+    return Animator:BuildUI(parent)
+end
 
 if plugin then
-    local toolbar = plugin:CreateToolbar("Skill Animator")
+    local toolbar = plugin:CreateToolbar(PLUGIN_TITLE)
     local toggleButton = toolbar:CreateButton(
-        "Skill Animator",
-        "Open Skill Animator (Moon Animator Style Keyframe Editor)",
-        Icons.Logo
+        PLUGIN_TITLE,
+        "Keyframe editor that exports a native KeyframeSequence into the rig's AnimSaves",
+        "rbxassetid://10734950309"
     )
     toggleButton.ClickableWhenViewportHidden = true
+    toggleButton.Name = "SkillAnimatorButton"
 
     local widgetInfo = DockWidgetPluginGuiInfo.new(
         Enum.InitialDockState.Bottom,
-        false, -- InitiallyEnabled
-        false, -- OverridePreviousState
-        880,   -- DefaultWidth
-        360,   -- DefaultHeight
-        600,   -- MinWidth
-        250    -- MinHeight
+        false, false,
+        980, 500,
+        720, 360
     )
+    local widget = plugin:CreateDockWidgetPluginGui("SkillAnimatorStudioDock", widgetInfo)
+    widget.Title = PLUGIN_TITLE .. " " .. VERSION
+    widget.Name = "SkillAnimatorWidget"
 
-    local dockWidget = plugin:CreateDockWidgetPluginGui("SkillAnimatorStudioDock", widgetInfo)
-    dockWidget.Title = "Skill Animator Studio (Moon Style)"
-
-    StudioAnimator:BuildEditorInterface(dockWidget)
+    Animator.Widget = widget
+    buildInterface(widget)
 
     toggleButton.Click:Connect(function()
-        dockWidget.Enabled = not dockWidget.Enabled
-        toggleButton:SetActive(dockWidget.Enabled)
-        if not dockWidget.Enabled then
+        widget.Enabled = not widget.Enabled
+        toggleButton:SetActive(widget.Enabled)
+        if widget.Enabled then
+            updateGizmos()
+        else
             SelectionBox.Adornee = nil
-            ArcHandles.Adornee = nil
-            ArcHandles.Visible = false
+            RotateHandles.Adornee = nil
+            RotateHandles.Visible = false
             MoveHandles.Adornee = nil
             MoveHandles.Visible = false
-        else
-            update3DGizmoAdornee()
         end
     end)
+
+    Animator:WatchSelection()
+
+    -- everything that outlives the widget must go when Studio unloads the plugin
+    local unloadOk, unloadConnection = pcall(function()
+        return plugin.Unloading:Connect(function()
+            Animator:DisconnectAll()
+            Animator.Playing = false
+            pcall(function() GizmoFolder:Destroy() end)
+            if Animator.Widget then
+                pcall(function() Animator.Widget.Enabled = false end)
+            end
+        end)
+    end)
+    if unloadOk and unloadConnection then
+        table.insert(Animator.Connections, unloadConnection)
+    end
+
+    -- auto-bind whatever is already selected / the only rig in the place
+    local rig = Animator:FindRig(true) or Animator:FindRig(false)
+    if rig then
+        if Animator:BindRig(rig) then Animator:RefreshAll() end
+    end
 else
-    -- Fallback if tested via Roblox Studio Command Bar
-    local existing = CoreGui:FindFirstChild("SkillAnimatorStudioPreview")
+    -- Command Bar fallback: preview the interface without a plugin context
+    local existing = CoreGui:FindFirstChild("SkillAnimatorPreview")
     if existing then existing:Destroy() end
-    local sg = Instance.new("ScreenGui", CoreGui)
-    sg.Name = "SkillAnimatorStudioPreview"
-    local holder = Instance.new("Frame", sg)
-    holder.Size = UDim2.new(0, 880, 0, 360)
-    holder.Position = UDim2.new(0.5, -440, 1, -370)
-    holder.BackgroundTransparency = 1
-    StudioAnimator:BuildEditorInterface(holder)
+    local screen = newInstance("ScreenGui", { Name = "SkillAnimatorPreview", ResetOnSpawn = false }, CoreGui)
+    local holder = newInstance("Frame", {
+        Size = UDim2.new(0, 980, 0, 430),
+        Position = UDim2.new(0.5, -490, 1, -450),
+        BackgroundTransparency = 1,
+    }, screen)
+    buildInterface(holder)
+    warn("[Skill Animator] running without the plugin object — command bar preview only.")
 end
 
-return StudioAnimator
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 15 · PUBLIC SURFACE (used by the plugin button and by the test harness)
+-- ═══════════════════════════════════════════════════════════════════════════
+local function refreshIfBuilt()
+    if Animator.Main and Animator.Main.Parent then Animator:RefreshAll() end
+end
+
+Animator.API = {
+    Bind = function(rig)
+        local ok = Animator:BindRig(rig)
+        refreshIfBuilt()
+        return ok
+    end,
+    Record = function(joint, frame, pose)
+        local ok = Animator:RecordKey(joint, frame, pose)
+        refreshIfBuilt()
+        return ok
+    end,
+    Delete = function(joint, frame)
+        local ok = Animator:DeleteKey(joint, frame)
+        refreshIfBuilt()
+        return ok
+    end,
+    Duplicate = function(joint, from, to)
+        local ok = Animator:DuplicateKey(joint, from, to)
+        refreshIfBuilt()
+        return ok
+    end,
+    Export = function()
+        local sequence = Animator:ExportSequence()
+        refreshIfBuilt()
+        return sequence
+    end,
+    Import = function(sequence)
+        local ok = Animator:ImportSequence(sequence)
+        refreshIfBuilt()
+        return ok
+    end,
+    SaveProject = function() return Animator:SaveProject() end,
+    LoadProject = function() return Animator:LoadProject() end,
+    SetFrame = function(frame)
+        Animator.Frame = clamp(tonumber(frame) or 0, 0, Animator.Length)
+        Animator:ApplyFrame(Animator.Frame)
+        if Animator.RefreshAll then Animator:RefreshAll() end
+    end,
+    SetZoom = function(index)
+        Animator.ZoomIndex = clamp(round(index), 1, #ZOOM_LEVELS)
+        if Animator.RefreshAll then Animator:RefreshAll() end
+    end,
+    SetFPS = function(fps)
+        Animator.FPS = clamp(round(fps), 1, 240)
+        if Animator.RefreshAll then Animator:RefreshAll() end
+    end,
+    SetLength = function(frames)
+        Animator.Length = clamp(round(frames), 1, 6000)
+        if Animator.RefreshAll then Animator:RefreshAll() end
+    end,
+    -- these move the playhead, exactly like the two toolbar buttons
+    NextKey = function()
+        local frame = Animator:NeighbourKey(1)
+        if frame then
+            Animator.Frame = frame
+            Animator:ApplyFrame(frame)
+            refreshIfBuilt()
+        end
+        return frame
+    end,
+    PrevKey = function()
+        local frame = Animator:NeighbourKey(-1)
+        if frame then
+            Animator.Frame = frame
+            Animator:ApplyFrame(frame)
+            refreshIfBuilt()
+        end
+        return frame
+    end,
+    Keys = function() return Animator:KeyFrames() end,
+    SelectJoint = function(key) Animator.Selected = key end,
+    Status = function() return Animator.StatusLabel and Animator.StatusLabel.Text or "" end,
+}
+
+_G.SkillAnimator = Animator
+
+return Animator
 ]]></ProtectedString>
 		</Properties>
 	</Item>

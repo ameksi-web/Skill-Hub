@@ -90,8 +90,12 @@ def main() -> int:
     if restored != source:
         print("FAIL source round trip differs (%d vs %d chars)" % (len(restored), len(source)))
         return 1
-    if not restored.rstrip().endswith("return StudioAnimator"):
-        print("FAIL source does not end with the plugin's return statement")
+    # a plugin script returns its public table so it can be required from a
+    # module context as well; that return must be the last statement
+    import re
+    tail = restored.rstrip()
+    if not re.search(r"return\s+[A-Za-z_][\w.]*\s*$", tail):
+        print("FAIL source does not end with a return statement")
         return 1
 
     size = os.path.getsize(OUTPUT)

@@ -312,6 +312,40 @@ Studio его не прочитает».
 
 ## 8. Частые ошибки (по опыту этого репозитория)
 
+### 8.0. Studio пишет «Failed to save plugin to directory»
+
+Это ошибка **пути записи в Studio**, а не файла плагина: Studio не смогла
+положить `.rbxmx` в свою папку Plugins. Разбор по частоте:
+
+1. **Папки Plugins нет.** Проверить: **Plugins → Plugins Folder** (кнопка с
+   иконкой папки). Если ничего не открылось — создать вручную:
+   `%LOCALAPPDATA%\Roblox\Plugins` (macOS `~/Documents/Roblox/Plugins`).
+2. **Имя уже занято и файл загружен.** Если `SkillAnimator.rbxmx` уже лежит в
+   папке, Studio на старте его прочитала и держит. «Save as Local Plugin…» поверх
+   загруженного файла падает. Решение: закрыть Studio → заменить файл вручную
+   (копированием) → открыть Studio. Либо сохранить под другим именем
+   (`SkillAnimator2.rbxmx`), потом удалить старый.
+3. **Нет прав на запись.** Проверка: создать в папке любой `.txt` блокнотом.
+   Если не получается — папка на сетевом диске/в OneDrive с синхронизацией или
+   защищена антивирусом. Проще указать другую папку или запустить Studio один раз
+   от администратора.
+4. **Studio из Microsoft Store (UWP).** У неё путь виртуализирован; надёжный
+   способ — открыть папку именно кнопкой **Plugins Folder** и класть файл туда.
+5. **Сохраняют `ModuleScript`/вложенный объект.** Для «Save as Local Plugin…»
+   выделяйте сам `Script` или `Model`-контейнер, а не модуль внутри него.
+
+**Обход, который не использует этот диалог вообще** (и он же самый надёжный):
+
+```powershell
+$dir = Join-Path $env:LOCALAPPDATA "Roblox\Plugins"
+New-Item -ItemType Directory -Force $dir | Out-Null
+Invoke-WebRequest "https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/SkillAnimator/SkillAnimator.rbxmx" -OutFile (Join-Path $dir "SkillAnimator.rbxmx")
+Get-Item (Join-Path $dir "SkillAnimator.rbxmx") | Select-Object FullName, Length
+```
+
+Должно вывести путь и **80 996 байт**. Дальше — полностью закрыть и открыть
+Studio: плагин читается из папки только на старте.
+
 1. **`.rbxmx` в подпапке** — не грузится при старте Studio.
 2. **`SkillAnimator.lua.txt`** — Windows дописал `.txt`, плагин не появился.
 3. **Studio не перезапущена** — папка Plugins читается на старте.

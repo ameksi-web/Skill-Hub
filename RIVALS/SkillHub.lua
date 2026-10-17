@@ -51,8 +51,8 @@
         do in a game that bans for it.
 ]]
 
-local VERSION   = "v1.0"
-local BUILD     = "RIVALS · free · Update 23 build 17.10"
+local VERSION   = "v1.1"
+local BUILD     = "RIVALS · free · Update 23 build 17.10 · aim fix"
 local AUTHOR    = "ameksi-web"
 local GAME_NAME = "RIVALS"
 
@@ -74,6 +74,16 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = getService("CollectionService")
 local VirtualUser  = getService("VirtualUser")
 local Camera       = Workspace.CurrentCamera
+
+-- RIVALS replaces CurrentCamera when a match finishes loading and can hand a
+-- new one back after a respawn. Everything downstream reads this function, so
+-- aim keeps writing to the camera the game is actually rendering instead of a
+-- dead instance captured at load time.
+local function refreshCamera()
+    local live = Workspace.CurrentCamera
+    if live and live ~= Camera then Camera = live end
+    return Camera
+end
 
 local LocalPlayer  = Players and Players.LocalPlayer
 
@@ -137,7 +147,7 @@ local Config = {
     AimRange            = 600,
     AimPrediction       = true,
     AimPredictionFactor = 0.12,
-    AimVisibleOnly      = true,
+    AimVisibleOnly      = false,       -- aim through cover; ESP still shows what is hidden
     AimTeamCheck        = true,
     AimPriority         = "Closest to crosshair",
     AimHumanize         = true,
@@ -1693,6 +1703,7 @@ do
     NS.AUTHOR = AUTHOR
     NS.BUILD = BUILD
     NS.Camera = Camera
+    NS.getCamera = refreshCamera
     NS.Config = Config
     NS.GAME_NAME = GAME_NAME
     NS.ICON = ICON
@@ -1971,6 +1982,10 @@ local function isAlive()
     return humanoid ~= nil and (humanoid.Health or 0) > 0
 end
 
+-- assigned in section 15; the combat loop calls it the moment the local
+-- character is replaced (match start, respawn) so no cached reference survives
+local onCharacterChanged
+
 local function lowerName(instance)
     local name = instance.Name or "?"
     local cached = Cache.names[instance]
@@ -2014,27 +2029,34 @@ local World = {
 
 local RaycastParams = RaycastParams
 local rayParams = nil
+local rayParamsCharacter = nil
 
 local function visibilityParams()
-    if rayParams then return rayParams end
+    local character = getChar()
+    local camera = refreshCamera()
+    -- a respawn gives a brand-new model: a cached filter would keep ignoring the
+    -- *old* body and let every ray hit the player's own arms instead
+    if rayParams and rayParamsCharacter == character then return rayParams end
     local ok, params = pcall(function()
         local created = RaycastParams.new()
         created.FilterType = Enum.RaycastFilterType.Exclude
         local ignore = {}
-        local character = getChar()
         if character then ignore[#ignore + 1] = character end
-        if Camera then ignore[#ignore + 1] = Camera end
+        if camera then ignore[#ignore + 1] = camera end
         created.FilterDescendantsInstances = ignore
         return created
     end)
-    if ok then rayParams = params end
+    if ok then
+        rayParams, rayParamsCharacter = params, character
+    end
     return rayParams
 end
 
 local function isVisible(character, position)
     local root = getRoot()
     if not root or not character or not position then return false end
-    local origin = Camera and Camera.CFrame.Position or root.Position
+    local camera = refreshCamera()
+    local origin = camera and camera.CFrame.Position or root.Position
     local delta = position - origin
     -- an executor without RaycastParams still gets a straight-line answer
     if not RaycastParams then return true end
@@ -2045,7 +2067,10 @@ local function isVisible(character, position)
     if not result then return true end
     local instance = result.Instance
     if not instance then return true end
-    return instance:IsDescendantOf(character) or instance:IsDescendantOf(Camera or Workspace)
+    -- third person puts the camera inside the wall behind the player; a hit
+    -- this close is the camera's own geometry, not cover in front of the target
+    if (tonumber(result.Distance) or 0) < 2.5 then return true end
+    return instance:IsDescendantOf(character) or instance:IsDescendantOf(camera or Workspace)
 end
 
 local function teamOf(character, player)
@@ -2123,18 +2148,25 @@ local function playerRecord(player)
         record.weapon = info
         record.weaponName = tool and tool.Name or "—"
         record.team = team
-        record.friendly = (World.localTeam ~= nil and team ~= nil and team == World.localTeam)
         record.structureAt = os.clock()
         State.perf.structureScans = State.perf.structureScans + 1
     end
-    if record.friendly == nil then record.friendly = false end
+    -- derived, not cached: a match start reassigns teams, and a dead local
+    -- character briefly reports no team at all. Either way the comparison has
+    -- to be re-made every pass or a teammate becomes a target for half a second
+    record.friendly = World.localTeam ~= nil and record.team ~= nil
+        and record.team == World.localTeam
     return record
 end
 
 local function structureScan()
     local started = os.clock()
+    refreshCamera()
     local character = getChar()
-    World.localTeam = teamOf(character, LocalPlayer)
+    local team = teamOf(character, LocalPlayer)
+    -- between death and respawn there is no local character, and wiping the
+    -- team there would make every teammate a valid target for a second
+    if team ~= nil then World.localTeam = team end
     World.rank = attr(character, { "Rank", "Elo", "MMR" }) or attr(LocalPlayer, { "Rank", "Elo", "MMR" })
     local tool = weaponOf(character)
     World.localWeapon = tool and tool.Name or nil
@@ -2185,9 +2217,20 @@ local function refreshWorld()
     World.visibleCount = visibleCount
     World.best, World.bestScore = best, bestScore
     World.at = os.clock()
-    State.inMatch = #list > 0
-    if State.inMatch and (State.matchSince or 0) == 0 then State.matchSince = os.clock() end
-    if not State.inMatch then State.matchSince = 0 end
+    local inMatch = #list > 0
+    if inMatch ~= State.inMatch then
+        if inMatch then
+            -- a match just started: teams, ranks and every character were
+            -- reassigned in the same tick. Drop the cached structures so the
+            -- next pass reads the arena instead of the lobby.
+            World.structureAt = -100
+            VisAt = -100
+            Cache.playerRecords = {}
+            State.target = nil
+        end
+        State.matchSince = inMatch and os.clock() or 0
+    end
+    State.inMatch = inMatch
     State.perf.refreshCalls = State.perf.refreshCalls + 1
     State.perf.scanMs = (os.clock() - started) * 1000
     return World
@@ -2216,14 +2259,27 @@ local Aim = {
     active = false, aimPosition = nil, recoil = nil,
 }
 
+-- Every long-lived worker runs its frame through here. A single unexpected
+-- error used to end the coroutine silently — aim would work in the lobby and
+-- then stop dead the first time a match replaced the character or the camera.
+local function protectLoop(name, body)
+    local ok, err = pcall(body)
+    if ok then return end
+    State.perf.loopErrors = (State.perf.loopErrors or 0) + 1
+    local log = SharedEnv.__SkillHubErrorLog
+    if log and #log < 40 then
+        table.insert(log, tostring(name) .. ": " .. tostring(err))
+    end
+end
+
 local function viewport()
-    local camera = Camera
+    local camera = refreshCamera()
     local size = camera and camera.ViewportSize or Vector2.new(1280, 720)
     return size
 end
 
 local function screenOf(position)
-    local camera = Camera
+    local camera = refreshCamera()
     if not camera or not position then return nil, false, 0 end
     local ok, point, onScreen = pcall(function()
         local view, visible = camera:WorldToViewportPoint(position)
@@ -2282,22 +2338,50 @@ local function targetAllowed(record)
     return true
 end
 
+-- the aim cone, in degrees either side of the crosshair. Without this the
+-- "closest to crosshair" score happily picks someone standing behind you, and
+-- in a full match the camera spends the round spinning instead of aiming.
+local function aimCone()
+    return math.clamp(tonumber(Config.AimFov) or 140, 10, 360) * 0.5
+end
+
+local function angleTo(position)
+    local camera = refreshCamera()
+    if not camera or not position then return 180 end
+    local origin = camera.CFrame.Position
+    local delta = position - origin
+    if delta.Magnitude < 0.01 then return 0 end
+    local look = camera.CFrame.LookVector
+    return math.deg(math.acos(math.clamp(look:Dot(delta.Unit), -1, 1)))
+end
+
+-- the same score the picker uses, exposed so the hysteresis below can compare
+local function scoreFor(record, mode)
+    if mode == "Closest" then return record.distance end
+    if mode == "Lowest health" then return record.health or math.huge end
+    local pixels = crosshairDistance(record.position)
+    if not record.visible then pixels = pixels + 400 end
+    return pixels
+end
+
 local function pickTarget()
     local best, bestScore = nil, math.huge
     local mode = Config.AimPriority or "Closest to crosshair"
+    local cone = aimCone()
     for _, record in ipairs(World.players) do
-        if targetAllowed(record) then
-            local score
-            if mode == "Closest" then
-                score = record.distance
-            elseif mode == "Lowest health" then
-                score = record.health or math.huge
-            else
-                local pixels = crosshairDistance(record.position)
-                score = pixels
-                if not record.visible then score = score + 400 end
-            end
+        if targetAllowed(record) and angleTo(record.position) <= cone then
+            local score = scoreFor(record, mode)
             if score < bestScore then best, bestScore = record, score end
+        end
+    end
+    -- hysteresis: two neighbours a few pixels apart would swap every frame, and
+    -- a camera that flickers between them is worse than either one alone
+    local previous = State.target
+    if best and previous and previous ~= best and targetAllowed(previous)
+        and angleTo(previous.position) <= cone then
+        local previousScore = scoreFor(previous, mode)
+        if previousScore <= bestScore * 1.25 then
+            return previous, previousScore
         end
     end
     return best, bestScore
@@ -2305,8 +2389,8 @@ end
 
 -- one frame of aim, with the rate limit applied in degrees per step
 local function stepAim(record, delta)
-    local camera = Camera
-    if not camera or not record then return false end
+    local camera = refreshCamera()
+    if not camera or not camera.Parent or not record then return false end
     local goalPosition = aimPositionOf(record)
     if not goalPosition then return false end
     Aim.aimPosition = goalPosition
@@ -2467,7 +2551,8 @@ local function fire()
     end
     -- sampled before the click: this is the orientation the kick is measured
     -- against, because the recoil is applied by the game after the shot lands
-    local preShot = Camera and Camera.CFrame or nil
+    local liveCamera = refreshCamera()
+    local preShot = liveCamera and liveCamera.CFrame or nil
     local ok = clickMouse()
     if ok then
         markShot()
@@ -2484,21 +2569,24 @@ local function recoilLoop()
     task.spawn(function()
         while State.alive do
             task.wait(0.02)
-            if Config.NoRecoil and Aim.recoil and Camera then
-                local now = os.clock()
-                if now - (State.lastShot or 0) < 0.18 then
-                    local current = Camera.CFrame
-                    local storedLook = Aim.recoil.LookVector
-                    -- the position is kept from *now* (the player may have moved or
-                    -- turned) and only the pre-shot orientation is eased back in
-                    if storedLook and storedLook.Magnitude > 0 then
-                        local goal = CFrame.lookAt(current.Position, current.Position + storedLook)
-                        pcall(function() Camera.CFrame = current:Lerp(goal, 0.55) end)
+            protectLoop("recoil", function()
+                local camera = refreshCamera()
+                if Config.NoRecoil and Aim.recoil and camera then
+                    local now = os.clock()
+                    if now - (State.lastShot or 0) < 0.18 then
+                        local current = camera.CFrame
+                        local storedLook = Aim.recoil.LookVector
+                        -- the position is kept from *now* (the player may have moved
+                        -- or turned) and only the pre-shot orientation eased back in
+                        if storedLook and storedLook.Magnitude > 0 then
+                            local goal = CFrame.lookAt(current.Position, current.Position + storedLook)
+                            pcall(function() camera.CFrame = current:Lerp(goal, 0.55) end)
+                        end
+                    else
+                        Aim.recoil = nil
                     end
-                else
-                    Aim.recoil = nil
                 end
-            end
+            end)
         end
     end)
 end
@@ -2568,67 +2656,83 @@ local function combatLoop()
         while State.alive do
             task.wait(0.02)
             if not State.alive then break end
-            -- idle frames cost nothing: with aim, trigger and every automation
-            -- switch off there is no reason to scan fifteen players fifty times
-            -- a second. The ESP loop keeps the world fresh at its own pace.
-            local active = Config.AimEnabled or Config.TriggerBot or Config.AutoFire
-                or Config.AutoReload or Config.AutoSwitch or Config.AutoKnife
-            if Config.NoRecoil or Config.NoSpread then
-                if os.clock() - (State.lastWeaponPatch or -100) > 5 then
-                    State.lastWeaponPatch = os.clock()
-                    patchWeaponStats()
-                end
+            -- RIVALS hands out a new character when a match loads and after every
+            -- death. Rebind here, once, so the aim, the movement write cache and
+            -- the visibility filter all point at the body that is alive now.
+            local character = getChar()
+            if character and character ~= State.boundCharacter then
+                if onCharacterChanged then pcall(onCharacterChanged, character)
+                else State.boundCharacter = character end
             end
-            if not active then
-                State.target = nil
-            else
-                scanWorld(false)
-                local record = pickTarget()
-                State.target = record
-                trackKills()
-                if Config.AimEnabled and record then
-                    local keep = true
-                    if Config.AimWallCheck and not record.visible and Config.AimVisibleOnly then keep = false end
-                    -- human pause: a few frames are skipped on purpose so the
-                    -- camera does not track like a machine for minutes on end
-                    local pause = Config.HumanPause and math.random() < 0.02
-                    if keep and not pause then stepAim(record, 0.02) end
-                    if Config.AutoScope then scope(true) end
-                elseif Config.AutoScope then
-                    scope(false)
-                end
-                if Config.TriggerBot and record then
-                    local trigger = false
-                    if Config.TriggerMode == "FOV" then
-                        local pixels = crosshairDistance(record.position)
-                        trigger = pixels <= (tonumber(Config.TriggerFov) or 7)
-                    else
-                        local pixels, onScreen = crosshairDistance(record.position)
-                        trigger = onScreen and pixels <= math.max(2, (tonumber(Config.TriggerFov) or 7) * 0.5)
+            protectLoop("combat loop", function()
+                -- idle frames cost nothing: with aim, trigger and every
+                -- automation switch off there is no reason to scan fifteen
+                -- players fifty times a second. The ESP loop keeps the world
+                -- fresh at its own pace.
+                local active = Config.AimEnabled or Config.TriggerBot or Config.AutoFire
+                    or Config.AutoReload or Config.AutoSwitch or Config.AutoKnife
+                if Config.NoRecoil or Config.NoSpread then
+                    if os.clock() - (State.lastWeaponPatch or -100) > 5 then
+                        State.lastWeaponPatch = os.clock()
+                        patchWeaponStats()
                     end
-                    if trigger and (not Config.TriggerVisibleOnly or record.visible)
-                        and (not Config.TriggerTeamCheck or not record.friendly) then
-                        if os.clock() - (State.lastTrigger or 0) >= math.max(0.01, tonumber(Config.TriggerDelay) or 0.06) then
-                            State.lastTrigger = os.clock()
+                end
+                if not active then
+                    State.target = nil
+                else
+                    scanWorld(false)
+                    local record = pickTarget()
+                    State.target = record
+                    trackKills()
+                    -- while dead the game hands the camera to a spectate target;
+                    -- dragging it around then is both useless and loud
+                    if Config.AimEnabled and record and isAlive() then
+                        -- the cone and the ray were already checked when the
+                        -- target was picked; this flag only exists for people who
+                        -- want the camera to stop at cover
+                        local keep = true
+                        if Config.AimWallCheck and not record.visible and Config.AimVisibleOnly then keep = false end
+                        -- human pause: a few frames are skipped on purpose so the
+                        -- camera does not track like a machine for minutes on end
+                        local pause = Config.HumanPause and math.random() < 0.02
+                        if keep and not pause then stepAim(record, 0.02) end
+                        if Config.AutoScope then scope(true) end
+                    elseif Config.AutoScope then
+                        scope(false)
+                    end
+                    if Config.TriggerBot and record then
+                        local trigger = false
+                        if Config.TriggerMode == "FOV" then
+                            local pixels = crosshairDistance(record.position)
+                            trigger = pixels <= (tonumber(Config.TriggerFov) or 7)
+                        else
+                            local pixels, onScreen = crosshairDistance(record.position)
+                            trigger = onScreen and pixels <= math.max(2, (tonumber(Config.TriggerFov) or 7) * 0.5)
+                        end
+                        if trigger and (not Config.TriggerVisibleOnly or record.visible)
+                            and (not Config.TriggerTeamCheck or not record.friendly) then
+                            if os.clock() - (State.lastTrigger or 0) >= math.max(0.01, tonumber(Config.TriggerDelay) or 0.06) then
+                                State.lastTrigger = os.clock()
+                                fire()
+                            end
+                        end
+                    end
+                    if Config.AutoFire and record and record.visible then
+                        if os.clock() - (State.lastShot or 0) >= 1 / math.max(1, tonumber(Config.FireRateCap) or 14) then
                             fire()
                         end
                     end
-                end
-                if Config.AutoFire and record and record.visible then
-                    if os.clock() - (State.lastShot or 0) >= 1 / math.max(1, tonumber(Config.FireRateCap) or 14) then
-                        fire()
+                    if Config.AutoReload then
+                        local ammo = ammoOf(weaponOf(getChar()))
+                        if ammo == 0 then reloadNow() end
                     end
+                    if Config.AutoSwitch then
+                        local ammo = ammoOf(weaponOf(getChar()))
+                        if ammo == 0 and os.clock() - (State.lastReload or 0) > 1.4 then switchWeapon() end
+                    end
+                    if Config.AutoKnife then meleeNow() end
                 end
-                if Config.AutoReload then
-                    local ammo = ammoOf(weaponOf(getChar()))
-                    if ammo == 0 then reloadNow() end
-                end
-                if Config.AutoSwitch then
-                    local ammo = ammoOf(weaponOf(getChar()))
-                    if ammo == 0 and os.clock() - (State.lastReload or 0) > 1.4 then switchWeapon() end
-                end
-                if Config.AutoKnife then meleeNow() end
-            end
+            end)
         end
     end)
 end
@@ -2747,6 +2851,7 @@ local function movementLoop()
     task.spawn(function()
         while State.alive do
             task.wait(0.05)
+            protectLoop("movement", function()
             local character = getChar()
             if character and isAlive() then
                 local humanoid, root = getHumanoid(), getRoot()
@@ -2810,6 +2915,7 @@ local function movementLoop()
                     end
                 end
             end
+            end)
         end
     end)
 end
@@ -3029,7 +3135,7 @@ local function namecallFilter(self, ...)
         end
         if cachedShoot and self == cachedShoot then
             local goal = silentAimPosition()
-            local camera = Camera
+            local camera = refreshCamera()
             if goal and camera then
                 local origin = camera.CFrame.Position
                 local direction = goal - origin
@@ -3172,15 +3278,17 @@ local function kickWatcher()
     task.spawn(function()
         while State.alive do
             task.wait(1)
-            if Config.AcKickGuard and LocalPlayer then
-                local ok, parent = pcall(function() return LocalPlayer.Parent end)
-                if ok and not parent then
-                    AC.kicks = AC.kicks + 1
-                    if Config.LogLevel >= 1 then
-                        print("[Skill Hub] ac · local player was removed from Players")
+            protectLoop("kick watcher", function()
+                if Config.AcKickGuard and LocalPlayer then
+                    local ok, parent = pcall(function() return LocalPlayer.Parent end)
+                    if ok and not parent then
+                        AC.kicks = AC.kicks + 1
+                        if Config.LogLevel >= 1 then
+                            print("[Skill Hub] ac · local player was removed from Players")
+                        end
                     end
                 end
-            end
+            end)
         end
     end)
 end
@@ -3339,7 +3447,14 @@ local function fovCircle()
     local size = viewport()
     pcall(function()
         Esp.fov.Position = Vector2.new(size.X / 2, size.Y / 2)
-        Esp.fov.Radius = math.max(8, (tonumber(Config.AimFov) or 140) * 0.32)
+        -- a cone in degrees is not a radius in pixels: project the half-angle
+        -- through the camera's own field of view so the ring shows exactly the
+        -- area the aim picker will accept
+        local camera = refreshCamera()
+        local halfAngle = math.rad(aimCone())
+        local cameraFov = math.rad(tonumber(camera and camera.FieldOfView) or 70)
+        local radius = math.tan(halfAngle) / math.tan(cameraFov / 2) * (size.Y / 2)
+        Esp.fov.Radius = math.clamp(radius, 8, 2000)
         Esp.fov.Visible = Config.AimEnabled
     end)
 end
@@ -3619,7 +3734,14 @@ local function travelTo(position, steps)
         for index = 1, count do
             if not State.alive or not root.Parent then break end
             local target = start + delta * (index / count)
-            pcall(function() root.CFrame = CFrame.new(target, target + Camera.CFrame.LookVector) end)
+            local camera = refreshCamera()
+            pcall(function()
+                if camera then
+                    root.CFrame = CFrame.new(target, target + camera.CFrame.LookVector)
+                else
+                    root.CFrame = CFrame.new(target)
+                end
+            end)
             task.wait(delay)
         end
         safeCall("teleport landed", function() root.CFrame = CFrame.new(position) return true end)
@@ -3758,6 +3880,7 @@ local function utilityLoop()
     task.spawn(function()
         while State.alive do
             task.wait(0.4)
+            protectLoop("utility", function()
             if Config.AutoQueue then safeCall("queue", function() joinQueue() return true end) end
             if Config.AutoGG then
                 if State.wasInMatch and not State.inMatch and os.clock() - (State.lastGG or 0) > 12 then
@@ -3777,8 +3900,11 @@ local function utilityLoop()
                 safeCall("vfx", function() return stripEffects() > 0 end)
             end
             if not Config.RemoveVfx then Visuals.vfxApplied = false end
-            if Config.CameraFov and Camera then
-                pcall(function() Camera.FieldOfView = math.clamp(tonumber(Config.CameraFov) or 100, 40, 120) end)
+            if Config.CameraFov then
+                local camera = refreshCamera()
+                if camera then
+                    pcall(function() camera.FieldOfView = math.clamp(tonumber(Config.CameraFov) or 100, 40, 120) end)
+                end
             end
             local distance = tonumber(Config.CameraDistance) or 0
             if distance > 0 and LocalPlayer then
@@ -3794,6 +3920,7 @@ local function utilityLoop()
                 local emoteRemote = findRemote({ "emote", "dance" })
                 if emoteRemote then fireRemote(emoteRemote, "dance") end
             end
+            end)
         end
     end)
 end
@@ -3931,6 +4058,7 @@ local function funLoop()
         local rainbowChar, rainbowParts = nil, nil
         while State.alive do
             task.wait(0.1)
+            protectLoop("fun", function()
             hue = (hue + 0.006) % 1
             if Config.RainbowChar then
                 local character = getChar()
@@ -3977,8 +4105,56 @@ local function funLoop()
                 pcall(function() Visuals.music:Stop() Visuals.music:Destroy() end)
                 Visuals.music = nil
             end
+            end)
         end
     end)
+end
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- MATCH / RESPAWN REBIND — RIVALS swaps the local character when a duel or a
+-- match loads and after every death. Everything cached about the old body has
+-- to go with it, or the first match silently disables aim and movement.
+-- ═══════════════════════════════════════════════════════════════════════════
+function onCharacterChanged(character)
+    State.boundCharacter = character
+    Cache.character, Cache.root, Cache.humanoid = nil, nil, nil
+    Cache.playerRecords = {}
+    Cache.playerGui = nil
+    World.structureAt = -100
+    VisAt = -100
+    Aim.recoil, Aim.aimPosition = nil, nil
+    State.target, State.lastTargetName = nil, nil
+    -- WriteCache is how movement knows a value was already written; the new
+    -- humanoid has fresh defaults, so forget the old writes and re-apply
+    WriteCache.speed, WriteCache.jump, WriteCache.noclip = nil, nil, nil
+    Mov.noclip, Mov.flyLoop, Mov.flyBody = false, false, nil
+    Mov.lastVoid, Mov.lastFling, Mov.lastJump = 0, 0, 0
+    refreshCamera()
+    if character then
+        task.spawn(function()
+            task.wait(0.2)
+            if not State.alive then return end
+            pcall(function() scanWorld(true) end)
+            if Config.NoRecoil or Config.NoSpread then pcall(patchWeaponStats) end
+        end)
+    end
+end
+
+-- instant reaction on executors that expose the Player signal; the combat loop
+-- polls for the same change every 20 ms, so the hook is a shortcut, not a
+-- requirement
+do
+    local ok = pcall(function()
+        LocalPlayer.CharacterAdded:Connect(function(character)
+            task.spawn(function()
+                task.wait(0.1)
+                pcall(onCharacterChanged, character)
+            end)
+        end)
+        return true
+    end)
+    AC.characterHook = ok == true
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -4016,11 +4192,20 @@ end
 local selfTest, panic
 
 local function buildTabs()
+    local Sliders = {}
     local function slider(tab, title, desc, low, high, key, suffix, icon, onChange)
-        return tab:AddSlider(title, desc, low, high, Config[key], suffix, function(value)
+        local api = tab:AddSlider(title, desc, low, high, Config[key], suffix, function(value)
             Config[key] = value
             if onChange then onChange(value) end
         end, icon)
+        Sliders[key] = api
+        return api
+    end
+    -- a preset has to move the slider too, or the panel claims one value while
+    -- the aim runs on another
+    local function setSlider(key, value)
+        local api = Sliders[key]
+        if api and api.Set then api.Set(value) else Config[key] = value end
     end
     local function dropdown(tab, title, desc, options, key, icon, onChange)
         local names = {}
@@ -4064,6 +4249,37 @@ local function buildTabs()
     toggleSwitch(combat, "Team check", "skip teammates", "AimTeamCheck", "shield")
     toggleSwitch(combat, "Wall check", "re-test the ray every time the target changes", "AimWallCheck", "layers")
     toggleSwitch(combat, "Humanise", "jitter the step by a few tenths of a degree", "AimHumanize", "user")
+
+    combat:AddSection("Presets")
+    button(combat, "Duel · 1v1", "tight cone, calm smoothing, quick single click", function()
+        setSlider("AimFov", 90)
+        setSlider("AimSmooth", 0.5)
+        setSlider("AimStepLimit", 9)
+        setSlider("TriggerFov", 6)
+        setSlider("TriggerDelay", 0.05)
+        setSlider("AimRange", 400)
+        Config.AimVisibleOnly = false
+        notify("Duel preset", "90° cone · 0.50 smoothing · 9°/frame", "swords")
+    end, "swords")
+    button(combat, "Match · 2v2 and casual", "wider cone, team check on, faster trigger", function()
+        setSlider("AimFov", 140)
+        setSlider("AimSmooth", 0.45)
+        setSlider("AimStepLimit", 12)
+        setSlider("TriggerFov", 8)
+        setSlider("TriggerDelay", 0.04)
+        setSlider("AimRange", 600)
+        Config.AimTeamCheck = true
+        notify("Match preset", "140° cone · team check on", "users")
+    end, "users")
+    button(combat, "Close range", "shotgun and melee spacing: wide cone, fast step", function()
+        setSlider("AimFov", 200)
+        setSlider("AimSmooth", 0.4)
+        setSlider("AimStepLimit", 18)
+        setSlider("TriggerFov", 12)
+        setSlider("TriggerDelay", 0.03)
+        notify("Close range", "200° cone · 18°/frame", "flame")
+    end, "flame")
+
     combat:AddSection("Recoil and fire")
     toggleSwitch(combat, "No recoil", "restores the camera rotation after each shot", "NoRecoil", "wind")
     toggleSwitch(combat, "No spread", "clamps numeric spread fields found in Lua tables", "NoSpread", "spark")
@@ -4368,8 +4584,28 @@ function selfTest()
     local team = World.localTeam
     check("world · local team", team ~= nil or #snapshot.players == 0, tostring(team))
 
+    -- point the camera at the nearest enemy for the picker checks: the cone is
+    -- part of the aim now, so a camera left facing a wall is not a fair test
+    local aimProbe, hasEnemy = nil, false
+    for _, record in ipairs(snapshot.players) do
+        if not record.friendly then
+            hasEnemy = true
+            if (record.distance or 0) < 600 then aimProbe = record end
+        end
+    end
+    -- the team filter is asserted below, so it has to be on for the assertion
+    -- to mean anything, whatever the switches were left at
+    local savedTeamCheck = Config.AimTeamCheck
+    if hasEnemy then Config.AimTeamCheck = true end
+    local probeCamera = refreshCamera()
+    local savedCFrame = probeCamera and probeCamera.CFrame or nil
+    if probeCamera and aimProbe then
+        pcall(function() probeCamera.CFrame = CFrame.lookAt(probeCamera.CFrame.Position, aimProbe.position) end)
+    end
     local target = pickTarget()
     check("aim · picks a target", target ~= nil, target and target.name or "nil")
+    check("aim · target is inside the cone", target == nil
+        or angleTo(target.position) <= aimCone(), target and string.format("%.0f°", angleTo(target.position)) or "nil")
     if target then
         check("aim · team filter respected", not (Config.AimTeamCheck and target.friendly), tostring(target.friendly))
         check("aim · head resolves", aimPartOf(target) ~= nil, aimPartOf(target) and aimPartOf(target).Name or "nil")
@@ -4383,7 +4619,12 @@ function selfTest()
         check("aim · position is a vector", true, "no players")
         check("aim · step runs", true, "no players")
         check("aim · angle limit", true, "no players")
+        check("aim · target is inside the cone", true, "no players")
     end
+    if probeCamera and savedCFrame then
+        pcall(function() probeCamera.CFrame = savedCFrame end)
+    end
+    Config.AimTeamCheck = savedTeamCheck
 
     local shootRemote, shootName = findRemote(LOWER.Shoot)
     check("remotes · shoot indexed", shootRemote ~= nil, tostring(shootName))
@@ -4485,9 +4726,19 @@ local function boot()
     kickWatcher()
     recoilLoop()
 
-    -- keys: show/hide, panic, aim
+    -- keys: show/hide, panic, aim. `gameProcessed` is the difference between a
+    -- key press and someone typing the same letter into chat.
+    local function syncSwitch(key, value)
+        for _, entry in ipairs(Switches) do
+            if entry.key == key then
+                pcall(function() entry.api.Set(value, true) end)
+                return
+            end
+        end
+    end
     if UserInput then
-        UserInput.InputBegan:Connect(function(input)
+        UserInput.InputBegan:Connect(function(input, gameProcessed)
+            if gameProcessed then return end
             if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
             local key = input.KeyCode and input.KeyCode.Name or ""
             if key == Config.HideUiKey then
@@ -4497,11 +4748,14 @@ local function boot()
                 panic()
             elseif key == Config.AimKey then
                 if Config.AimToggle then
-                    Config.AimEnabled = not Config.AimEnabled
-                    if Config.AimEnabled then
+                    local nextState = not Config.AimEnabled
+                    syncSwitch("AimEnabled", nextState)
+                    Config.AimEnabled = nextState
+                    if nextState then
                         notify("Aim", "on · " .. tostring(Config.AimMethod), 2, Theme.Clay, "swords")
                     end
                 else
+                    syncSwitch("AimEnabled", true)
                     Config.AimEnabled = true
                 end
             end
@@ -4509,6 +4763,7 @@ local function boot()
         UserInput.InputEnded:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.Keyboard
                 and not Config.AimToggle and (input.KeyCode and input.KeyCode.Name) == Config.AimKey then
+                syncSwitch("AimEnabled", false)
                 Config.AimEnabled = false
             end
         end)

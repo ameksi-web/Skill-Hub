@@ -15,12 +15,14 @@ teammate, a rifle with an ammo value, gameplay and queue remotes, the report
 remotes, four detector scripts and the chat service.
 
 Checked: load · the nine tab pages · every switch on then off · the aim picker
-(visibility, team filter, crosshair priority) · the per-frame step limit ·
-mouse and silent paths · ESP highlights, tags, tracers, boxes and the FOV ring
-· fire cadence, reload, movement, fly, noclip, anti-void · chat, queue, leave,
-server hop, fullbright, anti-flash, smoke, VFX · paced teleports · all six
-anti-cheat layers (detectors, namecall filter, kick guard, camouflage, limit
-clamp, rate limits) · panic · the built-in 39-check self-test · unload.
+(visibility, team filter, crosshair priority, the FOV cone, hysteresis) · the
+per-frame step limit · mouse and silent paths · ESP highlights, tags, tracers,
+boxes and the FOV ring · fire cadence, reload, movement, fly, noclip, anti-void
+· chat, queue, leave, server hop, fullbright, anti-flash, smoke, VFX · paced
+teleports · a camera swapped mid-run by the game, a respawn into a brand-new
+character, aim re-engaging after both, worker health · all six anti-cheat
+layers (detectors, namecall filter, kick guard, camouflage, limit clamp, rate
+limits) · panic · the built-in 40-check self-test · unload.
 """
 import io, os, sys
 
@@ -710,6 +712,7 @@ local camera = makeInstance("Camera", "Camera")
 camera.ViewportSize = { X = 800, Y = 600 }
 camera.CFrame = CFrame_new(V3.new(0, 10, 0), V3.new(0, 10, -100))
 camera.FieldOfView = 70
+camera.Parent = _G.workspace
 _G.workspace.CurrentCamera = camera
 
 _G.RaycastParams = { new = function() return { FilterType = nil, FilterDescendantsInstances = {} } end }
@@ -720,6 +723,18 @@ _G.__WALL.Size = V3.new(120, 60, 4)
 
 local players = makeInstance("Players", "Players")
 local localPlayer = makeInstance("Player", "TestPlayer")
+_G.__LOCAL_PLAYER = localPlayer
+
+-- Player.CharacterAdded: the hub hooks it, and the respawn checks fire it
+local characterAdded = { listeners = {} }
+function characterAdded:Connect(fn)
+    table.insert(self.listeners, fn)
+    return { Disconnect = function() end }
+end
+function characterAdded:Fire(character)
+    for _, fn in ipairs(self.listeners) do pcall(fn, character) end
+end
+localPlayer.CharacterAdded = characterAdded
 localPlayer.UserId = 1
 localPlayer.DisplayName = "TestPlayer"
 local character, localHumanoid = humanoidModel("TestPlayerCharacter", 100, V3.new(0, 3, 0))
@@ -981,6 +996,19 @@ end
 
 for index = 1, 3 do pump(0.03) end
 
+-- build a fresh local character exactly the way a match does: new model, new
+-- humanoid, parented into the world, then Player.Character and CharacterAdded
+function _G.__SPAWN_CHARACTER(player, name, position)
+    local character, humanoid = humanoidModel(name, 100, position)
+    character:SetAttribute("Team", "Blue")
+    character.Parent = _G.workspace
+    player.Character = character
+    if player.CharacterAdded and player.CharacterAdded.Fire then
+        player.CharacterAdded:Fire(character)
+    end
+    return character, humanoid
+end
+
 """
 
 CHECKS_BOOT = r"""_G.__RESULTS = {}
@@ -991,7 +1019,7 @@ end
 
 check("hub exported to getgenv", hub ~= nil)
 if hub then
-check("version", hub.version == "v1.0", tostring(hub.version))
+check("version", hub.version == "v1.1", tostring(hub.version))
 check("game name", hub.game == "RIVALS", tostring(hub.game))
 check("build tag", string.find(tostring(hub.build), "Update 23", 1, true) ~= nil, tostring(hub.build))
 
@@ -1243,6 +1271,106 @@ local arrived = (root.Position - _G.Vector3.new(200, 3, 0)).Magnitude
 check("paced travel arrives", arrived < 4, string.format("%.1f studs off", arrived))
 """
 
+CHECKS_MATCH = r"""-- The part the lobby harness never reached: RIVALS replaces the camera when a
+-- duel finishes loading and hands out a new character on every spawn.
+local hub = _G.SkillHubRivals
+local function check(label, condition, detail)
+    table.insert(_G.__RESULTS, { label = label, ok = condition == true, detail = detail })
+end
+local function turnedDegrees(a, b)
+    return math.deg(math.acos(math.clamp(a:Dot(b), -1, 1)))
+end
+
+local camera = _G.workspace.CurrentCamera
+camera.CFrame = CFrame.lookAt(Vector3.new(0, 10, 0), Vector3.new(0, 10, -100))
+hub.config.AimEnabled = true
+hub.config.AimMethod = "Camera"
+hub.config.AimVisibleOnly = false
+hub.config.AimTeamCheck = true
+hub.config.AimSmooth = 0.45
+
+-- ── the cone ───────────────────────────────────────────────────────────────
+local forward = camera.CFrame
+camera.CFrame = CFrame.lookAt(camera.CFrame.Position, camera.CFrame.Position + Vector3.new(0, 0, 1))
+local behind = hub.pickTarget()
+check("aim cone refuses a target behind the camera", behind == nil, behind and behind.name or "nil")
+camera.CFrame = forward
+local ahead = hub.pickTarget()
+check("aim cone accepts the enemy in front", ahead ~= nil, ahead and ahead.name or "nil")
+
+-- ── the game swaps CurrentCamera on match load ─────────────────────────────
+local oldCamera = camera
+local oldLook = oldCamera.CFrame.LookVector
+local matchCamera = Instance.new("Camera")
+matchCamera.Name = "MatchCamera"
+matchCamera.ViewportSize = oldCamera.ViewportSize
+matchCamera.FieldOfView = oldCamera.FieldOfView
+matchCamera.CFrame = oldCamera.CFrame
+matchCamera.Parent = _G.workspace
+_G.workspace.CurrentCamera = matchCamera
+
+local target = hub.pickTarget()
+check("a target is still picked after the swap", target ~= nil, target and target.name or "nil")
+local before = matchCamera.CFrame.LookVector
+hub.stepAim(target, 0.016)
+local stepTurn = turnedDegrees(before, matchCamera.CFrame.LookVector)
+check("aim turns the camera the game is rendering", stepTurn > 0.5, string.format("%.2f deg", stepTurn))
+check("the replaced camera is left untouched",
+    oldCamera.CFrame.LookVector:Dot(oldLook) > 0.99999,
+    string.format("%.6f", oldCamera.CFrame.LookVector:Dot(oldLook)))
+
+-- and the worker does it on its own, without a manual call: the camera starts
+-- a few degrees off the enemy, inside the cone, and the loop has to close it
+local loopStart = CFrame.lookAt(Vector3.new(0, 10, 0), Vector3.new(10, 16, -40))
+matchCamera.CFrame = loopStart
+local loopBefore = matchCamera.CFrame.LookVector
+for _ = 1, 14 do pump(0.05) end
+local loopTurn = turnedDegrees(loopBefore, matchCamera.CFrame.LookVector)
+check("the combat loop aims through the swapped camera", loopTurn > 3,
+    string.format("%.1f deg in 0.7 s", loopTurn))
+
+-- ── a respawn: health zero, old model gone, new model from CharacterAdded ──
+local player = _G.__LOCAL_PLAYER
+local oldCharacter = player.Character
+local oldHumanoid = oldCharacter:FindFirstChildOfClass("Humanoid")
+local savedCamo = hub.config.AcCamouflage
+hub.config.AcCamouflage = false
+hub.config.WalkSpeedEnabled = true
+hub.config.WalkSpeed = 30
+hub.config.AcSafeMode = true
+hub.config.AcSpeedCeiling = 60
+if oldHumanoid then oldHumanoid.Health = 0 end
+oldCharacter.Parent = nil
+local newCharacter, newHumanoid = _G.__SPAWN_CHARACTER(player, "MatchCharacter", Vector3.new(0, 3, 0))
+for _ = 1, 10 do pump(0.05) end
+
+check("the hub rebinds to the new body", hub.state.boundCharacter == newCharacter,
+    tostring(hub.state.boundCharacter and hub.state.boundCharacter.Name))
+check("movement writes reach the new humanoid", newHumanoid and newHumanoid.WalkSpeed == 30,
+    newHumanoid and tostring(newHumanoid.WalkSpeed) or "no humanoid")
+matchCamera.CFrame = CFrame.lookAt(Vector3.new(0, 10, 0), Vector3.new(12, 8, -40))
+hub.config.AimVisibleOnly = true
+hub.scan(true)
+local seenAfterRespawn = hub.pickTarget()
+hub.config.AimVisibleOnly = false
+check("a visible target is still found after the respawn", seenAfterRespawn ~= nil,
+    seenAfterRespawn and seenAfterRespawn.name or "nil")
+check("the character hook fired", hub.ac.characterHook == true, tostring(hub.ac.characterHook))
+
+matchCamera.CFrame = CFrame.lookAt(Vector3.new(0, 10, 0), Vector3.new(0, 10, -100))
+local respawnBefore = matchCamera.CFrame.LookVector
+for _ = 1, 14 do pump(0.05) end
+local respawnTurn = turnedDegrees(respawnBefore, matchCamera.CFrame.LookVector)
+check("aim re-engages after the respawn", respawnTurn > 1,
+    string.format("%.1f deg in 0.7 s", respawnTurn))
+check("no worker needed rescuing", (hub.state.perf.loopErrors or 0) == 0,
+    tostring(hub.state.perf.loopErrors or 0) .. " recovered error(s)")
+check("the error log is still empty", #(_G.__SkillHubErrorLog or {}) == 0,
+    table.concat(_G.__SkillHubErrorLog or {}, " | "):sub(1, 240))
+
+hub.config.AcCamouflage = savedCamo
+"""
+
 CHECKS_AFTER = r"""local hub = _G.SkillHubRivals
 local function check(label, condition, detail)
     table.insert(_G.__RESULTS, { label = label, ok = condition == true, detail = detail })
@@ -1388,6 +1516,7 @@ def main() -> int:
 
     runtime.execute(CHECKS_BOOT)
     runtime.execute(CHECKS_RUN)
+    runtime.execute(CHECKS_MATCH)
     runtime.execute(CHECKS_AFTER)
 
     results = runtime.eval("_G.__RESULTS")

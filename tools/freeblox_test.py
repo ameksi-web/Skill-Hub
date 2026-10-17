@@ -2055,7 +2055,7 @@ function _G.__PUMP(seconds, step)
 end
 
 check("the hub booted", hub ~= nil)
-check("version", hub and hub.version == "v1.0", hub and hub.version)
+check("version", hub and hub.version == "v1.1", hub and hub.version)
 check("two tabs, and only two", hub and #hub.tabs == 2,
     hub and table.concat(hub.tabTitles(), " / "))
 check("the tabs are Auto Farm and Settings",
@@ -2623,6 +2623,108 @@ check("destroy removes the window and the export",
     tostring(destroyed) .. "/" .. tostring(guiGone))
 """
 
+CHECKS_EXTRA = r"""local hub = _G.SkillHubFreeBloxFruit
+local check, control, setControl, pumpFor = (function()
+    local function c(label, condition, detail)
+        table.insert(_G.__RESULTS, { label = label, ok = condition == true, detail = detail })
+    end
+    return c, _G.__CONTROL, _G.__SET, _G.__PUMP
+end)()
+
+-- ── the theme picker is six real swatches, and clicking one works ─────────
+local function themeCard()
+    for _, item in ipairs(hub.window().Root:GetDescendants()) do
+        if item.ClassName == "TextLabel" and item.Text == "Theme" then return item.Parent end
+    end
+    return nil
+end
+local card = themeCard()
+local swatches = {}
+if card then
+    for _, child in ipairs(card:GetDescendants()) do
+        if child.ClassName == "TextButton" then swatches[#swatches + 1] = child end
+    end
+end
+check("the theme picker paints six swatches", #swatches == 6, #swatches .. " swatches")
+local clicked = false
+if #swatches >= 3 then
+    swatches[3].MouseButton1Click:Fire()
+    pumpFor(0.5)
+    clicked = hub.theme() == "Obsidian"
+end
+check("clicking a swatch rebuilds the window in that palette", clicked, tostring(hub.theme()))
+check("the rebuilt picker still lists six", (function()
+    local again = themeCard()
+    local count = 0
+    if again then
+        for _, child in ipairs(again:GetDescendants()) do
+            if child.ClassName == "TextButton" then count = count + 1 end
+        end
+    end
+    return count == 6
+end)())
+
+-- ── profiles: three slots beside the main config ─────────────────────────
+hub.config.AttackRate = 0.22
+hub.config.ScanRange = 333
+local wroteProfile, _, profilePath = hub.saveProfile("2")
+check("a profile writes its own file", wroteProfile == true
+    and profilePath == "FreeBloxFruit/profile-2.json"
+    and type(_G.__FS[profilePath]) == "string",
+    tostring(profilePath))
+hub.config.AttackRate = 0.9
+hub.config.ScanRange = 99
+local loadedProfile = hub.loadProfile("2")
+pumpFor(0.3)
+check("loading a profile restores its values",
+    loadedProfile == true and math.abs(hub.config.AttackRate - 0.22) < 0.001 and hub.config.ScanRange == 333,
+    tostring(hub.config.AttackRate) .. " · " .. tostring(hub.config.ScanRange))
+check("loading a profile never starts a feature", hub.featuresOn() == 0, hub.featuresOn() .. " on")
+
+-- ── the window remembers where it was left ───────────────────────────────
+hub.config.UiX, hub.config.UiY = 44, -26
+hub.applyTheme(hub.config.Theme)
+pumpFor(0.4)
+local offsetX = hub.window().Root.Position.X.Offset
+local offsetY = hub.window().Root.Position.Y.Offset
+check("the window reopens where it was dragged", offsetX == 44 and offsetY == -26,
+    tostring(offsetX) .. ", " .. tostring(offsetY))
+hub.config.UiX, hub.config.UiY = 0, 0
+hub.applyTheme(hub.config.Theme)
+pumpFor(0.4)
+check("the centre position restores", hub.window().Root.Position.X.Offset == 0,
+    tostring(hub.window().Root.Position.X.Offset))
+
+-- ── notifications toggle ─────────────────────────────────────────────────
+local notifyEntry = control("Notifications")
+local flipped = false
+if notifyEntry then
+    notifyEntry.api.set(false)
+    local off = hub.config.NotifyActions == false
+    notifyEntry.api.set(true)
+    flipped = off and hub.config.NotifyActions == true
+end
+check("the notifications switch flips the config", flipped)
+
+-- ── the farm panel reports a session ─────────────────────────────────────
+local rows = hub.farmStatus()
+local session, rates = nil, nil
+for _, row in ipairs(rows) do
+    if row.label == "session" then session = row.value end
+    if row.label == "rates" then rates = row.value end
+end
+check("the farm panel shows a session clock and rates",
+    session ~= nil and session:find("%d+:%d+") ~= nil and rates ~= nil and rates:find("/min") ~= nil,
+    tostring(session) .. " · " .. tostring(rates))
+local configRows = hub.configStatus()
+local sawProfile, sawWindow = false, false
+for _, row in ipairs(configRows) do
+    if row.label == "profile" then sawProfile = true end
+    if row.label == "window" then sawWindow = true end
+end
+check("the config panel shows the slot and the window position", sawProfile and sawWindow)
+"""
+
 CHECKS_REBOOT = r"""-- ═══════════════════════════════════════════════════════════════════════════
 -- REBOOT — a real second run of the script, with a saved config on disk that
 -- has every loud switch set to true. The theme comes back; the farm must not.
@@ -2678,6 +2780,7 @@ def main() -> int:
     runtime.execute(CHECKS_BOOT)
     runtime.execute(CHECKS_MAIN)
     runtime.execute(CHECKS_SETTINGS)
+    runtime.execute(CHECKS_EXTRA)
     runtime.execute(CHECKS_MORE)
 
     # second run of the same script, with the config the first run left behind

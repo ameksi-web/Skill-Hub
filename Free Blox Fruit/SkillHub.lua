@@ -41,7 +41,7 @@
 ]]
 
 local META = {
-    version = "v1.0",
+    version = "v1.1",
     build   = "Free Blox Fruit · farm + config · six themes",
     author  = "ameksi-web",
     game    = "Blox Fruits",
@@ -173,11 +173,14 @@ local Config = {
     HideUiKey           = "RightControl",
     PanicKey            = "F1",
     UiVisible           = true,
+    UiX                 = 0,            -- window position, 0 = centred
+    UiY                 = 0,
 
     -- ── config file ───────────────────────────────────────────────────────
     Autosave            = true,
     Autoload            = false,
     ConfigPath          = "FreeBloxFruit/config.json",
+    ProfileSlot         = "1",
     NotifyActions       = true,
 }
 
@@ -933,6 +936,15 @@ local function buildWindow()
 
     Window = { Screen = screen, Root = root, Shadow = shadow, Stroke = rootStroke, Minimized = false }
 
+    -- where the player dragged the window last time (0, 0 = centred)
+    local savedX = tonumber(Config.UiX) or 0
+    local savedY = tonumber(Config.UiY) or 0
+    if savedX ~= 0 or savedY ~= 0 then
+        root.Position = UDim2.new(0.5, savedX, 0.5, savedY)
+        shadow.Position = UDim2.new(root.Position.X.Scale, root.Position.X.Offset + 6,
+            root.Position.Y.Scale, root.Position.Y.Offset + 8)
+    end
+
     -- topbar
     local topbar = new("Frame", {
         BackgroundColor3 = Theme.BgElevated, BackgroundTransparency = 0.35, BorderSizePixel = 0,
@@ -1027,7 +1039,12 @@ local function buildWindow()
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging, dragStart, startPos = true, input.Position, root.Position
             input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                    -- the window is where the player left it next time
+                    Config.UiX = root.Position.X.Offset
+                    Config.UiY = root.Position.Y.Offset
+                end
             end)
         end
     end)
@@ -1600,6 +1617,104 @@ local function makeTab(title, desc, iconKind, accent)
         return api
     end
 
+    -- a real theme picker: six swatches, each painted in its own palette, so
+    -- the choice is made by looking at the menu, not by reading a label
+    function tab:AddThemePicker(title, desc, entries, currentKey, callback)
+        local card = new("Frame", {
+            BackgroundColor3 = Theme.BgElevated, BorderSizePixel = 0,
+            LayoutOrder = nextOrder(), Size = UDim2.new(1, 0, 0, 108),
+        }, page)
+        corner(card, RADIUS.card)
+        hairline(card, Theme.StrokeSoft, 1, 0.45)
+        Text({
+            Font = FONT.Bold, Position = UDim2.new(0, 16, 0, 12), Size = UDim2.new(1, -32, 0, 16),
+            Text = title, TextColor3 = Theme.TextPrimary, TextSize = 12,
+            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
+        }, card)
+        Text({
+            Position = UDim2.new(0, 16, 0, 29), Size = UDim2.new(1, -32, 0, 14),
+            Text = desc or "", TextColor3 = Theme.TextMuted, TextSize = 10,
+            TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 6,
+        }, card)
+
+        local holder = new("Frame", {
+            BackgroundTransparency = 1, Position = UDim2.new(0, 16, 0, 50),
+            Size = UDim2.new(1, -32, 0, 46), ZIndex = 6,
+        }, card)
+
+        local order, byLabel, swatches = {}, {}, {}
+        local selected = nil
+        local function paint()
+            for key, swatch in pairs(swatches) do
+                local active = key == selected
+                swatch.Stroke.Color = active and Theme.Accent or Theme.StrokeSoft
+                swatch.Stroke.Thickness = active and 2 or 1
+                swatch.Stroke.Transparency = active and 0.1 or 0.45
+                swatch.Dot.BackgroundTransparency = active and 0 or 0.35
+            end
+        end
+        local choose
+        choose = function(key, silent)
+            if not swatches[key] then return false end
+            selected = key
+            paint()
+            if not silent and callback then CONTROLS.spawn("theme · " .. title, callback, key) end
+            return true
+        end
+
+        local count = #entries
+        local width = math.floor((524 - (count - 1) * 6) / count)
+        for index, entry in ipairs(entries) do
+            local button = new("TextButton", {
+                AutoButtonColor = false, BackgroundColor3 = entry.bg, BorderSizePixel = 0,
+                Position = UDim2.new(0, (index - 1) * (width + 6), 0, 0),
+                Size = UDim2.new(0, width, 0, 46), Text = "", ZIndex = 7,
+            }, holder)
+            corner(button, math.min(RADIUS.chip, 8))
+            local stroke = new("UIStroke", {
+                Color = Theme.StrokeSoft, Thickness = 1, Transparency = 0.45,
+                ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+            }, button)
+            Text({
+                Position = UDim2.new(0, 7, 0, 6), Size = UDim2.new(1, -14, 0, 12),
+                Text = entry.short or entry.key, TextColor3 = entry.text, TextSize = 9,
+                TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 8,
+            }, button)
+            local dotChoices = { entry.accent, entry.accent2, entry.accent3 }
+            for dotIndex = 1, 3 do
+                local dot = new("Frame", {
+                    BackgroundColor3 = dotChoices[dotIndex] or entry.accent,
+                    BorderSizePixel = 0, Position = UDim2.new(0, 7 + (dotIndex - 1) * 10, 0, 27),
+                    Size = UDim2.new(0, 7, 0, 7), ZIndex = 8,
+                }, button)
+                corner(dot, RADIUS.pill)
+                if dotIndex == 1 then button.Dot = dot end
+            end
+            button.MouseEnter:Connect(function() stroke.Transparency = 0.1 end)
+            button.MouseLeave:Connect(function()
+                if selected ~= entry.key then stroke.Transparency = 0.45 end
+            end)
+            button.MouseButton1Click:Connect(function() choose(entry.key, false) end)
+            swatches[entry.key] = { Frame = button, Stroke = stroke, Dot = button.Dot }
+            order[index] = entry.key
+            byLabel[entry.label or entry.key] = entry.key
+            byLabel[entry.key] = entry.key
+        end
+        selected = currentKey
+        paint()
+
+        CONTROLS.register("theme", title, tab, {
+            set = function(value) choose(byLabel[value] or value, false) end,
+            get = function() return selected end,
+            options = order,
+        })
+        table.insert(tab.searchIndex, title)
+        return {
+            Set = function(value) choose(byLabel[value] or value, true) end,
+            Get = function() return selected end,
+        }
+    end
+
     function tab:AddInput(title, desc, placeholder, callback, iconKind)
         local card = new("Frame", {
             BackgroundColor3 = Theme.BgElevated, BorderSizePixel = 0,
@@ -1935,6 +2050,7 @@ do
     NS.new = new
     NS.notify = notify
     NS.safeCall = safeCall
+    NS.palettes = THEMES
     NS.controls = ControlRegistry
     NS.controlHealth = CONTROLS
 end
@@ -2988,6 +3104,48 @@ do
         return true, applied
     end
 
+    -- ── named profiles: three slots next to the main config ────────────────
+    local function profilePath(slot)
+        return "FreeBloxFruit/profile-" .. tostring(slot or Config.ProfileSlot or "1") .. ".json"
+    end
+
+    local function saveProfile(slot)
+        local path = profilePath(slot)
+        local text = jsonEncode(snapshot())
+        local wrote = false
+        if hasFileApi() then
+            wrote = pcall(function()
+                if type(makefolder) == "function" then pcall(makefolder, "FreeBloxFruit") end
+                writefile(path, text)
+            end)
+        end
+        State.savedAt = clockString()
+        if Config.NotifyActions then
+            notify("Profile saved", path, 3, wrote and Theme.Success or Theme.Warning, "save")
+        end
+        return wrote, text, path
+    end
+
+    local function loadProfile(slot)
+        local path = profilePath(slot)
+        if not hasFileApi() or type(readfile) ~= "function" then
+            return false, "no file API"
+        end
+        local readOk, text = pcall(readfile, path)
+        if not readOk or type(text) ~= "string" then
+            if Config.NotifyActions then notify("Profile", path .. " is empty", 3, Theme.Warning, "folder") end
+            return false, "empty"
+        end
+        local parsed, data = pcall(jsonDecode, text)
+        if not parsed or type(data) ~= "table" then return false, "broken file" end
+        local applied = apply(data, "all")
+        if Config.NotifyActions then
+            notify("Profile loaded", tostring(applied) .. " keys · " .. path, 3, Theme.Success, "folder")
+        end
+        if Store.afterChange then pcall(Store.afterChange) end
+        return true, applied, path
+    end
+
     local function autosaveTick()
         if not Config.Autosave then return false end
         local text = jsonEncode(snapshot())
@@ -3020,6 +3178,9 @@ do
         return true
     end
 
+    Store.saveProfile = saveProfile
+    Store.loadProfile = loadProfile
+    Store.profilePath = profilePath
     Store.save = save
     Store.load = load
     Store.reset = reset
@@ -3081,11 +3242,21 @@ local function farmStatus()
     local target = State.target
     local origin = myPosition()
     local distance = target and origin and math.floor(flatDistance(origin, target.position)) or 0
+    local runtime = math.max(os.clock() - (State.startedAt or os.clock()), 0)
+    local minutes = runtime / 60
+    local function rate(count)
+        if minutes < 0.05 then return "—" end
+        return string.format("%.1f/min", count / minutes)
+    end
+    local function clock(seconds)
+        return string.format("%02d:%02d", math.floor(seconds / 60), math.floor(seconds % 60))
+    end
     return {
         { label = "state",  value = tostring(State.status) },
         { label = "target", value = target and (target.name .. " · " .. distance .. " studs") or "none" },
-        { label = "kills",  value = tostring(State.kills) },
+        { label = "session", value = clock(runtime) .. " · " .. tostring(State.kills) .. " kills · " .. rate(State.kills) },
         { label = "loot",   value = string.format("chest %d · fruit %d · drop %d", State.chests, State.fruits, State.drops) },
+        { label = "rates",  value = string.format("attacks %s · loot %s", rate(State.hits), rate(State.chests + State.fruits + State.drops)) },
         { label = "travel", value = string.format("%d steps · %d studs", State.steps, math.floor(State.studs)) },
         { label = "mobs",   value = tostring(#World.mobs) .. " in " .. tostring(Config.ScanRange) .. " studs" },
     }
@@ -3094,10 +3265,12 @@ end
 local function configStatus()
     return {
         { label = "file",      value = tostring(Config.ConfigPath) },
+        { label = "profile",   value = "slot " .. tostring(Config.ProfileSlot) },
         { label = "saved",     value = tostring(State.savedAt or "never") },
         { label = "autosave",  value = Config.Autosave and "on · every 2 s" or "off" },
         { label = "autoload",  value = Config.Autoload and "on · interface keys only" or "off · nothing starts" },
         { label = "storage",   value = Store.hasFileApi() and "writefile / readfile" or "clipboard only" },
+        { label = "window",    value = string.format("%d, %d px", tonumber(Config.UiX) or 0, tonumber(Config.UiY) or 0) },
         { label = "features",  value = tostring(featuresOn()) .. " on" },
     }
 end
@@ -3164,7 +3337,7 @@ function buildTabs()
     slider(farm, "Travel delay", "seconds between steps", 0.02, 0.4, "TravelDelay", " s", "loop")
 
     farm:AddSection("Live")
-    farm:AddStatusPanel("Farm status", farmStatus, 132)
+    farm:AddStatusPanel("Farm status", farmStatus, 150)
 
     -- ── Settings ───────────────────────────────────────────────────────────
     local THEME_TITLES = {
@@ -3175,22 +3348,27 @@ function buildTabs()
     for index, key in ipairs(THEME_ORDER) do THEME_BY_TITLE[THEME_TITLES[index]] = key end
     local settings = makeTab("Settings", "theme, config, keys, safety", "gear", Theme.Steel)
     settings:AddSection("Appearance")
-    local currentThemeTitle = THEME_TITLES[1]
+    local palettes = NS.palettes or {}
+    local themeEntries = {}
     for index, key in ipairs(THEME_ORDER) do
-        if key == Config.Theme then currentThemeTitle = THEME_TITLES[index] end
+        local palette = palettes[key] or {}
+        themeEntries[index] = {
+            key = key,
+            label = THEME_TITLES[index],
+            short = key,
+            bg = palette.BgSurface,
+            text = palette.TextPrimary,
+            accent = palette.Accent,
+            accent2 = palette.Clay,
+            accent3 = palette.Sky,
+        }
     end
-    local themeDropdown = settings:AddDropdown("Theme", "six complete palettes, applied live", THEME_TITLES,
-        currentThemeTitle, function(value)
-            local key = THEME_BY_TITLE[value] or value
+    settings:AddThemePicker("Theme", "six complete palettes — click a swatch, the window rebuilds",
+        themeEntries, Config.Theme, function(key)
             Config.Theme = key
             applyTheme(key)
             rebuildInterface("theme")
-        end, "palette")
-    themeDropdown.Apply = function(key)
-        Config.Theme = key
-        applyTheme(key)
-        rebuildInterface("theme")
-    end
+        end)
     slider(settings, "UI scale", "scales text, icons and hit areas", 0.75, 1.3, "UiScale", "×", "scale", function(value)
         local window = getWindow()
         local screen = window and window.Screen
@@ -3200,6 +3378,17 @@ function buildTabs()
             end
         end
     end)
+
+    toggle(settings, "Notifications", "toasts for saves, themes and profile actions", "NotifyActions", "bell")
+    button(settings, "Reset window position", "put the window back in the centre", function()
+        Config.UiX, Config.UiY = 0, 0
+        local window = getWindow()
+        if window and window.Root then
+            window.Root.Position = UDim2.new(0.5, 0, 0.5, 0)
+            if window.Shadow then window.Shadow.Position = UDim2.new(0.5, 6, 0.5, 8) end
+        end
+        notify("Window", "centred", 2, Theme.Accent, "scale")
+    end, "scale")
 
     settings:AddSection("Config")
     toggle(settings, "Autosave", "write the config two seconds after it changes", "Autosave", "save")
@@ -3219,7 +3408,17 @@ function buildTabs()
     settings:AddInput("Import config", "paste JSON from another session", "{ ... }", function(text)
         Store.import(text)
     end, "folder")
-    settings:AddStatusPanel("Config status", configStatus, 132)
+
+    settings:AddSection("Profiles")
+    dropdown(settings, "Profile slot", "three named slots beside the main config", { "1", "2", "3" }, "ProfileSlot", "book")
+    button(settings, "Save profile", "write every value into the chosen slot", function()
+        Store.saveProfile(Config.ProfileSlot)
+    end, "save")
+    button(settings, "Load profile", "read the chosen slot back", function()
+        Store.loadProfile(Config.ProfileSlot)
+        if Store.afterChange then pcall(Store.afterChange) end
+    end, "folder")
+    settings:AddStatusPanel("Config status", configStatus, 150)
 
     settings:AddSection("Keys")
     keybind(settings, "Show / hide window", "toggle the whole interface", "HideUiKey", "eye")
@@ -3344,7 +3543,7 @@ local function selfTest()
         if condition then passed = passed + 1 end
         print(string.format("[self-test] %s %-34s %s", condition and "PASS" or "FAIL", label, tostring(condition)))
     end
-    check("version", META.version == "v1.0")
+    check("version", META.version == "v1.1")
     check("two tabs", #Tabs == 2)
     check("farm tab first", Tabs[1] and Tabs[1].title == "Auto Farm")
     check("settings tab second", Tabs[2] and Tabs[2].title == "Settings")
@@ -3398,8 +3597,13 @@ local API = {
     drops = Farm.drops,
     quest = Farm.quest,
     status = function() return State.status end,
+    farmStatus = function() return farmStatus() end,
+    configStatus = function() return configStatus() end,
     featuresOn = featuresOn,
     save = function() return Store.save(true) end,
+    saveProfile = function(slot) return Store.saveProfile(slot or Config.ProfileSlot) end,
+    loadProfile = function(slot) return Store.loadProfile(slot or Config.ProfileSlot) end,
+    profilePath = function(slot) return Store.profilePath(slot or Config.ProfileSlot) end,
     load = function() return Store.load(true) end,
     reset = function() return Store.reset() end,
     exportConfig = function() return Store.export() end,

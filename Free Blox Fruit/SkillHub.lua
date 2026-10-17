@@ -13,9 +13,11 @@
         loadstring(game:HttpGet("https://raw.githubusercontent.com/ameksi-web/Skill-Hub/arena/99225303-skill-hub/Free%20Blox%20Fruit/SkillHub.lua"))()
 
     ── what this is ────────────────────────────────────────────────────────────
-        The Skill Hub farm for Blox Fruits with the "Porcelain" design system:
-        soft layered surfaces, hairline borders, muted editorial accents and a
-        hand-drawn vector icon set — six complete themes included.
+        The Skill Hub farm for Blox Fruits, rebuilt around the outlined menu
+        look: a glowing rim, group boxes with a hairline frame and an accent
+        tick, checkbox rows whose state sits on the right, sliders with a live
+        readout, and a bottom tab bar with the icon over the label. Two pages in
+        two columns. Six complete themes, hand-drawn vector icons throughout.
 
         Two tabs, and only two:  Auto Farm  ·  Settings
 
@@ -34,14 +36,15 @@
         This hub is an input layer: it picks targets, walks the character, and
         presses the same buttons you would press — it cannot make a hit land,
         grant items, or hide the fact that an executor is injected. Farm rates
-        are paced on purpose; the "Safe mode" switch lowers them further.
+        are paced on purpose and safe travel steps the character instead of
+        teleporting; the "Unlock unsafe rates" switch removes those caps.
 
         Use an account you can afford to lose. That is not a disclaimer bolted
         on the end — it is the honest summary of what a client script can do.
 ]]
 
 local META = {
-    version = "v1.1",
+    version = "v1.2",
     build   = "Free Blox Fruit · farm + config · six themes",
     author  = "ameksi-web",
     game    = "Blox Fruits",
@@ -168,7 +171,7 @@ local Config = {
     SpeedCap            = 60,
 
     -- ── interface ─────────────────────────────────────────────────────────
-    Theme               = "Porcelain",
+    Theme               = "Aurora",
     UiScale             = 1.00,
     HideUiKey           = "RightControl",
     PanicKey            = "F1",
@@ -186,82 +189,86 @@ local Config = {
 
 SharedEnv.SkillHubConfig = SharedEnv.SkillHubConfig or Config
 SharedEnv.__SkillHubErrorLog = SharedEnv.__SkillHubErrorLog or {}
-
 -- ═══════════════════════════════════════════════════════════════════════════
--- 2 · THEMES — six complete palettes, applied by rebuilding the window
+-- 2 · THEMES — six complete palettes
 --     A theme is not a tint: surfaces, text, accents, hairline strength, the
---     shadow, and the corner radii all change, which is what makes them read
---     as different menu styles instead of six colour swaps.
+--     glow around the window, and the corner radii all change. "Aurora" is the
+--     default look (violet, outlined cards); "Verdant" is the green one;
+--     "Obsidian" is nearly square and amber; three more for taste.
 -- ═══════════════════════════════════════════════════════════════════════════
 local function rgb(r, g, b) return Color3.fromRGB(r, g, b) end
 
 local THEMES = {
-    Porcelain = {
-        label = "Porcelain · graphite",
-        BgApp = rgb(9, 10, 12), BgSurface = rgb(17, 19, 23), BgElevated = rgb(23, 26, 31),
-        BgRaised = rgb(29, 33, 39), BgInset = rgb(13, 15, 18), BgHover = rgb(33, 37, 44),
-        BgSidebar = rgb(15, 17, 20),
-        Hairline = rgb(58, 63, 72), Stroke = rgb(44, 49, 57), StrokeSoft = rgb(35, 39, 46),
-        TextPrimary = rgb(243, 244, 246), TextSecondary = rgb(158, 165, 175),
-        TextMuted = rgb(110, 117, 127), TextFaint = rgb(78, 84, 93),
-        OnAccent = rgb(13, 14, 17), Shadow = rgb(4, 5, 7),
-        Accent = rgb(126, 141, 255), AccentSecondary = rgb(150, 158, 186),
-        Iris = rgb(126, 141, 255), Clay = rgb(226, 132, 122), Sand = rgb(223, 181, 133),
-        Sage = rgb(128, 182, 155), Mauve = rgb(173, 143, 222), Steel = rgb(150, 158, 186),
-        Sky = rgb(136, 170, 203), Rose = rgb(201, 141, 178),
-        Success = rgb(122, 190, 146), Warning = rgb(224, 184, 116), Danger = rgb(223, 118, 116),
-        radius = { window = 20, panel = 14, card = 12, control = 10, chip = 8, pill = 999 },
-    },
-    Midnight = {
-        label = "Midnight · deep navy",
-        BgApp = rgb(4, 7, 14), BgSurface = rgb(10, 15, 26), BgElevated = rgb(14, 21, 36),
-        BgRaised = rgb(19, 28, 47), BgInset = rgb(7, 11, 20), BgHover = rgb(24, 35, 58),
-        BgSidebar = rgb(8, 12, 22),
-        Hairline = rgb(44, 61, 92), Stroke = rgb(33, 47, 71), StrokeSoft = rgb(24, 35, 54),
-        TextPrimary = rgb(232, 241, 255), TextSecondary = rgb(139, 160, 194),
-        TextMuted = rgb(96, 116, 148), TextFaint = rgb(66, 83, 110),
-        OnAccent = rgb(4, 8, 16), Shadow = rgb(1, 2, 5),
-        Accent = rgb(96, 176, 255), AccentSecondary = rgb(140, 168, 210),
-        Iris = rgb(96, 176, 255), Clay = rgb(120, 190, 255), Sand = rgb(150, 206, 255),
-        Sage = rgb(96, 214, 196), Mauve = rgb(166, 156, 255), Steel = rgb(132, 162, 200),
-        Sky = rgb(96, 176, 255), Rose = rgb(190, 158, 240),
-        Success = rgb(86, 210, 168), Warning = rgb(230, 190, 120), Danger = rgb(240, 120, 130),
+    Aurora = {
+        label = "Aurora · violet",
+        BgApp = rgb(7, 5, 13), BgSurface = rgb(13, 9, 24), BgElevated = rgb(18, 13, 33),
+        BgRaised = rgb(24, 18, 43), BgInset = rgb(9, 6, 18), BgHover = rgb(30, 23, 52),
+        BgSidebar = rgb(11, 8, 21),
+        Hairline = rgb(74, 56, 118), Stroke = rgb(52, 39, 84), StrokeSoft = rgb(38, 29, 62),
+        TextPrimary = rgb(237, 233, 250), TextSecondary = rgb(168, 158, 198),
+        TextMuted = rgb(122, 114, 152), TextFaint = rgb(86, 80, 112),
+        OnAccent = rgb(12, 8, 22), Shadow = rgb(4, 2, 10),
+        Glow = rgb(124, 82, 220),
+        Accent = rgb(168, 123, 255), AccentSecondary = rgb(126, 208, 255),
+        Iris = rgb(168, 123, 255), Clay = rgb(255, 138, 168), Sand = rgb(255, 196, 122),
+        Sage = rgb(126, 224, 186), Mauve = rgb(198, 152, 255), Steel = rgb(150, 160, 200),
+        Sky = rgb(126, 208, 255), Rose = rgb(232, 148, 196),
+        Success = rgb(126, 224, 186), Warning = rgb(255, 196, 122), Danger = rgb(255, 120, 140),
         radius = { window = 16, panel = 12, card = 10, control = 8, chip = 6, pill = 999 },
     },
+    Verdant = {
+        label = "Verdant · green",
+        BgApp = rgb(6, 11, 8), BgSurface = rgb(10, 17, 13), BgElevated = rgb(14, 23, 18),
+        BgRaised = rgb(19, 31, 24), BgInset = rgb(7, 13, 10), BgHover = rgb(24, 38, 29),
+        BgSidebar = rgb(8, 14, 11),
+        Hairline = rgb(52, 96, 70), Stroke = rgb(36, 70, 50), StrokeSoft = rgb(26, 52, 38),
+        TextPrimary = rgb(224, 238, 228), TextSecondary = rgb(148, 176, 156),
+        TextMuted = rgb(104, 132, 112), TextFaint = rgb(74, 98, 82),
+        OnAccent = rgb(5, 12, 8), Shadow = rgb(2, 5, 3),
+        Glow = rgb(47, 224, 138),
+        Accent = rgb(47, 224, 138), AccentSecondary = rgb(150, 230, 190),
+        Iris = rgb(47, 224, 138), Clay = rgb(120, 220, 150), Sand = rgb(196, 226, 130),
+        Sage = rgb(47, 224, 138), Mauve = rgb(150, 210, 190), Steel = rgb(130, 160, 142),
+        Sky = rgb(110, 210, 180), Rose = rgb(170, 220, 190),
+        Success = rgb(47, 224, 138), Warning = rgb(214, 214, 118), Danger = rgb(236, 110, 110),
+        radius = { window = 12, panel = 10, card = 8, control = 6, chip = 5, pill = 999 },
+    },
     Obsidian = {
-        label = "Obsidian · sharp amber",
-        BgApp = rgb(5, 5, 5), BgSurface = rgb(12, 12, 12), BgElevated = rgb(18, 18, 18),
-        BgRaised = rgb(25, 24, 22), BgInset = rgb(8, 8, 8), BgHover = rgb(30, 29, 26),
+        label = "Obsidian · amber",
+        BgApp = rgb(5, 5, 5), BgSurface = rgb(11, 11, 11), BgElevated = rgb(17, 17, 17),
+        BgRaised = rgb(24, 23, 21), BgInset = rgb(7, 7, 7), BgHover = rgb(30, 29, 26),
         BgSidebar = rgb(9, 9, 9),
-        Hairline = rgb(66, 62, 52), Stroke = rgb(46, 43, 36), StrokeSoft = rgb(32, 30, 26),
+        Hairline = rgb(80, 74, 58), Stroke = rgb(52, 48, 38), StrokeSoft = rgb(34, 32, 26),
         TextPrimary = rgb(245, 242, 234), TextSecondary = rgb(174, 166, 148),
         TextMuted = rgb(126, 119, 104), TextFaint = rgb(88, 83, 72),
         OnAccent = rgb(10, 9, 6), Shadow = rgb(0, 0, 0),
+        Glow = rgb(232, 176, 88),
         Accent = rgb(232, 176, 88), AccentSecondary = rgb(180, 168, 142),
         Iris = rgb(232, 176, 88), Clay = rgb(220, 132, 96), Sand = rgb(232, 176, 88),
         Sage = rgb(164, 190, 122), Mauve = rgb(190, 150, 120), Steel = rgb(160, 156, 146),
         Sky = rgb(150, 176, 186), Rose = rgb(206, 142, 116),
         Success = rgb(150, 196, 116), Warning = rgb(232, 176, 88), Danger = rgb(214, 92, 84),
-        radius = { window = 6, panel = 4, card = 3, control = 2, chip = 2, pill = 2 },
+        radius = { window = 4, panel = 3, card = 2, control = 2, chip = 2, pill = 2 },
     },
     Ivory = {
-        label = "Ivory · paper light",
-        BgApp = rgb(226, 224, 218), BgSurface = rgb(247, 245, 240), BgElevated = rgb(255, 255, 252),
+        label = "Ivory · paper",
+        BgApp = rgb(226, 224, 218), BgSurface = rgb(249, 247, 242), BgElevated = rgb(255, 255, 252),
         BgRaised = rgb(250, 248, 243), BgInset = rgb(236, 234, 228), BgHover = rgb(240, 238, 232),
         BgSidebar = rgb(241, 239, 233),
         Hairline = rgb(196, 192, 183), Stroke = rgb(214, 210, 201), StrokeSoft = rgb(226, 223, 215),
         TextPrimary = rgb(34, 34, 38), TextSecondary = rgb(88, 88, 96),
         TextMuted = rgb(122, 122, 130), TextFaint = rgb(160, 158, 152),
         OnAccent = rgb(252, 251, 248), Shadow = rgb(140, 136, 128),
+        Glow = rgb(150, 148, 140),
         Accent = rgb(74, 84, 168), AccentSecondary = rgb(108, 112, 130),
         Iris = rgb(74, 84, 168), Clay = rgb(176, 92, 78), Sand = rgb(170, 130, 66),
         Sage = rgb(80, 132, 104), Mauve = rgb(122, 92, 160), Steel = rgb(96, 106, 120),
         Sky = rgb(66, 118, 156), Rose = rgb(158, 92, 128),
         Success = rgb(58, 138, 92), Warning = rgb(168, 124, 44), Danger = rgb(178, 70, 66),
-        radius = { window = 18, panel = 12, card = 10, control = 8, chip = 6, pill = 999 },
+        radius = { window = 14, panel = 10, card = 8, control = 6, chip = 5, pill = 999 },
     },
     Sakura = {
-        label = "Sakura · warm rose",
+        label = "Sakura · rose",
         BgApp = rgb(238, 226, 228), BgSurface = rgb(252, 244, 245), BgElevated = rgb(255, 250, 250),
         BgRaised = rgb(250, 240, 242), BgInset = rgb(243, 231, 234), BgHover = rgb(248, 236, 238),
         BgSidebar = rgb(247, 236, 238),
@@ -269,37 +276,39 @@ local THEMES = {
         TextPrimary = rgb(48, 34, 38), TextSecondary = rgb(112, 84, 92),
         TextMuted = rgb(140, 110, 118), TextFaint = rgb(176, 148, 154),
         OnAccent = rgb(255, 250, 250), Shadow = rgb(150, 122, 128),
+        Glow = rgb(226, 168, 184),
         Accent = rgb(168, 82, 112), AccentSecondary = rgb(150, 118, 128),
         Iris = rgb(168, 82, 112), Clay = rgb(188, 96, 96), Sand = rgb(186, 140, 96),
         Sage = rgb(96, 138, 110), Mauve = rgb(148, 96, 156), Steel = rgb(130, 112, 124),
         Sky = rgb(96, 128, 158), Rose = rgb(188, 92, 128),
         Success = rgb(72, 138, 100), Warning = rgb(172, 124, 60), Danger = rgb(184, 72, 84),
-        radius = { window = 22, panel = 16, card = 14, control = 12, chip = 10, pill = 999 },
+        radius = { window = 18, panel = 14, card = 12, control = 10, chip = 8, pill = 999 },
     },
-    Forest = {
-        label = "Forest · moss dark",
-        BgApp = rgb(7, 12, 9), BgSurface = rgb(13, 20, 16), BgElevated = rgb(18, 27, 21),
-        BgRaised = rgb(24, 35, 28), BgInset = rgb(9, 15, 12), BgHover = rgb(29, 42, 33),
-        BgSidebar = rgb(10, 16, 13),
-        Hairline = rgb(48, 74, 58), Stroke = rgb(36, 55, 44), StrokeSoft = rgb(26, 40, 32),
-        TextPrimary = rgb(232, 242, 234), TextSecondary = rgb(148, 172, 154),
-        TextMuted = rgb(108, 130, 114), TextFaint = rgb(76, 94, 80),
-        OnAccent = rgb(8, 12, 9), Shadow = rgb(2, 5, 3),
-        Accent = rgb(122, 196, 138), AccentSecondary = rgb(148, 170, 152),
-        Iris = rgb(122, 196, 138), Clay = rgb(196, 142, 104), Sand = rgb(206, 186, 118),
-        Sage = rgb(122, 196, 138), Mauve = rgb(170, 160, 196), Steel = rgb(138, 156, 142),
-        Sky = rgb(118, 166, 168), Rose = rgb(190, 148, 156),
-        Success = rgb(122, 196, 138), Warning = rgb(210, 184, 112), Danger = rgb(208, 108, 104),
-        radius = { window = 12, panel = 10, card = 8, control = 6, chip = 6, pill = 999 },
+    Midnight = {
+        label = "Midnight · navy",
+        BgApp = rgb(4, 7, 14), BgSurface = rgb(9, 14, 25), BgElevated = rgb(13, 20, 35),
+        BgRaised = rgb(18, 27, 46), BgInset = rgb(6, 10, 19), BgHover = rgb(23, 34, 57),
+        BgSidebar = rgb(7, 11, 21),
+        Hairline = rgb(44, 61, 92), Stroke = rgb(33, 47, 71), StrokeSoft = rgb(24, 35, 54),
+        TextPrimary = rgb(232, 241, 255), TextSecondary = rgb(139, 160, 194),
+        TextMuted = rgb(96, 116, 148), TextFaint = rgb(66, 83, 110),
+        OnAccent = rgb(4, 8, 16), Shadow = rgb(1, 2, 5),
+        Glow = rgb(96, 176, 255),
+        Accent = rgb(96, 176, 255), AccentSecondary = rgb(140, 168, 210),
+        Iris = rgb(96, 176, 255), Clay = rgb(120, 190, 255), Sand = rgb(150, 206, 255),
+        Sage = rgb(96, 214, 196), Mauve = rgb(166, 156, 255), Steel = rgb(132, 162, 200),
+        Sky = rgb(96, 176, 255), Rose = rgb(190, 158, 240),
+        Success = rgb(86, 210, 168), Warning = rgb(230, 190, 120), Danger = rgb(240, 120, 130),
+        radius = { window = 14, panel = 10, card = 8, control = 6, chip = 5, pill = 999 },
     },
 }
 
-local THEME_ORDER = { "Porcelain", "Midnight", "Obsidian", "Ivory", "Sakura", "Forest" }
+local THEME_ORDER = { "Aurora", "Verdant", "Obsidian", "Ivory", "Sakura", "Midnight" }
 
 local Theme = {}
 local RADIUS = {}
 local function applyTheme(name)
-    local palette = THEMES[name] or THEMES.Porcelain
+    local palette = THEMES[name] or THEMES.Aurora
     for key, value in pairs(palette) do
         if key ~= "label" and key ~= "radius" then Theme[key] = value end
     end
@@ -729,29 +738,30 @@ local ICON = {
     Copy     = "copy",
 }
 
-local function iconTile(parent, kind, accent, sizePx, position, zIndex, out)
+local function iconTile(parent, kind, accent, sizePx, position, zIndex, bare)
     local holder = new("Frame", {
         BackgroundColor3 = tint(accent, 0.86),
-        BackgroundTransparency = 0,
+        BackgroundTransparency = bare and 1 or 0,
         BorderSizePixel = 0,
         Position = position,
         Size = UDim2.new(0, sizePx, 0, sizePx),
         ZIndex = zIndex or 5,
     }, parent)
     corner(holder, math.floor(sizePx * 0.3))
-    hairline(holder, tint(accent, 0.5), 1, 0.5)
-    drawVectorGlyph(holder, kind, accent, sizePx * 0.54, (zIndex or 5) + 1, out)
+    if not bare then hairline(holder, tint(accent, 0.5), 1, 0.5) end
+    drawVectorGlyph(holder, kind, accent, sizePx * 0.54, (zIndex or 5) + 1)
     return holder
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 4 · TOASTS  (top-right stack, draining progress hairline)
+-- ═══════════════════════════════════════════════════════════════════════════-- ═══════════════════════════════════════════════════════════════════════════
+-- 4 · TOASTS  (top-right stack, accent edge, draining hairline)
 -- ═══════════════════════════════════════════════════════════════════════════
-local Window, Body, Rail, PageHolder, Toast, ActiveTab
+local Window, Body, PageHolder, Toast, ActiveTab
 local TOAST = { order = 0, holder = nil }
 local Tabs = {}
 local ToggleRegistry = {}
-
 
 local function notify(title, message, duration, accent, iconKind)
     if not TOAST.holder then return end
@@ -759,34 +769,32 @@ local function notify(title, message, duration, accent, iconKind)
     accent = accent or Theme.Accent
 
     local card = new("Frame", {
-        BackgroundColor3 = Theme.BgElevated,
+        BackgroundColor3 = Theme.BgElevated, BackgroundTransparency = 0.04,
         BorderSizePixel = 0,
-        Position = UDim2.new(1, -312, 0, 16),
-        Size = UDim2.new(0, 296, 0, message and 62 or 44),
+        Position = UDim2.new(1, -318, 0, 16),
+        Size = UDim2.new(0, 302, 0, message and 64 or 46),
         ZIndex = 60,
     }, TOAST.holder)
     corner(card, RADIUS.card)
-    hairline(card, Theme.Stroke, 1, 0.3)
+    hairline(card, accent, 1, 0.55)
 
     local bar = new("Frame", {
-        BackgroundColor3 = accent,
-        BorderSizePixel = 0,
-        Position = UDim2.new(0, 12, 0, 14),
-        Size = UDim2.new(0, 3, 0, 18),
+        BackgroundColor3 = accent, BorderSizePixel = 0,
+        Position = UDim2.new(0, 0, 0, 10), Size = UDim2.new(0, 3, 0, message and 44 or 26),
         ZIndex = 61,
     }, card)
     corner(bar, RADIUS.pill)
 
-    iconTile(card, iconKind or "crest", accent, 24, UDim2.new(0, 22, 0, 11), 61)
+    iconTile(card, iconKind or "crest", accent, 22, UDim2.new(0, 16, 0, 12), 61)
 
     Text({
-        Font = FONT.Bold, Position = UDim2.new(0, 54, 0, 11), Size = UDim2.new(1, -66, 0, 14),
+        Font = FONT.Bold, Position = UDim2.new(0, 48, 0, 11), Size = UDim2.new(1, -60, 0, 14),
         Text = tostring(title), TextColor3 = Theme.TextPrimary, TextSize = 12,
         TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 61,
     }, card)
     if message then
         Text({
-            Position = UDim2.new(0, 54, 0, 27), Size = UDim2.new(1, -66, 0, 26),
+            Position = UDim2.new(0, 48, 0, 28), Size = UDim2.new(1, -60, 0, 28),
             Text = tostring(message), TextColor3 = Theme.TextMuted, TextSize = 10,
             TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true, ZIndex = 61,
         }, card)
@@ -803,14 +811,11 @@ local function notify(title, message, duration, accent, iconKind)
 
     task.spawn(function()
         safeCall("toast drain", function()
-            local info = TweenInfo.new(duration, Enum.EasingStyle.Linear)
-            SafeTween(drain, info, { Size = UDim2.new(0, 0, 0, 2) }):Play()
+            SafeTween(drain, TweenInfo.new(duration, Enum.EasingStyle.Linear), { Size = UDim2.new(0, 0, 0, 2) }):Play()
         end)
         task.wait(duration)
         safeCall("toast remove", function()
-            local info = TweenInfo.new(0.18, Enum.EasingStyle.Quad)
-            local hover = SafeTween(card, info, { BackgroundTransparency = 1 })
-            hover:Play()
+            SafeTween(card, TweenInfo.new(0.18, Enum.EasingStyle.Quad), { BackgroundTransparency = 1 }):Play()
             task.wait(0.2)
             card:Destroy()
         end)
@@ -819,11 +824,7 @@ local function notify(title, message, duration, accent, iconKind)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- 4b · CONTROL HEALTH — every card reports in, every callback is guarded
---      A callback used to die in its own thread: the switch stayed ON, the
---      toast said "executed", and nothing happened. Now a throw is counted,
---      logged, shown as a toast, and the build fails if any control in any
---      tab cannot be used.
+-- 4b · CONTROL HEALTH — every row reports in, every callback is guarded
 -- ═══════════════════════════════════════════════════════════════════════════
 local ControlRegistry = {}
 
@@ -856,8 +857,6 @@ end
 function CONTROLS.spawn(label, fn, ...)
     CONTROLS.spawnWith(label, fn, nil, ...)
 end
--- live panels repaint every half second: one bad frame must not end the
--- painter, and it must not spam a toast either — it is counted and logged once
 function CONTROLS.tick(label, body)
     local ok, err = pcall(body)
     if ok then return true end
@@ -869,11 +868,14 @@ function CONTROLS.tick(label, body)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- 5 · WINDOW FRAMEWORK  (chrome + rail + components)
+-- 5 · WINDOW FRAMEWORK
+--     Layout: a title bar on top, the content in the middle, and the tabs in a
+--     bottom bar with an icon over a label (the two tabs are the only pages).
+--     The default palette draws every group as an outlined panel with rows.
 -- ═══════════════════════════════════════════════════════════════════════════
+local WINDOW_W, WINDOW_H = 840, 600
+local TOPBAR_H, NAVBAR_H = 54, 58
 
--- the window table is created by buildWindow(); this accessor is how the tab
--- layer (which runs in its own closure) reads it live
 local function getWindow()
     return Window
 end
@@ -904,13 +906,11 @@ local function buildWindow()
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     }, parent)
     if protect_gui then pcall(protect_gui, screen) end
-    -- one UIScale on the ScreenGui scales the entire window (text, icons,
-    -- hit areas) without touching a single offset in the layout code
     new("UIScale", { Scale = clamp(tonumber(Config.UiScale) or 1, 0.75, 1.3) }, screen)
 
     Toast = new("Frame", {
-        BackgroundTransparency = 1, Size = UDim2.new(0, 320, 1, 0),
-        Position = UDim2.new(1, -336, 0, 0), ZIndex = 59,
+        BackgroundTransparency = 1, Size = UDim2.new(0, 326, 1, 0),
+        Position = UDim2.new(1, -342, 0, 0), ZIndex = 59,
     }, screen)
     new("UIListLayout", {
         Padding = UDim.new(0, 8), FillDirection = Enum.FillDirection.Vertical,
@@ -918,118 +918,166 @@ local function buildWindow()
     }, Toast)
     TOAST.holder = Toast
 
-    local shadow = new("Frame", {
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        BackgroundColor3 = Theme.Shadow, BackgroundTransparency = 0.45,
-        BorderSizePixel = 0, Position = UDim2.new(0.5, 6, 0.5, 8),
-        Size = UDim2.new(0, 748, 0, 486), ZIndex = 1,
+    -- the halo: an accent frame a few pixels larger than the window, almost
+    -- transparent, which is what gives the outlined look its glow
+    local glowFrame = new("Frame", {
+        AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = Theme.Glow,
+        BackgroundTransparency = 0.9, BorderSizePixel = 0,
+        Position = UDim2.new(0.5, 0, 0.5, 0),
+        Size = UDim2.new(0, WINDOW_W + 14, 0, WINDOW_H + 14), ZIndex = 1,
     }, screen)
-    corner(shadow, RADIUS.window + 4)
+    corner(glowFrame, RADIUS.window + 8)
+
+    local shadow = new("Frame", {
+        AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = Theme.Shadow,
+        BackgroundTransparency = 0.35, BorderSizePixel = 0,
+        Position = UDim2.new(0.5, 0, 0.5, 5),
+        Size = UDim2.new(0, WINDOW_W + 2, 0, WINDOW_H + 2), ZIndex = 2,
+    }, screen)
+    corner(shadow, RADIUS.window + 2)
 
     local root = new("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5),
         BackgroundColor3 = Theme.BgSurface, BorderSizePixel = 0,
-        Position = UDim2.new(0.5, 0, 0.5, 0), Size = UDim2.new(0, 748, 0, 486), ZIndex = 2,
+        Position = UDim2.new(0.5, 0, 0.5, 0), Size = UDim2.new(0, WINDOW_W, 0, WINDOW_H), ZIndex = 3,
     }, screen)
     corner(root, RADIUS.window)
-    local rootStroke = hairline(root, Theme.Hairline, 1, 0.55)
+    local rootStroke = hairline(root, Theme.Hairline, 1, 0.35)
 
-    Window = { Screen = screen, Root = root, Shadow = shadow, Stroke = rootStroke, Minimized = false }
+    Window = { Screen = screen, Root = root, Shadow = shadow, Glow = glowFrame, Stroke = rootStroke, Minimized = false }
 
     -- where the player dragged the window last time (0, 0 = centred)
     local savedX = tonumber(Config.UiX) or 0
     local savedY = tonumber(Config.UiY) or 0
     if savedX ~= 0 or savedY ~= 0 then
         root.Position = UDim2.new(0.5, savedX, 0.5, savedY)
-        shadow.Position = UDim2.new(root.Position.X.Scale, root.Position.X.Offset + 6,
-            root.Position.Y.Scale, root.Position.Y.Offset + 8)
+        shadow.Position = UDim2.new(root.Position.X.Scale, root.Position.X.Offset + 0,
+            root.Position.Y.Scale, root.Position.Y.Offset + 5)
+        glowFrame.Position = root.Position
     end
 
-    -- topbar
+    -- ── title bar ────────────────────────────────────────────────────────────
     local topbar = new("Frame", {
-        BackgroundColor3 = Theme.BgElevated, BackgroundTransparency = 0.35, BorderSizePixel = 0,
-        Size = UDim2.new(1, 0, 0, 48), ZIndex = 3,
+        BackgroundColor3 = Theme.BgElevated, BackgroundTransparency = 0.15, BorderSizePixel = 0,
+        Size = UDim2.new(1, 0, 0, TOPBAR_H), ZIndex = 4,
     }, root)
     corner(topbar, RADIUS.window)
     new("Frame", {
         BackgroundColor3 = Theme.BgSurface, BorderSizePixel = 0,
-        Position = UDim2.new(0, 0, 1, -14), Size = UDim2.new(1, 0, 0, 14), ZIndex = 3,
+        Position = UDim2.new(0, 0, 1, -12), Size = UDim2.new(1, 0, 0, 12), ZIndex = 4,
     }, topbar)
     new("Frame", {
         BackgroundColor3 = Theme.StrokeSoft, BorderSizePixel = 0,
-        Position = UDim2.new(0, 0, 1, 0), Size = UDim2.new(1, 0, 0, 1), ZIndex = 4,
+        Position = UDim2.new(0, 0, 1, 0), Size = UDim2.new(1, 0, 0, 1), ZIndex = 5,
+    }, topbar)
+    new("Frame", {
+        BackgroundColor3 = Theme.Accent, BackgroundTransparency = 0.25, BorderSizePixel = 0,
+        Position = UDim2.new(0, 0, 0, 0), Size = UDim2.new(1, 0, 0, 2), ZIndex = 6,
     }, topbar)
 
-    iconTile(topbar, ICON.Crest, Theme.Accent, 30, UDim2.new(0, 16, 0, 9), 5)
+    local crest = iconTile(topbar, ICON.Crest, Theme.Accent, 26, UDim2.new(0, 14, 0.5, -13), 7)
+    Window.HeaderIcon = crest
     Text({
-        Font = FONT.Bold, Position = UDim2.new(0, 54, 0, 9), Size = UDim2.new(0, 260, 0, 16),
+        Font = FONT.Bold, Position = UDim2.new(0, 50, 0, 11), Size = UDim2.new(0, 220, 0, 16),
         Text = "Skill Hub", TextColor3 = Theme.TextPrimary, TextSize = 14,
-        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 5,
+        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 7,
     }, topbar)
-    Text({
-        Position = UDim2.new(0, 54, 0, 25), Size = UDim2.new(0, 300, 0, 14),
-        Text = META.game .. " · " .. META.version .. " · free edition", TextColor3 = Theme.TextMuted,
-        TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 5,
+    local headerTitle = Text({
+        Position = UDim2.new(0, 50, 0, 29), Size = UDim2.new(0, 240, 0, 14),
+        Text = META.game .. " · " .. META.version, TextColor3 = Theme.TextMuted,
+        TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 7,
     }, topbar)
+    local headerDesc = headerTitle
 
+    -- search
+    local searchShell = new("Frame", {
+        BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
+        Position = UDim2.new(1, -246, 0.5, -12), Size = UDim2.new(0, 132, 0, 24), ZIndex = 6,
+    }, topbar)
+    corner(searchShell, RADIUS.chip)
+    hairline(searchShell, Theme.StrokeSoft, 1, 0.4)
+    iconTile(searchShell, ICON.Search, Theme.TextMuted, 13, UDim2.new(0, 6, 0.5, -6.5), 7, true)
+    local searchBox = new("TextBox", {
+        BackgroundTransparency = 1, Font = FONT.UI, PlaceholderText = "search…",
+        PlaceholderColor3 = Theme.TextFaint, Position = UDim2.new(0, 24, 0, 0), Size = UDim2.new(1, -30, 1, 0),
+        Text = "", TextColor3 = Theme.TextPrimary, TextSize = 10,
+        TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, ZIndex = 7,
+    }, searchShell)
+
+    -- chips
     local chips = {}
     local chipHolder = new("Frame", {
-        BackgroundTransparency = 1, Position = UDim2.new(1, -252, 0, 14),
-        Size = UDim2.new(0, 172, 0, 20), ZIndex = 5,
+        BackgroundTransparency = 1, Position = UDim2.new(1, -400, 0.5, -10),
+        Size = UDim2.new(0, 150, 0, 20), ZIndex = 6,
     }, topbar)
     new("UIListLayout", {
-        Padding = UDim.new(0, 6), FillDirection = Enum.FillDirection.Horizontal,
+        Padding = UDim.new(0, 4), FillDirection = Enum.FillDirection.Horizontal,
         HorizontalAlignment = Enum.HorizontalAlignment.Right, VerticalAlignment = Enum.VerticalAlignment.Center,
     }, chipHolder)
-    local function makeChip(label)
+    local function makeChip(label, width)
         local chip = new("Frame", {
             BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
-            Size = UDim2.new(0, 48, 0, 20), ZIndex = 5,
+            Size = UDim2.new(0, width or 40, 0, 18), ZIndex = 6,
         }, chipHolder)
         corner(chip, RADIUS.chip)
         hairline(chip, Theme.StrokeSoft, 1, 0.4)
         local text = Text({
-            Font = FONT.Mono, Position = UDim2.new(0, 0, 0, 0), Size = UDim2.new(1, 0, 1, 0),
-            Text = label .. " —", TextColor3 = Theme.TextSecondary, TextSize = 10, ZIndex = 6,
+            Font = FONT.Mono, Size = UDim2.new(1, 0, 1, 0), Text = label,
+            TextColor3 = Theme.TextSecondary, TextSize = 8, ZIndex = 7,
         }, chip)
         return chip, text
     end
-    chips.state, chips.stateText = makeChip("STATE")
-    chips.ac, chips.acText = makeChip("AC")
-    chips.perf, chips.perfText = makeChip("PERF")
+    chips.state, chips.stateText = makeChip("IDLE", 38)
+    chips.ac, chips.acText = makeChip("0", 52)
+    chips.perf, chips.perfText = makeChip("0", 52)
 
-    local function ghostButton(text, x, callback)
+    local function ghostButton(name, x, glyph, callback)
         local button = new("TextButton", {
-            AutoButtonColor = false, BackgroundColor3 = Theme.BgInset, BackgroundTransparency = 0.35,
-            BorderSizePixel = 0, Position = UDim2.new(1, x, 0, 14), Size = UDim2.new(0, 22, 0, 20),
-            Text = "", ZIndex = 6,
+            Name = name, AutoButtonColor = false, BackgroundTransparency = 1, BorderSizePixel = 0,
+            Position = UDim2.new(1, x, 0.5, -10), Size = UDim2.new(0, 20, 0, 20), Text = "", ZIndex = 8,
         }, topbar)
-        corner(button, RADIUS.chip)
-        Text({
-            Font = FONT.Bold, Size = UDim2.new(1, 0, 1, 0), Text = text,
-            TextColor3 = Theme.TextSecondary, TextSize = 13, ZIndex = 7,
-        }, button)
-        button.MouseEnter:Connect(function() button.BackgroundColor3 = Theme.BgHover end)
-        button.MouseLeave:Connect(function() button.BackgroundColor3 = Theme.BgInset end)
+        local bars = {}
+        local function bar(width, height, px, py, rotation)
+            local piece = new("Frame", {
+                BackgroundColor3 = Theme.TextMuted, BorderSizePixel = 0,
+                AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, px, 0.5, py),
+                Size = UDim2.new(0, width, 0, height), Rotation = rotation or 0, ZIndex = 9,
+            }, button)
+            corner(piece, 1)
+            bars[#bars + 1] = piece
+            return piece
+        end
+        glyph(bar)
+        button.MouseEnter:Connect(function()
+            for _, piece in ipairs(bars) do piece.BackgroundColor3 = Theme.TextPrimary end
+        end)
+        button.MouseLeave:Connect(function()
+            for _, piece in ipairs(bars) do piece.BackgroundColor3 = Theme.TextMuted end
+        end)
         button.MouseButton1Click:Connect(callback)
         return button
     end
 
-    ghostButton("—", -58, function()
+    ghostButton("Minimise", -52, function(bar)
+        bar(10, 1.5)
+    end, function()
         Window.Minimized = not Window.Minimized
-        local goal = Window.Minimized and 48 or 486
+        local goal = Window.Minimized and TOPBAR_H or WINDOW_H
         safeCall("minimize", function()
-            SafeTween(root, TweenInfo.new(0.18, Enum.EasingStyle.Quart), { Size = UDim2.new(0, 748, 0, goal) }):Play()
-            SafeTween(shadow, TweenInfo.new(0.18, Enum.EasingStyle.Quart), { Size = UDim2.new(0, 748, 0, goal + 8) }):Play()
+            SafeTween(root, TweenInfo.new(0.18, Enum.EasingStyle.Quart), { Size = UDim2.new(0, WINDOW_W, 0, goal) }):Play()
+            SafeTween(shadow, TweenInfo.new(0.18, Enum.EasingStyle.Quart), { Size = UDim2.new(0, WINDOW_W + 2, 0, goal + 2) }):Play()
+            SafeTween(glowFrame, TweenInfo.new(0.18, Enum.EasingStyle.Quart), { Size = UDim2.new(0, WINDOW_W + 14, 0, goal + 14) }):Play()
         end)
         Body.Visible = not Window.Minimized
     end)
-    ghostButton("×", -30, function()
-        -- hiding, not disconnecting: the screen stays enabled so the hide key
-        -- can bring the window back. Disabling the ScreenGui here left the
-        -- player with a script that was running but impossible to reach.
+    ghostButton("Close", -28, function(bar)
+        bar(10, 1.5, 0, 0, 45)
+        bar(10, 1.5, 0, 0, -45)
+    end, function()
         Config.UiVisible = false
         root.Visible = false
+        glowFrame.Visible = false
+        shadow.Visible = false
         Window.Screen.Enabled = true
     end)
 
@@ -1041,7 +1089,6 @@ local function buildWindow()
             input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
                     dragging = false
-                    -- the window is where the player left it next time
                     Config.UiX = root.Position.X.Offset
                     Config.UiY = root.Position.Y.Offset
                 end
@@ -1053,183 +1100,165 @@ local function buildWindow()
             if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
                 local delta = input.Position - dragStart
                 root.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-                shadow.Position = UDim2.new(0.5, 6, 0.5, 8)
-                shadow.Position = UDim2.new(root.Position.X.Scale, root.Position.X.Offset + 6, root.Position.Y.Scale, root.Position.Y.Offset + 8)
+                glowFrame.Position = root.Position
+                shadow.Position = UDim2.new(root.Position.X.Scale, root.Position.X.Offset,
+                    root.Position.Y.Scale, root.Position.Y.Offset + 5)
             end
         end)
     end
 
-    -- body: rail + content + status strip
+    -- ── body: pages ─────────────────────────────────────────────────────────
     Body = new("Frame", {
-        BackgroundTransparency = 1, Position = UDim2.new(0, 0, 0, 48),
-        Size = UDim2.new(1, 0, 1, -48), ZIndex = 3,
+        BackgroundTransparency = 1, Position = UDim2.new(0, 0, 0, TOPBAR_H),
+        Size = UDim2.new(1, 0, 1, -(TOPBAR_H + NAVBAR_H)), ZIndex = 4,
     }, root)
 
-    Rail = new("Frame", {
-        BackgroundColor3 = Theme.BgSidebar, BackgroundTransparency = 0.2, BorderSizePixel = 0,
-        Size = UDim2.new(0, 196, 1, -26), ZIndex = 4,
+    PageHolder = new("Frame", {
+        BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0), ZIndex = 4,
     }, Body)
-    corner(Rail, RADIUS.window)
+
+    -- ── bottom navigation: an icon over a label, accent underline when active ─
+    local nav = new("Frame", {
+        BackgroundColor3 = Theme.BgElevated, BackgroundTransparency = 0.1, BorderSizePixel = 0,
+        Position = UDim2.new(0, 0, 1, -NAVBAR_H), Size = UDim2.new(1, 0, 0, NAVBAR_H), ZIndex = 5,
+    }, root)
+    corner(nav, RADIUS.window)
     new("Frame", {
-        BackgroundColor3 = Theme.BgSidebar, BorderSizePixel = 0,
-        Position = UDim2.new(0, 0, 1, -12), Size = UDim2.new(1, 0, 0, 12), ZIndex = 4,
-    }, Rail)
+        BackgroundColor3 = Theme.BgSurface, BorderSizePixel = 0,
+        Position = UDim2.new(0, 0, 0, 0), Size = UDim2.new(1, 0, 0, 10), ZIndex = 5,
+    }, nav)
     new("Frame", {
         BackgroundColor3 = Theme.StrokeSoft, BorderSizePixel = 0,
-        Position = UDim2.new(1, -1, 0, 10), Size = UDim2.new(0, 1, 1, -20), ZIndex = 5,
-    }, Rail)
+        Position = UDim2.new(0, 0, 0, 0), Size = UDim2.new(1, 0, 0, 1), ZIndex = 6,
+    }, nav)
 
-    local searchShell = new("Frame", {
-        BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
-        Position = UDim2.new(0, 12, 0, 12), Size = UDim2.new(1, -24, 0, 30), ZIndex = 5,
-    }, Rail)
-    corner(searchShell, RADIUS.control)
-    hairline(searchShell, Theme.StrokeSoft, 1, 0.4)
-    iconTile(searchShell, ICON.Search, Theme.TextMuted, 16, UDim2.new(0, 7, 0.5, -8), 6)
-    local searchBox = new("TextBox", {
-        BackgroundTransparency = 1, Font = FONT.UI, PlaceholderText = "search options…",
-        PlaceholderColor3 = Theme.TextFaint, Position = UDim2.new(0, 30, 0, 0), Size = UDim2.new(1, -38, 1, 0),
-        Text = "", TextColor3 = Theme.TextPrimary, TextSize = 11,
-        TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, ZIndex = 6,
-    }, searchShell)
+    local navList = new("Frame", {
+        BackgroundTransparency = 1, Position = UDim2.new(0, 6, 0, 0),
+        Size = UDim2.new(1, -240, 1, 0), ZIndex = 6,
+    }, nav)
+    new("UIListLayout", {
+        Padding = UDim.new(0, 4), FillDirection = Enum.FillDirection.Horizontal,
+        VerticalAlignment = Enum.VerticalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder,
+    }, navList)
 
-    local railList = new("ScrollingFrame", {
-        BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.new(0, 0, 0, 52),
-        Size = UDim2.new(1, 0, 1, -100), ScrollBarThickness = 2,
-        ScrollBarImageColor3 = Theme.Stroke, CanvasSize = UDim2.new(0, 0, 0, 0),
-        AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 5,
-    }, Rail)
-    new("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, railList)
-    new("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), PaddingTop = UDim.new(0, 4) }, railList)
-
-    Text({
-        Position = UDim2.new(0, 14, 1, -26), Size = UDim2.new(1, -28, 0, 12),
-        Text = META.version .. " · free · no key", TextColor3 = Theme.TextFaint, TextSize = 9,
-        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 5,
-    }, Rail)
-    Text({
-        Position = UDim2.new(0, 14, 1, -14), Size = UDim2.new(1, -28, 0, 12),
-        Text = LocalPlayer and ("@" .. LocalPlayer.Name) or "@player", TextColor3 = Theme.TextFaint,
-        TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 5,
-    }, Rail)
-
-    local content = new("Frame", {
-        BackgroundTransparency = 1, Position = UDim2.new(0, 196, 0, 0),
-        Size = UDim2.new(1, -196, 1, -26), ZIndex = 4,
-    }, Body)
-
-    local header = new("Frame", {
-        BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 46), ZIndex = 5,
-    }, content)
-    local headerIcon = new("Frame", {
-        BackgroundTransparency = 1, Position = UDim2.new(0, 14, 0, 9),
-        Size = UDim2.new(0, 28, 0, 28), ZIndex = 6,
-    }, header)
-    local headerTitle = Text({
-        Font = FONT.Bold, Position = UDim2.new(0, 54, 0, 10), Size = UDim2.new(1, -70, 0, 16),
-        Text = "Auto Farm", TextColor3 = Theme.TextPrimary, TextSize = 13,
-        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
-    }, header)
-    local headerDesc = Text({
-        Position = UDim2.new(0, 54, 0, 26), Size = UDim2.new(1, -70, 0, 14),
-        Text = "", TextColor3 = Theme.TextMuted, TextSize = 10,
-        TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 6,
-    }, header)
-    new("Frame", {
-        BackgroundColor3 = Theme.StrokeSoft, BorderSizePixel = 0, Position = UDim2.new(0, 14, 1, 0),
-        Size = UDim2.new(1, -28, 0, 1), ZIndex = 5,
-    }, header)
-
-    PageHolder = new("Frame", {
-        BackgroundTransparency = 1, Position = UDim2.new(0, 0, 0, 46),
-        Size = UDim2.new(1, 0, 1, -46), ZIndex = 5,
-    }, content)
-
-    local strip = new("Frame", {
-        BackgroundColor3 = Theme.BgElevated, BackgroundTransparency = 0.4, BorderSizePixel = 0,
-        Position = UDim2.new(0, 0, 1, -26), Size = UDim2.new(1, 0, 0, 26), ZIndex = 6,
-    }, Body)
-    corner(strip, RADIUS.window)
-    Text({
-        Position = UDim2.new(0, 14, 0, 7), Size = UDim2.new(0, 420, 0, 12),
-        Text = Config.HideUiKey .. " — show / hide · " .. Config.PanicKey .. " — panic (turn everything off)", TextColor3 = Theme.TextFaint,
-        TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 7,
-    }, strip)
-    local stripRight = Text({
-        Font = FONT.Mono, Position = UDim2.new(1, -320, 0, 7), Size = UDim2.new(0, 306, 0, 12),
+    local navRight = Text({
+        Font = FONT.Mono, Position = UDim2.new(1, -230, 0, 12), Size = UDim2.new(0, 218, 0, 12),
         Text = "", TextColor3 = Theme.TextMuted, TextSize = 9,
         TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 7,
-    }, strip)
+    }, nav)
+    local navHint = Text({
+        Font = FONT.Mono, Position = UDim2.new(1, -230, 0, 30), Size = UDim2.new(0, 218, 0, 12),
+        Text = Config.HideUiKey .. " hide · " .. Config.PanicKey .. " panic",
+        TextColor3 = Theme.TextFaint, TextSize = 9,
+        TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 7,
+    }, nav)
 
-    searchBox:GetPropertyChangedSignal("Text"):Connect(function()
-        local query = string.lower(searchBox.Text or "")
-        for _, tab in ipairs(Tabs) do
-            local show = true
-            if #query > 0 then
-                local haystack = string.lower(tab.title .. " " .. (tab.desc or ""))
-                for _, entry in ipairs(tab.searchIndex) do
-                    haystack = haystack .. " " .. string.lower(entry)
+    if searchBox then
+        -- the search box filters rows, not tabs: a panel hides when none of
+        -- its rows match, and a row hides when its title and description do
+        -- not contain the query. Empty box = everything back.
+        searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+            CONTROLS.tick("search", function()
+                local query = string.lower(searchBox.Text or "")
+                for _, tab in ipairs(Tabs) do
+                    local tabMatches = 0
+                    for _, panel in ipairs(tab.panels) do
+                        local panelMatches = 0
+                        local titleHit = #query > 0 and string.find(panel.title, query, 1, true) ~= nil
+                        for _, entry in ipairs(panel.index) do
+                            local hit = #query == 0 or titleHit or string.find(entry.text, query, 1, true) ~= nil
+                            entry.frame.Visible = hit
+                            if hit then panelMatches = panelMatches + 1 end
+                        end
+                        -- a panel with no indexed row (the swatches) lives or dies by its title
+                        if #panel.index == 0 then
+                            panel.frame.Visible = #query == 0 or titleHit
+                        else
+                            panel.frame.Visible = panelMatches > 0
+                        end
+                        if panel.frame.Visible then tabMatches = tabMatches + 1 end
+                    end
+                    tab.matches = tabMatches
                 end
-                show = string.find(haystack, query, 1, true) ~= nil
-            end
-            tab.button.Visible = show
-        end
-    end)
+                if #query > 0 and ActiveTab and (ActiveTab.matches or 0) == 0 then
+                    for _, tab in ipairs(Tabs) do
+                        if (tab.matches or 0) > 0 then tab.Select() break end
+                    end
+                end
+            end)
+        end)
+    end
 
-    iconTile(headerIcon, ICON.Crest, Theme.Accent, 28, UDim2.new(0, 0, 0, 0), 7)
-
-    Window.HeaderIcon = headerIcon
     Window.HeaderTitle = headerTitle
     Window.HeaderDesc = headerDesc
     Window.Topbar = topbar
-    Window.Chrome = { chips = chips, strip = stripRight, header = header }
+    Window.Nav = nav
+    Window.NavList = navList
+    Window.Chrome = { chips = chips, strip = navRight, hint = navHint, header = headerTitle }
     return screen
 end
 
--- ── tabs and their components ───────────────────────────────────────────────
-
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 6 · TABS — a bottom-bar item, a page with two columns, and the row widgets
+-- ═══════════════════════════════════════════════════════════════════════════
 local function makeTab(title, desc, iconKind, accent)
     Window.tabOrder = (Window.tabOrder or 0) + 1
     accent = accent or Theme.Accent
-    local railList = Rail:FindFirstChildOfClass("ScrollingFrame")
 
     local button = new("TextButton", {
-        AutoButtonColor = false, BackgroundColor3 = Theme.BgElevated, BackgroundTransparency = 1,
-        BorderSizePixel = 0, LayoutOrder = Window.tabOrder, Size = UDim2.new(1, 0, 0, 34),
-        Text = "", ZIndex = 6,
-    }, railList)
-    corner(button, RADIUS.control)
+        AutoButtonColor = false, BackgroundColor3 = Theme.BgRaised, BackgroundTransparency = 1,
+        BorderSizePixel = 0, LayoutOrder = Window.tabOrder,
+        Size = UDim2.new(0, 132, 0, 48), Text = "", ZIndex = 7,
+    }, Window.NavList)
+    corner(button, RADIUS.chip)
 
-    local pill = new("Frame", {
-        BackgroundColor3 = accent, BorderSizePixel = 0, Position = UDim2.new(0, -6, 0.5, -8),
-        Size = UDim2.new(0, 3, 0, 16), ZIndex = 7,
+    local underline = new("Frame", {
+        BackgroundColor3 = accent, BorderSizePixel = 0,
+        Position = UDim2.new(0, 18, 0, 0), Size = UDim2.new(1, -36, 0, 2), ZIndex = 8,
     }, button)
-    corner(pill, RADIUS.pill)
-    pill.Visible = false
+    corner(underline, RADIUS.pill)
+    underline.Visible = false
 
-    local tile = iconTile(button, iconKind, accent, 22, UDim2.new(0, 9, 0.5, -11), 7)
+    local tile = iconTile(button, iconKind, accent, 18, UDim2.new(0.5, -9, 0, 8), 8, true)
     local label = Text({
-        Font = FONT.Bold, Position = UDim2.new(0, 40, 0, 0), Size = UDim2.new(1, -46, 1, 0),
-        Text = title, TextColor3 = Theme.TextSecondary, TextSize = 11,
-        TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 7,
+        Font = FONT.Bold, Position = UDim2.new(0, 0, 0, 31), Size = UDim2.new(1, 0, 0, 12),
+        Text = title, TextColor3 = Theme.TextMuted, TextSize = 10,
+        TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 9,
     }, button)
 
-    local page = new("ScrollingFrame", {
-        BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.new(0, 0, 0, 0),
-        Size = UDim2.new(1, 0, 1, 0), ScrollBarThickness = 2, ScrollBarImageColor3 = Theme.Stroke,
-        CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        Visible = false, ZIndex = 5,
+    -- a page is two columns of panels; the second column is used when the tab
+    -- has more controls than fit comfortably in one
+    local page = new("Frame", {
+        BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0), Visible = false, ZIndex = 5,
     }, PageHolder)
-    new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, page)
-    new("UIPadding", {
-        PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 14),
-        PaddingTop = UDim.new(0, 12), PaddingBottom = UDim.new(0, 14),
-    }, page)
+
+    local columns = {}
+    for index = 1, 2 do
+        local column = new("ScrollingFrame", {
+            BackgroundTransparency = 1, BorderSizePixel = 0,
+            Position = UDim2.new((index - 1) * 0.5, 0, 0, 0),
+            Size = UDim2.new(0.5, 0, 1, 0),
+            ScrollBarThickness = 2, ScrollBarImageColor3 = Theme.Stroke,
+            CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            ZIndex = 5,
+        }, page)
+        new("UIListLayout", {
+            Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder,
+        }, column)
+        local leftPad = index == 1 and 12 or 5
+        local rightPad = index == 1 and 5 or 12
+        new("UIPadding", {
+            PaddingLeft = UDim.new(0, leftPad), PaddingRight = UDim.new(0, rightPad),
+            PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 14),
+        }, column)
+        columns[index] = column
+    end
 
     local tab = {
         title = title, desc = desc, color = accent, icon = iconKind,
-        page = page, button = button, label = label, pill = pill, tile = tile,
-        order = 0, searchIndex = {},
+        page = page, button = button, label = label, pill = underline, tile = tile,
+        columns = columns, column = 1,
+        order = 0, searchIndex = {}, toggles = {}, panels = {},
     }
 
     local function select()
@@ -1237,420 +1266,529 @@ local function makeTab(title, desc, iconKind, accent)
         for _, other in ipairs(Tabs) do
             other.page.Visible = false
             other.pill.Visible = false
-            other.label.TextColor3 = Theme.TextSecondary
-            SafeTween(other.button, TweenInfo.new(0.16), { BackgroundTransparency = 1 }):Play()
+            other.label.TextColor3 = Theme.TextMuted
+            other.button.BackgroundTransparency = 1
         end
         ActiveTab = tab
         tab.page.Visible = true
         tab.pill.Visible = true
-        tab.label.TextColor3 = Theme.TextPrimary
-        SafeTween(tab.button, TweenInfo.new(0.16), { BackgroundTransparency = 0.25 }):Play()
-        Window.HeaderTitle.Text = tab.title
-        Window.HeaderDesc.Text = tab.desc or ""
+        tab.label.TextColor3 = tab.color
+        tab.button.BackgroundTransparency = 0.82
+        tab.button.BackgroundColor3 = tint(tab.color, 0.86)
+        Window.HeaderTitle.Text = META.game .. " · " .. META.version .. " · " .. tab.title
         safeCall("header icon", function()
-            for _, child in ipairs(Window.HeaderIcon:GetChildren()) do child:Destroy() end
-            iconTile(Window.HeaderIcon, tab.icon, tab.color, 28, UDim2.new(0, 0, 0, 0), 7)
+            local holder = Window.HeaderIcon
+            if not holder then return end
+            for _, child in ipairs(holder:GetChildren()) do
+                if child.ClassName ~= "UICorner" and child.ClassName ~= "UIStroke" then child:Destroy() end
+            end
+            holder.BackgroundColor3 = tint(tab.color, 0.86)
+            drawVectorGlyph(holder, tab.icon, tab.color, 26 * 0.54, 8)
         end)
-        tab.button.BackgroundColor3 = tint(tab.color, 0.9)
     end
 
     button.MouseEnter:Connect(function()
-        if ActiveTab ~= tab then SafeTween(button, TweenInfo.new(0.14), { BackgroundTransparency = 0.75 }):Play() end
+        if ActiveTab ~= tab then button.BackgroundTransparency = 0.75 end
     end)
     button.MouseLeave:Connect(function()
-        if ActiveTab ~= tab then SafeTween(button, TweenInfo.new(0.14), { BackgroundTransparency = 1 }):Play() end
+        if ActiveTab ~= tab then button.BackgroundTransparency = 1 end
     end)
     button.MouseButton1Click:Connect(select)
     tab.Select = select
 
-    -- ── components ──────────────────────────────────────────────────────────
     local function nextOrder()
         tab.order = tab.order + 1
         return tab.order
     end
 
-    function tab:AddSection(text)
-        local holder = new("Frame", {
-            BackgroundTransparency = 1, LayoutOrder = nextOrder(), Size = UDim2.new(1, 0, 0, 22),
-        }, page)
-        Text({
-            Font = FONT.Bold, Position = UDim2.new(0, 2, 1, -14), Size = UDim2.new(1, -4, 0, 14),
-            Text = string.upper(text), TextColor3 = Theme.TextFaint, TextSize = 9,
-            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
-        }, holder)
+    -- which column the next panel goes into
+    function tab:UseColumn(index)
+        tab.column = (index == 2) and 2 or 1
+        return tab
+    end
+
+    -- ── panels ───────────────────────────────────────────────────────────────
+    function tab:AddPanel(title, columnIndex)
+        local column = tab.columns[(columnIndex == 2) and 2 or (columnIndex or tab.column)]
+        local panel = new("Frame", {
+            BackgroundColor3 = Theme.BgElevated, BackgroundTransparency = 0.12, BorderSizePixel = 0,
+            LayoutOrder = nextOrder(), Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+            ZIndex = 6,
+        }, column)
+        corner(panel, RADIUS.panel)
+        hairline(panel, Theme.StrokeSoft, 1, 0.35)
+        new("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder }, panel)
+        new("UIPadding", {
+            PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10),
+            PaddingTop = UDim.new(0, 9), PaddingBottom = UDim.new(0, 9),
+        }, panel)
+
+        local head = new("Frame", {
+            BackgroundTransparency = 1, LayoutOrder = 0, Size = UDim2.new(1, 0, 0, 22), ZIndex = 7,
+        }, panel)
         new("Frame", {
-            BackgroundColor3 = Theme.StrokeSoft, BorderSizePixel = 0, Position = UDim2.new(0, 2, 1, 0),
-            Size = UDim2.new(1, -4, 0, 1), ZIndex = 5,
-        }, holder)
-        table.insert(tab.searchIndex, text)
-        return holder
-    end
-
-    function tab:AddToggle(title, desc, value, callback, iconKind)
-        local card = new("Frame", {
-            BackgroundColor3 = Theme.BgElevated, BorderSizePixel = 0,
-            LayoutOrder = nextOrder(), Size = UDim2.new(1, 0, 0, 58),
-        }, page)
-        corner(card, RADIUS.card)
-        hairline(card, Theme.StrokeSoft, 1, 0.45)
-        iconTile(card, iconKind or tab.icon, tab.color, 30, UDim2.new(0, 14, 0.5, -15), 6)
-
+            BackgroundColor3 = Theme.Accent, BorderSizePixel = 0,
+            Position = UDim2.new(0, 0, 0, 4), Size = UDim2.new(0, 3, 0, 12), ZIndex = 8,
+        }, head)
         Text({
-            Font = FONT.Bold, Position = UDim2.new(0, 56, 0, 11), Size = UDim2.new(1, -170, 0, 16),
-            Text = title, TextColor3 = Theme.TextPrimary, TextSize = 12,
-            TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 6,
-        }, card)
-        Text({
-            Position = UDim2.new(0, 56, 0, 29), Size = UDim2.new(1, -170, 0, 16),
-            Text = desc or "", TextColor3 = Theme.TextMuted, TextSize = 10,
-            TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 6,
-        }, card)
-        local stateLabel = Text({
-            Font = FONT.Bold, Position = UDim2.new(1, -112, 0.5, -7), Size = UDim2.new(0, 30, 0, 14),
-            Text = "OFF", TextColor3 = Theme.TextFaint, TextSize = 9,
-            TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 6,
-        }, card)
+            Font = FONT.Bold, Position = UDim2.new(0, 10, 0, 1), Size = UDim2.new(1, -10, 0, 16),
+            Text = string.upper(title), TextColor3 = Theme.TextSecondary, TextSize = 9,
+            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 8,
+        }, head)
+        new("Frame", {
+            BackgroundColor3 = Theme.StrokeSoft, BorderSizePixel = 0,
+            Position = UDim2.new(0, 0, 1, -1), Size = UDim2.new(1, 0, 0, 1), ZIndex = 7,
+        }, head)
 
-        local track = new("Frame", {
-            BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
-            Position = UDim2.new(1, -68, 0.5, -12), Size = UDim2.new(0, 44, 0, 24), ZIndex = 6,
-        }, card)
-        corner(track, RADIUS.pill)
-        local trackStroke = hairline(track, Theme.StrokeSoft, 1, 0.35)
-        local knob = new("Frame", {
-            BackgroundColor3 = Color3.fromRGB(238, 240, 244), BorderSizePixel = 0,
-            Position = UDim2.new(0, 3, 0.5, -9), Size = UDim2.new(0, 18, 0, 18), ZIndex = 7,
-        }, track)
-        corner(knob, RADIUS.pill)
-
-        local state = value and true or false
-        local function render(animate)
-            local info = TweenInfo.new(animate and 0.2 or 0, Enum.EasingStyle.Quart)
-            SafeTween(track, info, { BackgroundColor3 = state and tint(tab.color, 0.52) or Theme.BgInset }):Play()
-            SafeTween(trackStroke, info, { Color = state and tab.color or Theme.StrokeSoft, Transparency = state and 0.45 or 0.35 }):Play()
-            SafeTween(knob, info, { Position = state and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9) }):Play()
-            stateLabel.Text = state and "ON" or "OFF"
-            stateLabel.TextColor3 = state and tab.color or Theme.TextFaint
+        local rowOrder = 0
+        local panelApi = { frame = panel, title = title, rows = {}, index = {} }
+        local function nextRow()
+            rowOrder = rowOrder + 1
+            return rowOrder
         end
-        render(false)
-
-        local function commit(target)
-            state = target
-            render(true)
-            CONTROLS.spawnWith("toggle · " .. title, callback, function()
-                -- a switch must never sit ON with a dead callback behind it:
-                -- put it back, and run the off path so the config agrees
-                state = not target
-                render(true)
-                CONTROLS.run("toggle · " .. title .. " (revert)", callback, not target)
-            end, target)
+        local function addRow(height, key)
+            local row = new("Frame", {
+                BackgroundColor3 = Theme.BgRaised, BackgroundTransparency = 1, BorderSizePixel = 0,
+                LayoutOrder = nextRow(), Size = UDim2.new(1, 0, 0, height), ZIndex = 7,
+            }, panel)
+            corner(row, RADIUS.chip)
+            new("Frame", {
+                BackgroundColor3 = Theme.StrokeSoft, BackgroundTransparency = 0.4, BorderSizePixel = 0,
+                Position = UDim2.new(0, 0, 1, 0), Size = UDim2.new(1, 0, 0, 1), ZIndex = 7,
+            }, row)
+            table.insert(panelApi.rows, row)
+            if key then
+                table.insert(panelApi.index, { frame = row, text = string.lower(key) })
+            end
+            return row
         end
-        local click = new("TextButton", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0), Text = "", ZIndex = 8 }, card)
-        click.MouseButton1Click:Connect(function()
-            commit(not state)
-        end)
-        click.MouseEnter:Connect(function() SafeTween(card, TweenInfo.new(0.14), { BackgroundColor3 = Theme.BgRaised }):Play() end)
-        click.MouseLeave:Connect(function() SafeTween(card, TweenInfo.new(0.14), { BackgroundColor3 = Theme.BgElevated }):Play() end)
 
-        local api = {}
-        api.Set = function(v, silent)
-            local target = v and true or false
-            if silent then
+        function panelApi:AddCheckbox(rowTitle, rowDesc, value, callback)
+            local row = addRow(30, rowTitle .. " " .. (rowDesc or ""))
+            local state = value and true or false
+            local box = new("Frame", {
+                BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
+                Position = UDim2.new(0, 2, 0.5, -7), Size = UDim2.new(0, 14, 0, 14), ZIndex = 8,
+            }, row)
+            corner(box, 3)
+            local boxStroke = hairline(box, Theme.Stroke, 1, 0.25)
+            local checkA = new("Frame", {
+                BackgroundColor3 = Theme.OnAccent, BorderSizePixel = 0,
+                Position = UDim2.new(0.5, -5, 0.5, -1), Size = UDim2.new(0, 6, 0, 2), Rotation = 45, ZIndex = 9,
+            }, box)
+            local checkB = new("Frame", {
+                BackgroundColor3 = Theme.OnAccent, BorderSizePixel = 0,
+                Position = UDim2.new(0.5, 1, 0.5, 0), Size = UDim2.new(0, 4, 0, 2), Rotation = -45, ZIndex = 9,
+            }, box)
+            local text = Text({
+                Font = FONT.UI, Position = UDim2.new(0, 26, 0, 0), Size = UDim2.new(1, -86, 1, 0),
+                Text = rowTitle, TextColor3 = Theme.TextSecondary, TextSize = 11,
+                TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 8,
+            }, row)
+            local valueLabel = Text({
+                Font = FONT.Mono, Position = UDim2.new(1, -62, 0, 0), Size = UDim2.new(0, 60, 1, 0),
+                Text = "OFF", TextColor3 = Theme.TextFaint, TextSize = 9,
+                TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 8,
+            }, row)
+            local click = new("TextButton", {
+                BackgroundTransparency = 1, BorderSizePixel = 0,
+                Size = UDim2.new(1, 0, 1, 0), Text = "", ZIndex = 9,
+            }, row)
+
+            local api = {}
+            local function render()
+                box.BackgroundColor3 = state and Theme.Accent or Theme.BgInset
+                boxStroke.Color = state and Theme.Accent or Theme.Stroke
+                checkA.Visible = state
+                checkB.Visible = state
+                text.TextColor3 = state and Theme.TextPrimary or Theme.TextSecondary
+                valueLabel.Text = state and "ON" or "OFF"
+                valueLabel.TextColor3 = state and Theme.Accent or Theme.TextFaint
+            end
+            local function commit(target)
                 state = target
-                render(true)
-            else
-                commit(target)
+                render()
+                CONTROLS.spawnWith("toggle · " .. rowTitle, callback, function()
+                    state = not target
+                    render()
+                    CONTROLS.run("toggle · " .. rowTitle .. " (revert)", callback, not target)
+                end, target)
             end
-        end
-        api.Get = function() return state end
-        table.insert(tab.searchIndex, title)
-        tab.toggles = tab.toggles or {}
-        table.insert(tab.toggles, api)
-        table.insert(ToggleRegistry, { title = title, tab = tab, set = api.Set, get = api.Get })
-        CONTROLS.register("toggle", title, tab, { set = api.Set, get = api.Get })
-        return api
-    end
+            click.MouseButton1Click:Connect(function() commit(not state) end)
+            click.MouseEnter:Connect(function() row.BackgroundTransparency = 0.72 end)
+            click.MouseLeave:Connect(function() row.BackgroundTransparency = 1 end)
 
-    function tab:AddSlider(title, desc, min, max, value, suffix, callback, iconKind)
-        local card = new("Frame", {
-            BackgroundColor3 = Theme.BgElevated, BorderSizePixel = 0,
-            LayoutOrder = nextOrder(), Size = UDim2.new(1, 0, 0, 70),
-        }, page)
-        corner(card, RADIUS.card)
-        hairline(card, Theme.StrokeSoft, 1, 0.45)
-        iconTile(card, iconKind or tab.icon, tab.color, 30, UDim2.new(0, 14, 0, 12), 6)
-        Text({
-            Font = FONT.Bold, Position = UDim2.new(0, 56, 0, 12), Size = UDim2.new(1, -170, 0, 16),
-            Text = title, TextColor3 = Theme.TextPrimary, TextSize = 12,
-            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
-        }, card)
-        Text({
-            Position = UDim2.new(0, 56, 0, 29), Size = UDim2.new(1, -110, 0, 14),
-            Text = desc or "", TextColor3 = Theme.TextMuted, TextSize = 10,
-            TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 6,
-        }, card)
-
-        local pill = new("Frame", {
-            BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
-            Position = UDim2.new(1, -74, 0, 12), Size = UDim2.new(0, 60, 0, 22), ZIndex = 6,
-        }, card)
-        corner(pill, RADIUS.pill)
-        hairline(pill, Theme.StrokeSoft, 1, 0.4)
-        local pillText = Text({
-            Font = FONT.Mono, Size = UDim2.new(1, 0, 1, 0),
-            Text = tostring(round(value, 2)) .. (suffix or ""), TextColor3 = Theme.TextSecondary,
-            TextSize = 10, ZIndex = 7,
-        }, pill)
-
-        local track = new("Frame", {
-            BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
-            Position = UDim2.new(0, 56, 0, 50), Size = UDim2.new(1, -126, 0, 4), ZIndex = 6,
-        }, card)
-        corner(track, RADIUS.pill)
-        local fill = new("Frame", {
-            BackgroundColor3 = tab.color, BorderSizePixel = 0, Size = UDim2.new(0, 0, 1, 0), ZIndex = 7,
-        }, track)
-        corner(fill, RADIUS.pill)
-        local knob = new("Frame", {
-            AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = Color3.fromRGB(238, 240, 244),
-            BorderSizePixel = 0, Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.new(0, 12, 0, 12), ZIndex = 8,
-        }, track)
-        corner(knob, RADIUS.pill)
-
-        local current = clamp(tonumber(value) or min, min, max)
-        local function render()
-            local alpha = (current - min) / math.max(max - min, 0.0001)
-            fill.Size = UDim2.new(alpha, 0, 1, 0)
-            knob.Position = UDim2.new(alpha, 0, 0.5, 0)
-            pillText.Text = tostring(round(current, 2)) .. (suffix or "")
-        end
-        render()
-
-        local dragging = false
-        local function setFromX(x)
-            local rel = clamp((x - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1), 0, 1)
-            current = min + (max - min) * rel
-            if max - min > 20 then current = math.floor(current + 0.5) else current = round(current, 2) end
+            function api.Set(v, silent)
+                local target = v and true or false
+                if silent then
+                    state = target
+                    render()
+                else
+                    commit(target)
+                end
+            end
+            function api.Get() return state end
             render()
-            CONTROLS.run("slider · " .. title, callback, current)
+
+            table.insert(tab.searchIndex, rowTitle)
+            tab.toggles = tab.toggles or {}
+            table.insert(tab.toggles, api)
+            table.insert(ToggleRegistry, { title = rowTitle, tab = tab, set = api.Set, get = api.Get })
+            CONTROLS.register("toggle", rowTitle, tab, { set = api.Set, get = api.Get })
+            return api
         end
-        local hit = new("TextButton", {
-            BackgroundTransparency = 1, Position = UDim2.new(0, -8, 0, -18), Size = UDim2.new(1, 16, 0, 40),
-            Text = "", ZIndex = 9,
-        }, track)
-        hit.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                dragging = true
-                setFromX(input.Position.X)
+
+        function panelApi:AddSlider(rowTitle, low, high, value, suffix, callback, formatText)
+            local row = addRow(44, rowTitle)
+            local current = clamp(tonumber(value) or low, low, high)
+            local function fmt(v)
+                if formatText then return formatText(v) end
+                return tostring(round(v, 2)) .. (suffix or "")
             end
-        end)
-        if UserInput then
-            UserInput.InputChanged:Connect(function(input)
-                if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            Text({
+                Font = FONT.UI, Position = UDim2.new(0, 2, 0, 2), Size = UDim2.new(1, -80, 0, 16),
+                Text = rowTitle, TextColor3 = Theme.TextSecondary, TextSize = 10,
+                TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 8,
+            }, row)
+            local readout = Text({
+                Font = FONT.Mono, Position = UDim2.new(1, -72, 0, 1), Size = UDim2.new(0, 70, 0, 16),
+                Text = fmt(current), TextColor3 = Theme.Accent, TextSize = 9,
+                TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 8,
+            }, row)
+            local track = new("Frame", {
+                BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
+                Position = UDim2.new(0, 2, 0, 27), Size = UDim2.new(1, -4, 0, 4), ZIndex = 8,
+            }, row)
+            corner(track, 2)
+            local fill = new("Frame", {
+                BackgroundColor3 = Theme.Accent, BorderSizePixel = 0,
+                Size = UDim2.new(0, 0, 1, 0), ZIndex = 9,
+            }, track)
+            corner(fill, 2)
+            local knob = new("Frame", {
+                AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = Theme.TextPrimary,
+                BorderSizePixel = 0, Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.new(0, 9, 0, 9), ZIndex = 10,
+            }, track)
+            corner(knob, 2)
+            local hit = new("TextButton", {
+                BackgroundTransparency = 1, BorderSizePixel = 0, Text = "",
+                Position = UDim2.new(0, -4, 0, -8), Size = UDim2.new(1, 8, 0, 26), ZIndex = 10,
+            }, row)
+
+            local function render()
+                local alpha = (current - low) / math.max(high - low, 0.0001)
+                fill.Size = UDim2.new(alpha, 0, 1, 0)
+                knob.Position = UDim2.new(alpha, 0, 0.5, 0)
+                readout.Text = fmt(current)
+            end
+            local function setFromX(x)
+                local origin = tonumber(track.AbsolutePosition and track.AbsolutePosition.X) or 0
+                local width = tonumber(track.AbsoluteSize and track.AbsoluteSize.X) or 0
+                if width <= 0 then return end
+                local rel = clamp((x - origin) / width, 0, 1)
+                current = low + (high - low) * rel
+                if high - low > 40 then current = math.floor(current + 0.5) else current = round(current, 2) end
+                render()
+                CONTROLS.run("slider · " .. rowTitle, callback, current)
+            end
+            local dragging = false
+            hit.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    dragging = true
                     setFromX(input.Position.X)
                 end
             end)
-            UserInput.InputEnded:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                    dragging = false
-                end
-            end)
-        end
-        table.insert(tab.searchIndex, title)
-        local api = {
-            Set = function(v)
-                current = clamp(tonumber(v) or min, min, max)
-                render()
-                CONTROLS.run("slider · " .. title, callback, current)
-            end,
-            Get = function() return current end,
-        }
-        CONTROLS.register("slider", title, tab, { set = api.Set, get = api.Get })
-        return api
-    end
-
-    function tab:AddButton(title, desc, callback, iconKind, danger)
-        local card = new("Frame", {
-            BackgroundColor3 = Theme.BgElevated, BorderSizePixel = 0,
-            LayoutOrder = nextOrder(), Size = UDim2.new(1, 0, 0, 58),
-        }, page)
-        corner(card, RADIUS.card)
-        hairline(card, Theme.StrokeSoft, 1, 0.45)
-        iconTile(card, iconKind or tab.icon, danger and Theme.Danger or tab.color, 30, UDim2.new(0, 14, 0.5, -15), 6)
-        Text({
-            Font = FONT.Bold, Position = UDim2.new(0, 56, 0, 11), Size = UDim2.new(1, -120, 0, 16),
-            Text = title, TextColor3 = Theme.TextPrimary, TextSize = 12,
-            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
-        }, card)
-        Text({
-            Position = UDim2.new(0, 56, 0, 29), Size = UDim2.new(1, -120, 0, 16),
-            Text = desc or "", TextColor3 = Theme.TextMuted, TextSize = 10,
-            TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 6,
-        }, card)
-
-        local action = new("TextButton", {
-            AutoButtonColor = false, BackgroundColor3 = danger and Color3.fromRGB(58, 33, 34) or tint(tab.color, 0.86),
-            BorderSizePixel = 0, Font = FONT.Bold, Position = UDim2.new(1, -96, 0.5, -13),
-            Size = UDim2.new(0, 82, 0, 26), Text = "RUN", TextColor3 = danger and Theme.Danger or tab.color,
-            TextSize = 10, ZIndex = 7,
-        }, card)
-        corner(action, RADIUS.chip)
-        action.MouseEnter:Connect(function() SafeTween(action, TweenInfo.new(0.14), { BackgroundTransparency = 0.2 }):Play() end)
-        action.MouseLeave:Connect(function() SafeTween(action, TweenInfo.new(0.14), { BackgroundTransparency = 0 }):Play() end)
-        action.MouseButton1Click:Connect(function()
-            CONTROLS.spawn("button · " .. title, callback)
-            notify(title, "executed", 2, danger and Theme.Danger or tab.color, iconKind or tab.icon)
-        end)
-        table.insert(tab.searchIndex, title)
-        CONTROLS.register("button", title, tab, {
-            press = function() CONTROLS.spawn("button · " .. title, callback) end,
-        })
-        return action
-    end
-
-    function tab:AddDropdown(title, desc, options, value, callback, iconKind)
-        local expanded = false
-        local card = new("Frame", {
-            BackgroundColor3 = Theme.BgElevated, BorderSizePixel = 0,
-            LayoutOrder = nextOrder(), Size = UDim2.new(1, 0, 0, 58), ClipsDescendants = false,
-        }, page)
-        corner(card, RADIUS.card)
-        hairline(card, Theme.StrokeSoft, 1, 0.45)
-        iconTile(card, iconKind or tab.icon, tab.color, 30, UDim2.new(0, 14, 0.5, -15), 6)
-        Text({
-            Font = FONT.Bold, Position = UDim2.new(0, 56, 0, 11), Size = UDim2.new(1, -170, 0, 16),
-            Text = title, TextColor3 = Theme.TextPrimary, TextSize = 12,
-            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
-        }, card)
-        Text({
-            Position = UDim2.new(0, 56, 0, 29), Size = UDim2.new(1, -170, 0, 16),
-            Text = desc or "", TextColor3 = Theme.TextMuted, TextSize = 10,
-            TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 6,
-        }, card)
-
-        local current = value or (options[1] or "—")
-        local selector = new("TextButton", {
-            AutoButtonColor = false, BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
-            Position = UDim2.new(1, -152, 0.5, -12), Size = UDim2.new(0, 138, 0, 24),
-            Text = "", ZIndex = 7,
-        }, card)
-        corner(selector, RADIUS.chip)
-        hairline(selector, Theme.StrokeSoft, 1, 0.4)
-        local selectorText = Text({
-            Font = FONT.Bold, Position = UDim2.new(0, 10, 0, 0), Size = UDim2.new(1, -26, 1, 0),
-            Text = tostring(current), TextColor3 = Theme.TextSecondary, TextSize = 10,
-            TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 8,
-        }, selector)
-        Text({
-            Position = UDim2.new(1, -18, 0, 0), Size = UDim2.new(0, 16, 1, 0), Text = "▾",
-            TextColor3 = Theme.TextFaint, TextSize = 11, ZIndex = 8,
-        }, selector)
-
-        local list = new("Frame", {
-            BackgroundColor3 = Theme.BgRaised, BorderSizePixel = 0, ClipsDescendants = true,
-            Position = UDim2.new(1, -152, 0.5, 14), Size = UDim2.new(0, 138, 0, 0),
-            Visible = false, ZIndex = 40,
-        }, card)
-        corner(list, RADIUS.chip)
-        hairline(list, Theme.Stroke, 1, 0.3)
-        local listLayout = new("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder }, list)
-        new("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4) }, list)
-
-        -- declared before the rows: their handlers compare against it
-        local function close()
-            expanded = false
-            list.Visible = false
-            list.Size = UDim2.new(0, 138, 0, 0)
-        end
-
-        local api = {}
-        function api.SetOptions(newOptions)
-            for _, child in ipairs(list:GetChildren()) do
-                if child:IsA("TextButton") then child:Destroy() end
-            end
-            for index, option in ipairs(newOptions) do
-                local row = new("TextButton", {
-                    AutoButtonColor = false, BackgroundTransparency = 1, Font = FONT.UI,
-                    LayoutOrder = index, Size = UDim2.new(1, 0, 0, 22), Text = "   " .. tostring(option),
-                    TextColor3 = Theme.TextSecondary, TextSize = 10,
-                    TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 41,
-                }, list)
-                row.MouseEnter:Connect(function() row.BackgroundTransparency = 0.8 end)
-                row.MouseLeave:Connect(function() row.BackgroundTransparency = 1 end)
-                row.MouseButton1Click:Connect(function()
-                    current = option
-                    selectorText.Text = tostring(option)
-                    if CONTROLS.open == close then CONTROLS.open = nil end
-                    close()
-                    CONTROLS.spawn("dropdown · " .. title, callback, option)
+            if UserInput then
+                UserInput.InputChanged:Connect(function(input)
+                    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                        setFromX(input.Position.X)
+                    end
+                end)
+                UserInput.InputEnded:Connect(function(input)
+                    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                        dragging = false
+                    end
                 end)
             end
-        end
-        api.SetOptions(options)
-        api.Get = function() return current end
-        api.Set = function(option)
-            current = option
-            selectorText.Text = tostring(option)
-            if CONTROLS.open == close then CONTROLS.open = nil end
-            close()
-            CONTROLS.spawn("dropdown · " .. title, callback, option)
+            render()
+
+            local api = {
+                Set = function(v)
+                    current = clamp(tonumber(v) or low, low, high)
+                    render()
+                    CONTROLS.run("slider · " .. rowTitle, callback, current)
+                end,
+                Get = function() return current end,
+            }
+            table.insert(tab.searchIndex, rowTitle)
+            CONTROLS.register("slider", rowTitle, tab, { set = api.Set, get = api.Get })
+            return api
         end
 
-        selector.MouseButton1Click:Connect(function()
-            -- two open lists overlap and the one on top steals the click
-            if CONTROLS.open and CONTROLS.open ~= close then CONTROLS.open() end
-            expanded = not expanded
-            if not expanded then close() CONTROLS.open = nil return end
-            local rows = 0
-            for _, child in ipairs(list:GetChildren()) do
-                if child:IsA("TextButton") then rows = rows + 1 end
+        function panelApi:AddDropdown(rowTitle, options, value, callback)
+            local row = addRow(30, rowTitle)
+            Text({
+                Font = FONT.UI, Position = UDim2.new(0, 2, 0, 0), Size = UDim2.new(1, -140, 1, 0),
+                Text = rowTitle, TextColor3 = Theme.TextSecondary, TextSize = 10,
+                TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 8,
+            }, row)
+            local current = value or options[1]
+            local selector = new("TextButton", {
+                AutoButtonColor = false, BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
+                Position = UDim2.new(1, -124, 0.5, -10), Size = UDim2.new(0, 122, 0, 20), Text = "", ZIndex = 9,
+            }, row)
+            corner(selector, RADIUS.chip)
+            hairline(selector, Theme.StrokeSoft, 1, 0.35)
+            local selectorText = Text({
+                Font = FONT.Mono, Position = UDim2.new(0, 8, 0, 0), Size = UDim2.new(1, -26, 1, 0),
+                Text = tostring(current), TextColor3 = Theme.TextSecondary, TextSize = 9,
+                TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 10,
+            }, selector)
+            for index = 1, 2 do
+                local bar = new("Frame", {
+                    BackgroundColor3 = Theme.TextFaint, BorderSizePixel = 0,
+                    AnchorPoint = Vector2.new(0.5, 0.5),
+                    Position = UDim2.new(1, -15 + (index - 1) * 4, 0.5, 0),
+                    Size = UDim2.new(0, 5, 0, 1.5), Rotation = index == 1 and 45 or -45, ZIndex = 10,
+                }, selector)
+                corner(bar, 1)
             end
-            local height = math.min(rows, 7) * 24 + 8
-            CONTROLS.open = close
-            list.Visible = true
-            list.Size = UDim2.new(0, 138, 0, height)
-        end)
+
+            -- the list is a sibling right after the row so the panel grows
+            local list = new("Frame", {
+                BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0, Visible = false,
+                LayoutOrder = rowOrder + 1, Size = UDim2.new(1, 0, 0, 0), ZIndex = 20,
+            }, panel)
+            corner(list, RADIUS.chip)
+            new("UIListLayout", { Padding = UDim.new(0, 1), SortOrder = Enum.SortOrder.LayoutOrder }, list)
+            new("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4) }, list)
+            nextRow()  -- the list owns this slot
+
+            local expanded = false
+            local function close()
+                expanded = false
+                list.Visible = false
+                list.Size = UDim2.new(1, 0, 0, 0)
+                if CONTROLS.open == close then CONTROLS.open = nil end
+            end
+            local api = {}
+            local function addRows()
+                for _, child in ipairs(list:GetChildren()) do
+                    if child:IsA("TextButton") then child:Destroy() end
+                end
+                for index, option in ipairs(options) do
+                    local item = new("TextButton", {
+                        AutoButtonColor = false, BackgroundTransparency = 1, Font = FONT.UI,
+                        LayoutOrder = index, Size = UDim2.new(1, 0, 0, 20),
+                        Text = "  " .. tostring(option), TextColor3 = Theme.TextSecondary, TextSize = 10,
+                        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 21,
+                    }, list)
+                    item.MouseEnter:Connect(function() item.BackgroundTransparency = 0.8 end)
+                    item.MouseLeave:Connect(function() item.BackgroundTransparency = 1 end)
+                    item.MouseButton1Click:Connect(function()
+                        current = option
+                        selectorText.Text = tostring(option)
+                        close()
+                        CONTROLS.spawn("dropdown · " .. rowTitle, callback, option)
+                    end)
+                end
+            end
+            function api.SetOptions(newOptions, keep)
+                options = newOptions
+                addRows()
+                if not keep and newOptions[1] then current = newOptions[1] end
+            end
+            api.SetOptions(options, true)
+            api.Get = function() return current end
+            api.Set = function(option)
+                current = option
+                selectorText.Text = tostring(option)
+                close()
+                CONTROLS.spawn("dropdown · " .. rowTitle, callback, option)
+            end
+            selector.MouseButton1Click:Connect(function()
+                if CONTROLS.open and CONTROLS.open ~= close then CONTROLS.open() end
+                expanded = not expanded
+                if not expanded then close() return end
+                CONTROLS.open = close
+                list.Visible = true
+                list.Size = UDim2.new(1, 0, 0, math.min(#options, 6) * 21 + 8)
+            end)
+
+            table.insert(tab.searchIndex, rowTitle)
+            CONTROLS.register("dropdown", rowTitle, tab, { set = api.Set, get = api.Get, options = options })
+            return api
+        end
+
+        function panelApi:AddButton(rowTitle, callback, danger)
+            local row = addRow(30, rowTitle)
+            local button = new("TextButton", {
+                AutoButtonColor = false,
+                BackgroundColor3 = danger and tint(Theme.Danger, 0.82) or tint(Theme.Accent, 0.84),
+                BorderSizePixel = 0, Position = UDim2.new(0, 0, 0, 2),
+                Size = UDim2.new(1, 0, 0, 26), Text = rowTitle,
+                Font = FONT.Bold, TextColor3 = danger and Theme.Danger or Theme.Accent, TextSize = 10,
+                ZIndex = 8,
+            }, row)
+            corner(button, RADIUS.chip)
+            button.MouseEnter:Connect(function() button.BackgroundTransparency = 0.15 end)
+            button.MouseLeave:Connect(function() button.BackgroundTransparency = 0 end)
+            button.MouseButton1Click:Connect(function()
+                CONTROLS.spawn("button · " .. rowTitle, callback)
+                notify(rowTitle, "executed", 2, danger and Theme.Danger or Theme.Accent, "spark")
+            end)
+            table.insert(tab.searchIndex, rowTitle)
+            CONTROLS.register("button", rowTitle, tab, {
+                press = function() CONTROLS.spawn("button · " .. rowTitle, callback) end,
+            })
+            return button
+        end
+
+        function panelApi:AddInput(rowTitle, placeholder, callback)
+            local row = addRow(30, rowTitle)
+            Text({
+                Font = FONT.UI, Position = UDim2.new(0, 2, 0, 0), Size = UDim2.new(1, -160, 1, 0),
+                Text = rowTitle, TextColor3 = Theme.TextSecondary, TextSize = 10,
+                TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 8,
+            }, row)
+            local shell = new("Frame", {
+                BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
+                Position = UDim2.new(1, -146, 0.5, -10), Size = UDim2.new(0, 144, 0, 20), ZIndex = 9,
+            }, row)
+            corner(shell, RADIUS.chip)
+            local stroke = hairline(shell, Theme.StrokeSoft, 1, 0.35)
+            local box = new("TextBox", {
+                BackgroundTransparency = 1, ClearTextOnFocus = false, Font = FONT.Mono,
+                PlaceholderText = placeholder or "…", PlaceholderColor3 = Theme.TextFaint,
+                Position = UDim2.new(0, 7, 0, 0), Size = UDim2.new(1, -12, 1, 0),
+                Text = "", TextColor3 = Theme.TextPrimary, TextSize = 9,
+                TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 10,
+            }, shell)
+            local function commit()
+                if box.Text and #box.Text > 0 then CONTROLS.spawn("input · " .. rowTitle, callback, box.Text) end
+            end
+            box.FocusLost:Connect(function()
+                stroke.Color = Theme.StrokeSoft
+                commit()
+            end)
+            box.Focused:Connect(function() stroke.Color = Theme.Accent end)
+
+            table.insert(tab.searchIndex, rowTitle)
+            CONTROLS.register("input", rowTitle, tab, {
+                get = function() return box.Text end,
+                commit = function(text)
+                    if text ~= nil then box.Text = tostring(text) end
+                    commit()
+                end,
+            })
+            return box
+        end
+
+        function panelApi:AddKeybind(rowTitle, value, callback)
+            local row = addRow(30, rowTitle)
+            Text({
+                Font = FONT.UI, Position = UDim2.new(0, 2, 0, 0), Size = UDim2.new(1, -100, 1, 0),
+                Text = rowTitle, TextColor3 = Theme.TextSecondary, TextSize = 10,
+                TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 8,
+            }, row)
+            local button = new("TextButton", {
+                AutoButtonColor = false, BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
+                Font = FONT.Mono, Position = UDim2.new(1, -84, 0.5, -10), Size = UDim2.new(0, 82, 0, 20),
+                Text = tostring(value or "None"), TextColor3 = Theme.TextSecondary, TextSize = 9, ZIndex = 9,
+            }, row)
+            corner(button, RADIUS.chip)
+            hairline(button, Theme.StrokeSoft, 1, 0.35)
+            local capturing = false
+            local function accept(name)
+                capturing = false
+                button.Text = tostring(name)
+                button.TextColor3 = Theme.TextSecondary
+                CONTROLS.spawn("keybind · " .. rowTitle, callback, name)
+            end
+            button.MouseButton1Click:Connect(function()
+                capturing = true
+                button.Text = "press a key…"
+                button.TextColor3 = Theme.Accent
+            end)
+            if UserInput then
+                UserInput.InputBegan:Connect(function(input, gameProcessed)
+                    if gameProcessed then return end
+                    if capturing and input.UserInputType == Enum.UserInputType.Keyboard then
+                        accept(input.KeyCode.Name)
+                    end
+                end)
+            end
+            table.insert(tab.searchIndex, rowTitle)
+            CONTROLS.register("keybind", rowTitle, tab, {
+                get = function() return button.Text end,
+                commit = function(name) accept(name) end,
+            })
+            return button
+        end
+
+        function panelApi:AddStatus(height, provider, key)
+            local block = new("Frame", {
+                BackgroundColor3 = Theme.BgInset, BackgroundTransparency = 0.1, BorderSizePixel = 0,
+                LayoutOrder = nextRow(), Size = UDim2.new(1, 0, 0, height or 110), ZIndex = 7,
+            }, panel)
+            corner(block, RADIUS.chip)
+            hairline(block, Theme.StrokeSoft, 1, 0.4)
+            local body = Text({
+                Font = FONT.Mono, Position = UDim2.new(0, 8, 0, 6), Size = UDim2.new(1, -16, 1, -12),
+                Text = "", TextColor3 = Theme.TextSecondary, TextSize = 9,
+                TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+                TextWrapped = true, ZIndex = 8,
+            }, block)
+            task.spawn(function()
+                while block.Parent do
+                    CONTROLS.tick("status · " .. tostring(title), function()
+                        local ok, lines = pcall(provider)
+                        if ok then
+                            if type(lines) == "table" then
+                                local out = {}
+                                for _, line in ipairs(lines) do
+                                    if type(line) == "table" then
+                                        out[#out + 1] = string.format("%-9s %s", tostring(line.label or ""), tostring(line.value or ""))
+                                    else
+                                        out[#out + 1] = tostring(line)
+                                    end
+                                end
+                                body.Text = table.concat(out, "\n")
+                            else
+                                body.Text = tostring(lines)
+                            end
+                        end
+                    end)
+                    task.wait(0.5)
+                end
+            end)
+            table.insert(panelApi.index, { frame = block, text = string.lower(tostring(key or title)) })
+            table.insert(tab.searchIndex, tostring(title))
+            return body
+        end
+
         table.insert(tab.searchIndex, title)
-        CONTROLS.register("dropdown", title, tab, {
-            set = api.Set, get = api.Get, options = options,
-        })
-        return api
+        table.insert(tab.panels, { frame = panel, title = string.lower(title), index = panelApi.index })
+        return panelApi
     end
 
-    -- a real theme picker: six swatches, each painted in its own palette, so
-    -- the choice is made by looking at the menu, not by reading a label
-    function tab:AddThemePicker(title, desc, entries, currentKey, callback)
-        local card = new("Frame", {
-            BackgroundColor3 = Theme.BgElevated, BorderSizePixel = 0,
-            LayoutOrder = nextOrder(), Size = UDim2.new(1, 0, 0, 108),
-        }, page)
-        corner(card, RADIUS.card)
-        hairline(card, Theme.StrokeSoft, 1, 0.45)
-        Text({
-            Font = FONT.Bold, Position = UDim2.new(0, 16, 0, 12), Size = UDim2.new(1, -32, 0, 16),
-            Text = title, TextColor3 = Theme.TextPrimary, TextSize = 12,
-            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
-        }, card)
-        Text({
-            Position = UDim2.new(0, 16, 0, 29), Size = UDim2.new(1, -32, 0, 14),
-            Text = desc or "", TextColor3 = Theme.TextMuted, TextSize = 10,
-            TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 6,
-        }, card)
-
+    -- ── theme swatches: six chips painted in their own palette ───────────────
+    function tab:AddSwatches(rowTitle, entries, currentKey, callback)
+        local panel = tab:AddPanel(rowTitle, tab.column)
+        table.insert(panel.index, { frame = panel.frame, text = string.lower(rowTitle) })
         local holder = new("Frame", {
-            BackgroundTransparency = 1, Position = UDim2.new(0, 16, 0, 50),
-            Size = UDim2.new(1, -32, 0, 46), ZIndex = 6,
-        }, card)
-
-        local order, byLabel, swatches = {}, {}, {}
-        local selected = nil
+            BackgroundTransparency = 1, LayoutOrder = 1, Size = UDim2.new(1, 0, 0, 48), ZIndex = 8,
+        }, panel.frame)
+        local count = #entries
+        local gap = 4
+        local swatches, byLabel, order = {}, {}, {}
+        local selected = currentKey
         local function paint()
             for key, swatch in pairs(swatches) do
                 local active = key == selected
                 swatch.Stroke.Color = active and Theme.Accent or Theme.StrokeSoft
                 swatch.Stroke.Thickness = active and 2 or 1
-                swatch.Stroke.Transparency = active and 0.1 or 0.45
-                swatch.Dot.BackgroundTransparency = active and 0 or 0.35
+                swatch.Stroke.Transparency = active and 0.1 or 0.5
             end
         end
         local choose
@@ -1658,371 +1796,59 @@ local function makeTab(title, desc, iconKind, accent)
             if not swatches[key] then return false end
             selected = key
             paint()
-            if not silent and callback then CONTROLS.spawn("theme · " .. title, callback, key) end
+            if not silent and callback then CONTROLS.spawn("theme · " .. rowTitle, callback, key) end
             return true
         end
-
-        local count = #entries
-        local width = math.floor((524 - (count - 1) * 6) / count)
         for index, entry in ipairs(entries) do
             local button = new("TextButton", {
                 AutoButtonColor = false, BackgroundColor3 = entry.bg, BorderSizePixel = 0,
-                Position = UDim2.new(0, (index - 1) * (width + 6), 0, 0),
-                Size = UDim2.new(0, width, 0, 46), Text = "", ZIndex = 7,
+                Position = UDim2.new((index - 1) / count, (index - 1) * gap, 0, 0),
+                Size = UDim2.new(1 / count, -gap * (count - 1) / count, 0, 44),
+                Text = "", ZIndex = 9,
             }, holder)
             corner(button, math.min(RADIUS.chip, 8))
             local stroke = new("UIStroke", {
-                Color = Theme.StrokeSoft, Thickness = 1, Transparency = 0.45,
+                Color = Theme.StrokeSoft, Thickness = 1, Transparency = 0.5,
                 ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
             }, button)
             Text({
-                Position = UDim2.new(0, 7, 0, 6), Size = UDim2.new(1, -14, 0, 12),
-                Text = entry.short or entry.key, TextColor3 = entry.text, TextSize = 9,
-                TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 8,
+                Font = FONT.Mono, Position = UDim2.new(0, 5, 0, 5), Size = UDim2.new(1, -10, 0, 12),
+                Text = entry.key, TextColor3 = entry.text, TextSize = 8,
+                TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 10,
             }, button)
-            local dotChoices = { entry.accent, entry.accent2, entry.accent3 }
+            local dots = { entry.accent, entry.accent2, entry.accent3 }
             for dotIndex = 1, 3 do
                 local dot = new("Frame", {
-                    BackgroundColor3 = dotChoices[dotIndex] or entry.accent,
-                    BorderSizePixel = 0, Position = UDim2.new(0, 7 + (dotIndex - 1) * 10, 0, 27),
-                    Size = UDim2.new(0, 7, 0, 7), ZIndex = 8,
+                    BackgroundColor3 = dots[dotIndex] or entry.accent, BorderSizePixel = 0,
+                    Position = UDim2.new(0, 5 + (dotIndex - 1) * 9, 0, 27),
+                    Size = UDim2.new(0, 6, 0, 6), ZIndex = 10,
                 }, button)
                 corner(dot, RADIUS.pill)
-                if dotIndex == 1 then button.Dot = dot end
             end
-            button.MouseEnter:Connect(function() stroke.Transparency = 0.1 end)
+            button.MouseEnter:Connect(function() stroke.Transparency = 0.15 end)
             button.MouseLeave:Connect(function()
-                if selected ~= entry.key then stroke.Transparency = 0.45 end
+                if selected ~= entry.key then stroke.Transparency = 0.5 end
             end)
             button.MouseButton1Click:Connect(function() choose(entry.key, false) end)
-            swatches[entry.key] = { Frame = button, Stroke = stroke, Dot = button.Dot }
+            swatches[entry.key] = { Frame = button, Stroke = stroke }
             order[index] = entry.key
             byLabel[entry.label or entry.key] = entry.key
             byLabel[entry.key] = entry.key
         end
-        selected = currentKey
         paint()
-
-        CONTROLS.register("theme", title, tab, {
+        CONTROLS.register("theme", rowTitle, tab, {
             set = function(value) choose(byLabel[value] or value, false) end,
             get = function() return selected end,
             options = order,
         })
-        table.insert(tab.searchIndex, title)
-        return {
-            Set = function(value) choose(byLabel[value] or value, true) end,
-            Get = function() return selected end,
-        }
-    end
-
-    function tab:AddInput(title, desc, placeholder, callback, iconKind)
-        local card = new("Frame", {
-            BackgroundColor3 = Theme.BgElevated, BorderSizePixel = 0,
-            LayoutOrder = nextOrder(), Size = UDim2.new(1, 0, 0, 58),
-        }, page)
-        corner(card, RADIUS.card)
-        hairline(card, Theme.StrokeSoft, 1, 0.45)
-        iconTile(card, iconKind or tab.icon, tab.color, 30, UDim2.new(0, 14, 0.5, -15), 6)
-        Text({
-            Font = FONT.Bold, Position = UDim2.new(0, 56, 0, 11), Size = UDim2.new(1, -170, 0, 16),
-            Text = title, TextColor3 = Theme.TextPrimary, TextSize = 12,
-            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
-        }, card)
-        Text({
-            Position = UDim2.new(0, 56, 0, 29), Size = UDim2.new(1, -170, 0, 16),
-            Text = desc or "", TextColor3 = Theme.TextMuted, TextSize = 10,
-            TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 6,
-        }, card)
-
-        local shell = new("Frame", {
-            BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
-            Position = UDim2.new(1, -152, 0.5, -12), Size = UDim2.new(0, 138, 0, 24), ZIndex = 7,
-        }, card)
-        corner(shell, RADIUS.chip)
-        local stroke = hairline(shell, Theme.StrokeSoft, 1, 0.4)
-        local box = new("TextBox", {
-            BackgroundTransparency = 1, ClearTextOnFocus = false, Font = FONT.UI,
-            PlaceholderText = placeholder or "…", PlaceholderColor3 = Theme.TextFaint,
-            Position = UDim2.new(0, 10, 0, 0), Size = UDim2.new(1, -18, 1, 0),
-            Text = "", TextColor3 = Theme.TextPrimary, TextSize = 10,
-            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 8,
-        }, shell)
-        local function commit()
-            if box.Text and #box.Text > 0 then
-                CONTROLS.spawn("input · " .. title, callback, box.Text)
-            end
-        end
-        box.FocusLost:Connect(function()
-            stroke.Color = Theme.StrokeSoft
-            commit()
-        end)
-        box.Focused:Connect(function() stroke.Color = tab.color end)
-        table.insert(tab.searchIndex, title)
-        CONTROLS.register("input", title, tab, {
-            get = function() return box.Text end,
-            commit = function(text)
-                if text ~= nil then box.Text = tostring(text) end
-                commit()
-            end,
-        })
-        return box
-    end
-
-    function tab:AddKeybind(title, desc, default, callback, iconKind)
-        local card = new("Frame", {
-            BackgroundColor3 = Theme.BgElevated, BorderSizePixel = 0,
-            LayoutOrder = nextOrder(), Size = UDim2.new(1, 0, 0, 58),
-        }, page)
-        corner(card, RADIUS.card)
-        hairline(card, Theme.StrokeSoft, 1, 0.45)
-        iconTile(card, iconKind or tab.icon, tab.color, 30, UDim2.new(0, 14, 0.5, -15), 6)
-        Text({
-            Font = FONT.Bold, Position = UDim2.new(0, 56, 0, 11), Size = UDim2.new(1, -170, 0, 16),
-            Text = title, TextColor3 = Theme.TextPrimary, TextSize = 12,
-            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
-        }, card)
-        Text({
-            Position = UDim2.new(0, 56, 0, 29), Size = UDim2.new(1, -170, 0, 16),
-            Text = desc or "", TextColor3 = Theme.TextMuted, TextSize = 10,
-            TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 6,
-        }, card)
-        local button = new("TextButton", {
-            AutoButtonColor = false, BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
-            Font = FONT.Mono, Position = UDim2.new(1, -110, 0.5, -12), Size = UDim2.new(0, 96, 0, 24),
-            Text = default or "None", TextColor3 = Theme.TextSecondary, TextSize = 10, ZIndex = 7,
-        }, card)
-        corner(button, RADIUS.chip)
-        hairline(button, Theme.StrokeSoft, 1, 0.4)
-        local capturing = false
-        button.MouseButton1Click:Connect(function()
-            capturing = true
-            button.Text = "press a key…"
-            button.TextColor3 = tab.color
-        end)
-        local function accept(name)
-            capturing = false
-            button.Text = tostring(name)
-            button.TextColor3 = Theme.TextSecondary
-            CONTROLS.spawn("keybind · " .. title, callback, name)
-        end
-        if UserInput then
-            UserInput.InputBegan:Connect(function(input, gameProcessed)
-                -- while a rebind is armed the player is still allowed to type in
-                -- chat; a keystroke the game already consumed must not bind
-                if gameProcessed then return end
-                if capturing and input.UserInputType == Enum.UserInputType.Keyboard then
-                    accept(input.KeyCode.Name)
-                end
-            end)
-        end
-        table.insert(tab.searchIndex, title)
-        CONTROLS.register("keybind", title, tab, {
-            get = function() return button.Text end,
-            commit = function(name) accept(name) end,
-        })
-        return button
-    end
-
-    function tab:AddLabel(text, iconKind)
-        local card = new("Frame", {
-            BackgroundColor3 = Theme.BgElevated, BackgroundTransparency = 0.35, BorderSizePixel = 0,
-            LayoutOrder = nextOrder(), Size = UDim2.new(1, 0, 0, 40),
-        }, page)
-        corner(card, RADIUS.card)
-        hairline(card, Theme.StrokeSoft, 1, 0.5)
-        iconTile(card, iconKind or "crest", tab.color, 22, UDim2.new(0, 12, 0.5, -11), 6)
-        local label = Text({
-            Position = UDim2.new(0, 44, 0, 0), Size = UDim2.new(1, -54, 1, 0),
-            Text = text, TextColor3 = Theme.TextSecondary, TextSize = 10,
-            TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true, ZIndex = 6,
-        }, card)
-        table.insert(tab.searchIndex, text)
-        return label
-    end
-
-    function tab:AddStatusPanel(title, provider, height)
-        local card = new("Frame", {
-            BackgroundColor3 = Theme.BgElevated, BorderSizePixel = 0,
-            LayoutOrder = nextOrder(), Size = UDim2.new(1, 0, 0, height or 108),
-        }, page)
-        corner(card, RADIUS.card)
-        hairline(card, Theme.StrokeSoft, 1, 0.45)
-        iconTile(card, ICON.Guard, tab.color, 26, UDim2.new(0, 14, 0, 12), 6)
-        Text({
-            Font = FONT.Bold, Position = UDim2.new(0, 50, 0, 13), Size = UDim2.new(1, -140, 0, 16),
-            Text = title, TextColor3 = Theme.TextPrimary, TextSize = 12,
-            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
-        }, card)
-        local dot = new("Frame", {
-            BackgroundColor3 = Theme.Success, BorderSizePixel = 0,
-            Position = UDim2.new(1, -74, 0, 18), Size = UDim2.new(0, 6, 0, 6), ZIndex = 6,
-        }, card)
-        corner(dot, RADIUS.pill)
-        Text({
-            Font = FONT.Mono, Position = UDim2.new(1, -64, 0, 13), Size = UDim2.new(0, 56, 0, 16),
-            Text = "LIVE", TextColor3 = Theme.Success, TextSize = 9,
-            TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 6,
-        }, card)
-
-        local box = new("Frame", {
-            BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
-            Position = UDim2.new(0, 14, 0, 38), Size = UDim2.new(1, -28, 1, -52), ZIndex = 6,
-        }, card)
-        corner(box, RADIUS.control)
-        local body = Text({
-            Font = FONT.Mono, Position = UDim2.new(0, 10, 0, 8), Size = UDim2.new(1, -20, 1, -16),
-            Text = "", TextColor3 = Theme.TextSecondary, TextSize = 10,
-            TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-            TextWrapped = true, ZIndex = 7,
-        }, box)
-
-        task.spawn(function()
-            local pulse = true
-            while card.Parent do
-                CONTROLS.tick("status · " .. title, function()
-                    local ok, lines = pcall(provider)
-                    if ok then
-                        if type(lines) == "table" then
-                            -- accept both a plain list of strings and {label, value} rows
-                            local out = {}
-                            for _, line in ipairs(lines) do
-                                if type(line) == "table" then
-                                    out[#out + 1] = string.format("%-14s %s", tostring(line.label or ""), tostring(line.value or ""))
-                                else
-                                    out[#out + 1] = tostring(line)
-                                end
-                            end
-                            body.Text = table.concat(out, "\n")
-                        else
-                            body.Text = tostring(lines)
-                        end
-                    end
-                    pulse = not pulse
-                    dot.BackgroundColor3 = pulse and Theme.Success or tint(Theme.Success, 0.4)
-                end)
-                task.wait(0.5)
-            end
-        end)
-        table.insert(tab.searchIndex, title)
-        return body
-    end
-
-    function tab:AddPlayerList(title, provider, actions)
-        local card = new("Frame", {
-            BackgroundColor3 = Theme.BgElevated, BorderSizePixel = 0,
-            LayoutOrder = nextOrder(), Size = UDim2.new(1, 0, 0, 130),
-        }, page)
-        corner(card, RADIUS.card)
-        hairline(card, Theme.StrokeSoft, 1, 0.45)
-        iconTile(card, ICON.Player, tab.color, 26, UDim2.new(0, 14, 0, 12), 6)
-        Text({
-            Font = FONT.Bold, Position = UDim2.new(0, 50, 0, 13), Size = UDim2.new(1, -140, 0, 16),
-            Text = title, TextColor3 = Theme.TextPrimary, TextSize = 12,
-            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
-        }, card)
-        local count = Text({
-            Font = FONT.Mono, Position = UDim2.new(1, -140, 0, 13), Size = UDim2.new(0, 126, 0, 16),
-            Text = "", TextColor3 = Theme.TextFaint, TextSize = 9,
-            TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 6,
-        }, card)
-
-        local list = new("ScrollingFrame", {
-            BackgroundColor3 = Theme.BgInset, BackgroundTransparency = 0.4, BorderSizePixel = 0,
-            Position = UDim2.new(0, 14, 0, 38), Size = UDim2.new(1, -28, 1, -52),
-            ScrollBarThickness = 2, ScrollBarImageColor3 = Theme.Stroke, CanvasSize = UDim2.new(0, 0, 0, 0),
-            AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 6,
-        }, card)
-        corner(list, RADIUS.control)
-        new("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, list)
-        new("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingTop = UDim.new(0, 6) }, list)
-
-        local rows = {}
-        task.spawn(function()
-            while card.Parent do
-                CONTROLS.tick("players · " .. title, function()
-                    local ok, data = pcall(provider)
-                    if ok and type(data) == "table" then
-                        count.Text = tostring(#data) .. " in server"
-                        for index, entry in ipairs(data) do
-                            local row = rows[index]
-                            if not row then
-                                row = new("Frame", {
-                                    BackgroundColor3 = Theme.BgRaised, BackgroundTransparency = 0.4,
-                                    BorderSizePixel = 0, LayoutOrder = index, Size = UDim2.new(1, 0, 0, 30), ZIndex = 7,
-                                }, list)
-                                corner(row, RADIUS.chip)
-                                row.Avatar = new("ImageLabel", {
-                                    BackgroundColor3 = Theme.BgInset, BorderSizePixel = 0,
-                                    Position = UDim2.new(0, 5, 0.5, -10), Size = UDim2.new(0, 20, 0, 20), ZIndex = 8,
-                                }, row)
-                                corner(row.Avatar, RADIUS.pill)
-                                row.Lamp = new("Frame", {
-                                    BackgroundColor3 = Theme.TextFaint, BorderSizePixel = 0,
-                                    Position = UDim2.new(0, 29, 0.5, -3), Size = UDim2.new(0, 6, 0, 6), ZIndex = 8,
-                                }, row)
-                                corner(row.Lamp, RADIUS.pill)
-                                row.Name = Text({
-                                    Font = FONT.Bold, Position = UDim2.new(0, 40, 0, 3), Size = UDim2.new(1, -180, 0, 13),
-                                    Text = "", TextColor3 = Theme.TextPrimary, TextSize = 10,
-                                    TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 8,
-                                }, row)
-                                row.Info = Text({
-                                    Font = FONT.Mono, Position = UDim2.new(0, 40, 0, 15), Size = UDim2.new(1, -180, 0, 12),
-                                    Text = "", TextColor3 = Theme.TextFaint, TextSize = 9,
-                                    TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 8,
-                                }, row)
-                                row.Buttons = {}
-                                for buttonIndex, action in ipairs(actions or {}) do
-                                    local actionButton = new("TextButton", {
-                                        AutoButtonColor = false, BackgroundColor3 = tint(tab.color, 0.88),
-                                        BorderSizePixel = 0, Font = FONT.Bold,
-                                        Position = UDim2.new(1, -132 + (buttonIndex - 1) * 30, 0.5, -9),
-                                        Size = UDim2.new(0, 26, 0, 18), Text = action.label,
-                                        TextColor3 = tab.color, TextSize = 9, ZIndex = 9,
-                                    }, row)
-                                    corner(actionButton, RADIUS.chip)
-                                    actionButton.MouseButton1Click:Connect(function() action.callback(entry.player) end)
-                                    table.insert(row.Buttons, actionButton)
-                                end
-                                rows[index] = row
-                            end
-                            row.Visible = true
-                            row.Name.Text = entry.name
-                            row.Info.Text = entry.info or ""
-                            row.Lamp.BackgroundColor3 = entry.color or Theme.TextFaint
-                            row.Avatar.Image = entry.avatar or ""
-                            row.LayoutOrder = index
-                            for _, actionButton in ipairs(row.Buttons) do
-                                local target = entry.player
-                                actionButton.Visible = target ~= nil
-                            end
-                        end
-                        for index = #data + 1, #rows do rows[index].Visible = false end
-                end
-                end)
-                task.wait(1)
-            end
-        end)
-        table.insert(tab.searchIndex, title)
-        return list
+        table.insert(tab.searchIndex, rowTitle)
+        return { Set = function(value) choose(byLabel[value] or value, true) end, Get = function() return selected end }
     end
 
     Tabs[#Tabs + 1] = tab
     return tab
 end
 
--- ═══════════════════════════════════════════════════════════════════════════
--- (engine, features and tab definitions continue below)
--- ═══════════════════════════════════════════════════════════════════════════
-
-
-
--- ═══════════════════════════════════════════════════════════════════════════
--- SHARED NAMESPACE — the tab layer runs in its own closure (Lua allows 200
--- locals per scope and this file uses nearly all of them), so the symbols it
--- needs are published here. Passing 90 arguments would break the register
--- limit instead; one table is free.
--- ═══════════════════════════════════════════════════════════════════════════
 local NS = {}
 do
     NS.AUTHOR = META.author
@@ -2064,7 +1890,7 @@ function NS.resetInterface()
     for index = #ToggleRegistry, 1, -1 do ToggleRegistry[index] = nil end
     for index = #ControlRegistry, 1, -1 do ControlRegistry[index] = nil end
     CONTROLS.open = nil
-    Window, Body, Rail, PageHolder, Toast, ActiveTab = nil, nil, nil, nil, nil, nil
+    Window, Body, PageHolder, Toast, ActiveTab = nil, nil, nil, nil, nil
     TOAST.holder = nil
     return true
 end
@@ -2993,7 +2819,8 @@ do
                 copy[key] = value
             end
         end
-        copy.__savedAt = clockString()
+        -- Metadata only; never a clock value, or the autosave comparison would
+        -- think the file changed on every tick and rewrite it after boot.
         copy.__build = META.version
         return copy
     end
@@ -3200,11 +3027,14 @@ end
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 15 · INTERFACE — two tabs: Auto Farm and Settings
+--      The layout follows the reference: group panels with a header, checkbox
+--      rows with the state on the right, sliders with a live readout, and a
+--      bottom bar with an icon over each tab label.
 -- ═══════════════════════════════════════════════════════════════════════════
 local FEATURE_KEYS = {
     "AutoFarm", "AutoQuest", "AutoAttack", "KillAura", "BringMobs", "MobHitbox",
     "AutoSkill", "AutoChest", "AutoFruit", "AutoDrops",
-    "WalkSpeedEnabled", "JumpPowerEnabled",
+    "WalkSpeedEnabled", "JumpPowerEnabled", "MouseClicks",
 }
 
 local function featuresOn()
@@ -3221,8 +3051,6 @@ local buildTabs
 local function rebuildInterface(reason)
     if rebuilding then return end
     rebuilding = true
-    -- called from inside a control's own callback: let it return first, then
-    -- replace the window it lives in
     task.delay(0.05, function()
         protectLoop("rebuild", function()
             NS.resetInterface()
@@ -3238,25 +3066,26 @@ local function rebuildInterface(reason)
     end)
 end
 
+local function fmtRate(count, minutes)
+    if minutes < 0.05 then return "—" end
+    return string.format("%.1f/min", count / minutes)
+end
+
 local function farmStatus()
     local target = State.target
     local origin = myPosition()
     local distance = target and origin and math.floor(flatDistance(origin, target.position)) or 0
     local runtime = math.max(os.clock() - (State.startedAt or os.clock()), 0)
     local minutes = runtime / 60
-    local function rate(count)
-        if minutes < 0.05 then return "—" end
-        return string.format("%.1f/min", count / minutes)
-    end
     local function clock(seconds)
         return string.format("%02d:%02d", math.floor(seconds / 60), math.floor(seconds % 60))
     end
     return {
         { label = "state",  value = tostring(State.status) },
         { label = "target", value = target and (target.name .. " · " .. distance .. " studs") or "none" },
-        { label = "session", value = clock(runtime) .. " · " .. tostring(State.kills) .. " kills · " .. rate(State.kills) },
+        { label = "session", value = clock(runtime) .. " · " .. tostring(State.kills) .. " kills · " .. fmtRate(State.kills, minutes) },
         { label = "loot",   value = string.format("chest %d · fruit %d · drop %d", State.chests, State.fruits, State.drops) },
-        { label = "rates",  value = string.format("attacks %s · loot %s", rate(State.hits), rate(State.chests + State.fruits + State.drops)) },
+        { label = "rates",  value = string.format("hits %s · loot %s", fmtRate(State.hits, minutes), fmtRate(State.chests + State.fruits + State.drops, minutes)) },
         { label = "travel", value = string.format("%d steps · %d studs", State.steps, math.floor(State.studs)) },
         { label = "mobs",   value = tostring(#World.mobs) .. " in " .. tostring(Config.ScanRange) .. " studs" },
     }
@@ -3264,98 +3093,114 @@ end
 
 local function configStatus()
     return {
-        { label = "file",      value = tostring(Config.ConfigPath) },
-        { label = "profile",   value = "slot " .. tostring(Config.ProfileSlot) },
-        { label = "saved",     value = tostring(State.savedAt or "never") },
-        { label = "autosave",  value = Config.Autosave and "on · every 2 s" or "off" },
-        { label = "autoload",  value = Config.Autoload and "on · interface keys only" or "off · nothing starts" },
-        { label = "storage",   value = Store.hasFileApi() and "writefile / readfile" or "clipboard only" },
-        { label = "window",    value = string.format("%d, %d px", tonumber(Config.UiX) or 0, tonumber(Config.UiY) or 0) },
-        { label = "features",  value = tostring(featuresOn()) .. " on" },
+        { label = "file",     value = tostring(Config.ConfigPath) },
+        { label = "profile",  value = "slot " .. tostring(Config.ProfileSlot) },
+        { label = "saved",    value = tostring(State.savedAt or "never") },
+        { label = "autosave", value = Config.Autosave and "on · 2 s" or "off" },
+        { label = "autoload", value = Config.Autoload and "on · interface only" or "off" },
+        { label = "storage",  value = Store.hasFileApi() and "writefile / readfile" or "clipboard only" },
+        { label = "window",   value = string.format("%d, %d px", tonumber(Config.UiX) or 0, tonumber(Config.UiY) or 0) },
+        { label = "features", value = tostring(featuresOn()) .. " on" },
     }
 end
 
 function buildTabs()
-    local function toggle(tab, title, desc, key, icon)
-        return tab:AddToggle(title, desc, Config[key] == true, function(state)
-            Config[key] = state and true or false
-            if key == "MobHitbox" and not state then Farm.restoreHitbox() end
-        end, icon)
-    end
-    local function slider(tab, title, desc, low, high, key, suffix, icon, onChange)
-        return tab:AddSlider(title, desc, low, high, Config[key], suffix, function(value)
-            Config[key] = value
-            if onChange then onChange(value) end
-        end, icon)
-    end
-    local function dropdown(tab, title, desc, options, key, icon, onChange)
-        return tab:AddDropdown(title, desc, options, Config[key], function(value)
-            Config[key] = value
-            if onChange then onChange(value) end
-        end, icon)
-    end
-    local function button(tab, title, desc, callback, icon, danger)
-        return tab:AddButton(title, desc, callback, icon, danger)
-    end
-    local function keybind(tab, title, desc, key, icon)
-        return tab:AddKeybind(title, desc, tostring(Config[key]), function(value)
-            Config[key] = tostring(value)
-        end, icon)
-    end
-
     -- ── Auto Farm ──────────────────────────────────────────────────────────
     local farm = makeTab("Auto Farm", "target, travel, fast attack, loot", "swords", Theme.Clay)
-    farm:AddSection("The farm")
-    toggle(farm, "Auto farm", "pick a target, travel to it, attack until it dies", "AutoFarm", "swords")
-    dropdown(farm, "Farm mode", "which mob the picker prefers", { "Nearest mob", "Quest area", "Boss" }, "FarmMode", "mob")
-    toggle(farm, "Auto attack", "fast attack on the current target", "AutoAttack", "spark")
-    toggle(farm, "Mouse clicks", "adds a click; the tool is activated either way", "MouseClicks", "spark")
-    slider(farm, "Attack rate", "seconds between attacks", 0.08, 0.6, "AttackRate", " s", "speed")
-    slider(farm, "Attack range", "reach before the farm travels again", 6, 40, "AttackRange", " studs", "scale")
 
-    farm:AddSection("Targeting")
-    toggle(farm, "Kill aura", "attack every mob around you, not just the target", "KillAura", "aura")
-    slider(farm, "Aura radius", "studs around the character", 6, 40, "AuraRadius", " studs", "aura")
-    toggle(farm, "Bring mobs", "pull nearby mobs to your feet", "BringMobs", "magnet")
-    slider(farm, "Bring radius", "how far the pull reaches", 20, 150, "BringRadius", " studs", "magnet")
-    toggle(farm, "Mob hitbox", "scale mob hitboxes so melee connects", "MobHitbox", "hitbox")
-    slider(farm, "Hitbox size", "multiplier on the mob's own parts", 1, 4, "HitboxSize", "×", "hitbox")
-    toggle(farm, "Auto skill", "press Z · X · C · V on a cadence", "AutoSkill", "bolt")
-    slider(farm, "Skill interval", "seconds between skills", 0.3, 3, "SkillInterval", " s", "loop")
+    farm:UseColumn(1)
+    local core = farm:AddPanel("Farm", 1)
+    core:AddCheckbox("Auto farm", "pick a target, travel to it, attack until it dies", Config.AutoFarm == true, function(state)
+        Config.AutoFarm = state and true or false
+    end)
+    core:AddDropdown("Farm mode", { "Nearest mob", "Quest area", "Boss" }, Config.FarmMode, function(value)
+        Config.FarmMode = value
+    end)
+    core:AddCheckbox("Auto attack", "fast attack on the current target", Config.AutoAttack == true, function(state)
+        Config.AutoAttack = state and true or false
+    end)
+    core:AddCheckbox("Mouse clicks", "adds a click; the tool is activated either way", Config.MouseClicks == true, function(state)
+        Config.MouseClicks = state and true or false
+    end)
+    core:AddSlider("Attack rate", 0.08, 0.6, Config.AttackRate, " s", function(value)
+        Config.AttackRate = value
+    end)
+    core:AddSlider("Attack range", 6, 40, Config.AttackRange, " st", function(value)
+        Config.AttackRange = math.floor(value + 0.5)
+    end, function(value) return tostring(math.floor(value + 0.5)) .. " studs" end)
 
-    farm:AddSection("Loot")
-    toggle(farm, "Auto chest", "open chests with their own proximity prompt", "AutoChest", "chest")
-    toggle(farm, "Auto fruit", "walk onto a fruit that spawned nearby", "AutoFruit", "fruit")
-    toggle(farm, "Auto drops", "collect money and drop parts", "AutoDrops", "coin")
-    slider(farm, "Scan range", "how far the scanner looks for loot", 40, 600, "ScanRange", " studs", "eye")
-    toggle(farm, "Auto quest", "talk to the quest NPC when it is close", "AutoQuest", "scroll")
+    local targeting = farm:AddPanel("Targeting", 1)
+    targeting:AddCheckbox("Kill aura", "attack every mob around you, not just the target", Config.KillAura == true, function(state)
+        Config.KillAura = state and true or false
+    end)
+    targeting:AddSlider("Aura radius", 6, 40, Config.AuraRadius, " st", function(value)
+        Config.AuraRadius = math.floor(value + 0.5)
+    end, function(value) return tostring(math.floor(value + 0.5)) .. " studs" end)
+    targeting:AddCheckbox("Bring mobs", "pull nearby mobs to your feet", Config.BringMobs == true, function(state)
+        Config.BringMobs = state and true or false
+    end)
+    targeting:AddSlider("Bring radius", 20, 150, Config.BringRadius, " st", function(value)
+        Config.BringRadius = math.floor(value + 0.5)
+    end, function(value) return tostring(math.floor(value + 0.5)) .. " studs" end)
+    targeting:AddCheckbox("Mob hitbox", "scale mob hitboxes so melee connects", Config.MobHitbox == true, function(state)
+        Config.MobHitbox = state and true or false
+        if not state then Farm.restoreHitbox() end
+    end)
+    targeting:AddSlider("Hitbox size", 1, 4, Config.HitboxSize, "×", function(value)
+        Config.HitboxSize = round(value, 2)
+    end)
+    targeting:AddCheckbox("Auto skill", "press Z · X · C · V on a cadence", Config.AutoSkill == true, function(state)
+        Config.AutoSkill = state and true or false
+    end)
+    targeting:AddSlider("Skill interval", 0.3, 3, Config.SkillInterval, " s", function(value)
+        Config.SkillInterval = round(value, 2)
+    end)
 
-    farm:AddSection("Travel")
-    toggle(farm, "Paced travel", "move in steps instead of one teleport", "TweenTravel", "arrow")
-    slider(farm, "Travel speed", "studs per second outside safe mode", 20, 300, "TravelSpeed", " studs/s", "speed")
-    slider(farm, "Travel step", "hard cap on one step", 2, 40, "TravelStep", " studs", "scale")
-    slider(farm, "Travel delay", "seconds between steps", 0.02, 0.4, "TravelDelay", " s", "loop")
+    farm:UseColumn(2)
+    local loot = farm:AddPanel("Loot", 2)
+    loot:AddCheckbox("Auto chest", "open chests with their own proximity prompt", Config.AutoChest == true, function(state)
+        Config.AutoChest = state and true or false
+    end)
+    loot:AddCheckbox("Auto fruit", "walk onto a fruit that spawned nearby", Config.AutoFruit == true, function(state)
+        Config.AutoFruit = state and true or false
+    end)
+    loot:AddCheckbox("Auto drops", "collect money and drop parts", Config.AutoDrops == true, function(state)
+        Config.AutoDrops = state and true or false
+    end)
+    loot:AddCheckbox("Auto quest", "talk to the quest NPC when it is close", Config.AutoQuest == true, function(state)
+        Config.AutoQuest = state and true or false
+    end)
+    loot:AddSlider("Scan range", 40, 600, Config.ScanRange, " st", function(value)
+        Config.ScanRange = math.floor(value + 0.5)
+    end, function(value) return tostring(math.floor(value + 0.5)) .. " studs" end)
 
-    farm:AddSection("Live")
-    farm:AddStatusPanel("Farm status", farmStatus, 150)
+    local travel = farm:AddPanel("Travel", 2)
+    travel:AddCheckbox("Instant travel", "skip the step pacing (riskier)", Config.TweenTravel == false, function(state)
+        Config.TweenTravel = not state
+    end)
+    travel:AddSlider("Travel speed", 20, 300, Config.TravelSpeed, " st/s", function(value)
+        Config.TravelSpeed = math.floor(value + 0.5)
+    end, function(value) return tostring(math.floor(value + 0.5)) .. " st/s" end)
+    travel:AddSlider("Travel step", 2, 40, Config.TravelStep, " st", function(value)
+        Config.TravelStep = math.floor(value + 0.5)
+    end, function(value) return tostring(math.floor(value + 0.5)) .. " studs" end)
+    travel:AddSlider("Travel delay", 0.02, 0.4, Config.TravelDelay, " s", function(value)
+        Config.TravelDelay = round(value, 2)
+    end)
+
+    local live = farm:AddPanel("Live", 2)
+    live:AddStatus(120, farmStatus)
 
     -- ── Settings ───────────────────────────────────────────────────────────
-    local THEME_TITLES = {
-        "Porcelain — graphite", "Midnight — deep navy", "Obsidian — sharp amber",
-        "Ivory — paper light", "Sakura — warm rose", "Forest — moss dark",
-    }
-    local THEME_BY_TITLE = {}
-    for index, key in ipairs(THEME_ORDER) do THEME_BY_TITLE[THEME_TITLES[index]] = key end
     local settings = makeTab("Settings", "theme, config, keys, safety", "gear", Theme.Steel)
-    settings:AddSection("Appearance")
+
+    settings:UseColumn(1)
     local palettes = NS.palettes or {}
     local themeEntries = {}
     for index, key in ipairs(THEME_ORDER) do
         local palette = palettes[key] or {}
         themeEntries[index] = {
             key = key,
-            label = THEME_TITLES[index],
-            short = key,
             bg = palette.BgSurface,
             text = palette.TextPrimary,
             accent = palette.Accent,
@@ -3363,13 +3208,15 @@ function buildTabs()
             accent3 = palette.Sky,
         }
     end
-    settings:AddThemePicker("Theme", "six complete palettes — click a swatch, the window rebuilds",
-        themeEntries, Config.Theme, function(key)
-            Config.Theme = key
-            applyTheme(key)
-            rebuildInterface("theme")
-        end)
-    slider(settings, "UI scale", "scales text, icons and hit areas", 0.75, 1.3, "UiScale", "×", "scale", function(value)
+    settings:AddSwatches("Theme", themeEntries, Config.Theme, function(key)
+        Config.Theme = key
+        applyTheme(key)
+        rebuildInterface("theme")
+    end)
+
+    local look = settings:AddPanel("Appearance", 1)
+    look:AddSlider("UI scale", 0.75, 1.3, Config.UiScale, "×", function(value)
+        Config.UiScale = round(value, 2)
         local window = getWindow()
         local screen = window and window.Screen
         if screen then
@@ -3377,63 +3224,78 @@ function buildTabs()
                 if child:IsA("UIScale") then child.Scale = value end
             end
         end
+    end, function(value) return string.format("%.2f×", value) end)
+    look:AddCheckbox("Notifications", "toasts for saves, themes and profile actions", Config.NotifyActions == true, function(state)
+        Config.NotifyActions = state and true or false
     end)
-
-    toggle(settings, "Notifications", "toasts for saves, themes and profile actions", "NotifyActions", "bell")
-    button(settings, "Reset window position", "put the window back in the centre", function()
+    look:AddButton("Reset window position", function()
         Config.UiX, Config.UiY = 0, 0
         local window = getWindow()
         if window and window.Root then
             window.Root.Position = UDim2.new(0.5, 0, 0.5, 0)
-            if window.Shadow then window.Shadow.Position = UDim2.new(0.5, 6, 0.5, 8) end
+            if window.Shadow then window.Shadow.Position = UDim2.new(0.5, 0, 0.5, 5) end
+            if window.Glow then window.Glow.Position = window.Root.Position end
         end
         notify("Window", "centred", 2, Theme.Accent, "scale")
-    end, "scale")
+    end)
 
-    settings:AddSection("Config")
-    toggle(settings, "Autosave", "write the config two seconds after it changes", "Autosave", "save")
-    toggle(settings, "Load on start", "restore interface keys only — never a switch", "Autoload", "loop")
-    button(settings, "Save config", "write every value to the config file", function()
-        Store.save(true)
-    end, "save")
-    button(settings, "Load config", "read the file (or the clipboard) and apply it", function()
-        Store.load(true)
-    end, "folder")
-    button(settings, "Reset defaults", "every switch back to OFF", function()
-        Store.reset()
-    end, "reset", true)
-    button(settings, "Copy config", "put the JSON on the clipboard", function()
-        Store.export()
-    end, "copy", false)
-    settings:AddInput("Import config", "paste JSON from another session", "{ ... }", function(text)
-        Store.import(text)
-    end, "folder")
+    local keys = settings:AddPanel("Keys", 1)
+    keys:AddKeybind("Show / hide window", Config.HideUiKey, function(value)
+        Config.HideUiKey = tostring(value)
+    end)
+    keys:AddKeybind("Panic key", Config.PanicKey, function(value)
+        Config.PanicKey = tostring(value)
+    end)
+    keys:AddButton("Panic — turn everything off", function()
+        panic()
+    end, true)
 
-    settings:AddSection("Profiles")
-    dropdown(settings, "Profile slot", "three named slots beside the main config", { "1", "2", "3" }, "ProfileSlot", "book")
-    button(settings, "Save profile", "write every value into the chosen slot", function()
-        Store.saveProfile(Config.ProfileSlot)
-    end, "save")
-    button(settings, "Load profile", "read the chosen slot back", function()
+    local safety = settings:AddPanel("Safety", 1)
+    safety:AddCheckbox("Unlock unsafe rates", "remove the attack and travel caps", Config.SafeMode == false, function(state)
+        Config.SafeMode = not state
+    end)
+    safety:AddSlider("Speed cap", 16, 120, Config.SpeedCap, " st/s", function(value)
+        Config.SpeedCap = math.floor(value + 0.5)
+    end, function(value) return tostring(math.floor(value + 0.5)) .. " st/s" end)
+    safety:AddCheckbox("Walk speed", "override the humanoid speed", Config.WalkSpeedEnabled == true, function(state)
+        Config.WalkSpeedEnabled = state and true or false
+    end)
+    safety:AddSlider("Walk speed value", 16, 200, Config.WalkSpeed, " st/s", function(value)
+        Config.WalkSpeed = math.floor(value + 0.5)
+    end, function(value) return tostring(math.floor(value + 0.5)) .. " st/s" end)
+    safety:AddCheckbox("Jump power", "override the humanoid jump", Config.JumpPowerEnabled == true, function(state)
+        Config.JumpPowerEnabled = state and true or false
+    end)
+    safety:AddSlider("Jump power value", 50, 300, Config.JumpPower, "", function(value)
+        Config.JumpPower = math.floor(value + 0.5)
+    end, function(value) return tostring(math.floor(value + 0.5)) end)
+
+    settings:UseColumn(2)
+    local config = settings:AddPanel("Config", 2)
+    config:AddCheckbox("Autosave", "write the config two seconds after it changes", Config.Autosave == true, function(state)
+        Config.Autosave = state and true or false
+    end)
+    config:AddCheckbox("Load on start", "restore interface keys only — never a switch", Config.Autoload == true, function(state)
+        Config.Autoload = state and true or false
+    end)
+    config:AddButton("Save config", function() Store.save(true) end)
+    config:AddButton("Load config", function() Store.load(true) end)
+    config:AddButton("Copy config", function() Store.export() end)
+    config:AddInput("Import config", "{ ... }", function(text) Store.import(text) end)
+    config:AddButton("Reset defaults", function() Store.reset() end, true)
+
+    local profiles = settings:AddPanel("Profiles", 2)
+    profiles:AddDropdown("Profile slot", { "1", "2", "3" }, Config.ProfileSlot, function(value)
+        Config.ProfileSlot = tostring(value)
+    end)
+    profiles:AddButton("Save profile", function() Store.saveProfile(Config.ProfileSlot) end)
+    profiles:AddButton("Load profile", function()
         Store.loadProfile(Config.ProfileSlot)
         if Store.afterChange then pcall(Store.afterChange) end
-    end, "folder")
-    settings:AddStatusPanel("Config status", configStatus, 150)
+    end)
 
-    settings:AddSection("Keys")
-    keybind(settings, "Show / hide window", "toggle the whole interface", "HideUiKey", "eye")
-    keybind(settings, "Panic key", "turn every switch off", "PanicKey", "warning")
-    button(settings, "Panic — turn everything off", "the same thing the panic key does", function()
-        panic()
-    end, "stop", true)
-
-    settings:AddSection("Safety")
-    toggle(settings, "Safe mode", "caps attack and travel rates", "SafeMode", "shield")
-    slider(settings, "Speed cap", "the fastest safe mode will move you", 16, 120, "SpeedCap", " studs/s", "speed")
-    toggle(settings, "Walk speed", "override the humanoid speed", "WalkSpeedEnabled", "speed")
-    slider(settings, "Walk speed value", "studs per second", 16, 200, "WalkSpeed", " studs/s", "speed")
-    toggle(settings, "Jump power", "override the humanoid jump", "JumpPowerEnabled", "arrow")
-    slider(settings, "Jump power value", "jump power", 50, 300, "JumpPower", "", "arrow")
+    local configLive = settings:AddPanel("Status", 2)
+    configLive:AddStatus(132, configStatus, "status config file profile autosave autoload storage window features")
 
     return Tabs
 end
@@ -3462,6 +3324,8 @@ local function toggleWindow()
     if not window or not window.Root then return false end
     local visible = window.Root.Visible ~= false
     window.Root.Visible = not visible
+    if window.Glow then window.Glow.Visible = not visible end
+    if window.Shadow then window.Shadow.Visible = not visible end
     Config.UiVisible = not visible
     if window.Screen then window.Screen.Enabled = true end
     return true
@@ -3488,14 +3352,12 @@ local function doctor()
         lines[#lines + 1] = string.format("%-11s %s", label, tostring(value))
         print(string.format("[doctor] %-11s %s", label, tostring(value)))
     end
+    local titles = {}
+    for index, tab in ipairs(Tabs) do titles[index] = tab.title end
     row("build", META.version .. " / " .. META.build)
     row("window", (getWindow() and getWindow().Root) and "built" or "missing")
-    row("tabs", tostring(#Tabs) .. " · " .. table.concat((function()
-        local titles = {}
-        for index, tab in ipairs(Tabs) do titles[index] = tab.title end
-        return titles
-    end)(), " / "))
-    row("controls", tostring(#NS.controls) .. " cards / " .. tostring(NS.controlHealth.faults) .. " fault(s)")
+    row("tabs", tostring(#Tabs) .. " · " .. table.concat(titles, " / "))
+    row("controls", tostring(#NS.controls) .. " rows / " .. tostring(NS.controlHealth.faults) .. " fault(s)")
     row("theme", tostring(Config.Theme) .. " · scale " .. tostring(Config.UiScale))
     row("farm", tostring(Config.AutoFarm and "ON" or "off") .. " · " .. tostring(State.status))
     row("mobs", tostring(#World.mobs) .. " / " .. tostring(#World.chests) .. " chests / " .. tostring(#World.fruits) .. " fruit")
@@ -3513,7 +3375,6 @@ end
 local function boot()
     local started = os.clock()
     Store.bootAutoload()           -- interface keys only, and only if asked
-    -- a saved file is never overwritten by defaults on the first autosave tick
     Store.markCurrent()
     applyTheme(Config.Theme)
     if not NS.buildWindow() then
@@ -3528,7 +3389,7 @@ local function boot()
     for _, tab in ipairs(Tabs) do names[#names + 1] = tab.title end
     print(string.format("[Skill Hub] %s · %s · free build", META.game, META.version))
     print("[Skill Hub] tabs · " .. table.concat(names, " · "))
-    print(string.format("[Skill Hub] switches · %d · all off · theme %s", #NS.controls, Config.Theme))
+    print(string.format("[Skill Hub] rows · %d · all off · theme %s", #NS.controls, Config.Theme))
     print(string.format("[Skill Hub] ready in %.0f ms", (os.clock() - started) * 1000))
     if Config.NotifyActions then
         notify("Skill Hub", META.game .. " · " .. META.version .. " · nothing is enabled", 5, Theme.Accent, "crest")
@@ -3543,7 +3404,7 @@ local function selfTest()
         if condition then passed = passed + 1 end
         print(string.format("[self-test] %s %-34s %s", condition and "PASS" or "FAIL", label, tostring(condition)))
     end
-    check("version", META.version == "v1.1")
+    check("version", META.version == "v1.2")
     check("two tabs", #Tabs == 2)
     check("farm tab first", Tabs[1] and Tabs[1].title == "Auto Farm")
     check("settings tab second", Tabs[2] and Tabs[2].title == "Settings")
@@ -3601,13 +3462,13 @@ local API = {
     configStatus = function() return configStatus() end,
     featuresOn = featuresOn,
     save = function() return Store.save(true) end,
-    saveProfile = function(slot) return Store.saveProfile(slot or Config.ProfileSlot) end,
-    loadProfile = function(slot) return Store.loadProfile(slot or Config.ProfileSlot) end,
-    profilePath = function(slot) return Store.profilePath(slot or Config.ProfileSlot) end,
     load = function() return Store.load(true) end,
     reset = function() return Store.reset() end,
     exportConfig = function() return Store.export() end,
     importConfig = function(text) return Store.import(text) end,
+    saveProfile = function(slot) return Store.saveProfile(slot or Config.ProfileSlot) end,
+    loadProfile = function(slot) return Store.loadProfile(slot or Config.ProfileSlot) end,
+    profilePath = function(slot) return Store.profilePath(slot or Config.ProfileSlot) end,
     encode = Store.encode, decode = Store.decode, snapshot = Store.snapshot,
     applyTheme = function(name)
         if not THEMES[name] then return false end

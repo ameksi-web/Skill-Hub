@@ -1337,6 +1337,68 @@ else
     check("gui · the keybind widget rebinds the aim key", false, "no keybind button")
 end
 
+-- the search box filters the rail, clearing it brings every tab back
+local searchBox = nil
+for _, item in ipairs(root:GetDescendants()) do
+    if item.ClassName == "TextBox" then searchBox = item break end
+end
+if searchBox then
+    searchBox.Text = "chams"
+    local visible, espVisible, combatVisible = 0, false, false
+    for _, tab in ipairs(hub.tabs) do
+        if tab.button.Visible then visible = visible + 1 end
+        if tab.title == "ESP" and tab.button.Visible then espVisible = true end
+        if tab.title == "Combat" and tab.button.Visible then combatVisible = true end
+    end
+    check("gui · the search box filters the rail", visible == 1 and espVisible and not combatVisible,
+        visible .. " visible · esp=" .. tostring(espVisible) .. " · combat=" .. tostring(combatVisible))
+    searchBox.Text = ""
+    local allBack = true
+    for _, tab in ipairs(hub.tabs) do
+        if tab.button.Visible == false then allBack = false end
+    end
+    check("gui · clearing the search restores the rail", allBack)
+else
+    check("gui · the search box filters the rail", false, "no search box")
+    check("gui · clearing the search restores the rail", false, "no search box")
+end
+
+-- the window chrome: minimise collapses the body, close hides the window and
+-- the hide key brings it back instead of leaving an unreachable ScreenGui
+local function findChrome(text)
+    for _, item in ipairs(root:GetDescendants()) do
+        if item.ClassName == "TextLabel" and item.Text == text
+            and item.Parent and item.Parent.ClassName == "TextButton" then
+            return item.Parent
+        end
+    end
+    return nil
+end
+local minimiseButton = findChrome("—")
+local closeButton = findChrome("×")
+if minimiseButton and closeButton and win.Screen then
+    local beforeHidden = {}
+    for _, child in ipairs(win.Screen:GetChildren()) do beforeHidden[child] = child.Visible end
+    minimiseButton.MouseButton1Click:Fire()
+    local collapsed = win.Minimized == true
+    for child, was in pairs(beforeHidden) do
+        if was ~= false and child.Visible == false then collapsed = true end
+    end
+    minimiseButton.MouseButton1Click:Fire()
+    local restored = win.Root.Visible ~= false and win.Minimized == false
+    closeButton.MouseButton1Click:Fire()
+    local hidden = win.Root.Visible == false and win.Screen.Enabled == true and hub.config.UiVisible == false
+    pressKey("RightControl")                        -- the hide key
+    local reopened = win.Root.Visible == true and hub.config.UiVisible == true
+    check("gui · minimise collapses and restores the body", collapsed and restored,
+        tostring(collapsed) .. "/" .. tostring(restored))
+    check("gui · close hides, the hide key reopens", hidden and reopened,
+        tostring(hidden) .. "/" .. tostring(reopened))
+else
+    check("gui · minimise collapses and restores the body", false, "no chrome")
+    check("gui · close hides, the hide key reopens", false, "no chrome")
+end
+
 -- back to the first tab so the rest of the run starts where a player would
 pcall(function() hub.tabs[1].Select() end)
 """

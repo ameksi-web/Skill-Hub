@@ -872,8 +872,12 @@ local function buildWindow()
         Body.Visible = not Window.Minimized
     end)
     ghostButton("×", -30, function()
+        -- hiding, not disconnecting: the screen stays enabled so the hide key
+        -- can bring the window back. Disabling the ScreenGui here left the
+        -- player with a script that was running but impossible to reach.
         Config.UiVisible = false
-        Window.Screen.Enabled = false
+        root.Visible = false
+        Window.Screen.Enabled = true
     end)
 
     -- drag
@@ -5073,6 +5077,7 @@ local function boot()
             if key == Config.HideUiKey then
                 local win = getWindow()
                 if win and win.Root then
+                    if win.Screen then pcall(function() win.Screen.Enabled = true end) end
                     win.Root.Visible = not win.Root.Visible
                     Config.UiVisible = win.Root.Visible
                 end

@@ -995,6 +995,11 @@ do
     emitter.Parent = fx
 end
 
+_G.__SCOPE_PRESS, _G.__SCOPE_RELEASE = 0, 0
+function _G.mouse2press() _G.__SCOPE_PRESS = _G.__SCOPE_PRESS + 1 end
+function _G.mouse2release() _G.__SCOPE_RELEASE = _G.__SCOPE_RELEASE + 1 end
+function _G.mouse2click() _G.__SCOPE_PRESS = _G.__SCOPE_PRESS + 1 _G.__SCOPE_RELEASE = _G.__SCOPE_RELEASE + 1 end
+
 function _G.mousemoverel(dx, dy)
     _G.__HARNESS_MOUSE_MOVES = (_G.__HARNESS_MOUSE_MOVES or 0) + 1
     _G.__HARNESS_LAST_MOVE = { dx, dy }
@@ -1025,7 +1030,7 @@ end
 
 check("hub exported to getgenv", hub ~= nil)
 if hub then
-check("version", hub.version == "v1.2", tostring(hub.version))
+check("version", hub.version == "v1.3", tostring(hub.version))
 check("game name", hub.game == "RIVALS", tostring(hub.game))
 check("build tag", string.find(tostring(hub.build), "Update 23", 1, true) ~= nil, tostring(hub.build))
 
@@ -1616,6 +1621,100 @@ else
     check("match start turns the new camera", false, "no target")
 end
 _G.workspace.CurrentCamera = oldCamera
+
+-- ── the aim rate limit switch owns the per-frame ceiling ───────────────────
+hub.config.AimMethod = "Camera"
+hub.config.AimSmooth = 0
+hub.config.AimStepLimit = 3
+hub.config.AcAimRateLimit = true
+hub.config.AimEnabled = true
+hub.scan(true)
+local rateTarget = hub.pickTarget()
+if rateTarget then
+    camera.CFrame = CFrame.lookAt(Vector3.new(0, 10, 0), Vector3.new(-30, 10, -80))
+    local from = camera.CFrame.LookVector
+    hub.stepAim(rateTarget, 0.016)
+    local capped = math.deg(math.acos(math.clamp(from:Dot(camera.CFrame.LookVector), -1, 1)))
+    check("aim step ceiling holds", capped <= 3.6, string.format("%.1f°", capped))
+
+    hub.config.AcAimRateLimit = false
+    camera.CFrame = CFrame.lookAt(Vector3.new(0, 10, 0), Vector3.new(-30, 10, -80))
+    from = camera.CFrame.LookVector
+    hub.stepAim(rateTarget, 0.016)
+    local uncapped = math.deg(math.acos(math.clamp(from:Dot(camera.CFrame.LookVector), -1, 1)))
+    check("aim rate limit switch removes the ceiling", uncapped > 4, string.format("%.1f°", uncapped))
+    hub.config.AcAimRateLimit = true
+else
+    check("aim step ceiling holds", false, "no target")
+    check("aim rate limit switch removes the ceiling", false, "no target")
+end
+
+-- ── chat spam is paced by ChatDelay, not by the loop tick ──────────────────
+hub.config.ChatSpam, hub.config.ChatMessage = true, "gg"
+hub.config.ChatDelay = 6
+hub.state.lastChat = _G.__CLOCK.now - 10
+_G.__HARNESS_CHAT = 0
+for _ = 1, 10 do pump(0.2) end
+local firstChats = _G.__HARNESS_CHAT or 0
+check("chat spam sends once, not every tick", firstChats == 1, tostring(firstChats))
+for _ = 1, 40 do pump(0.2) end
+local totalChats = _G.__HARNESS_CHAT or 0
+check("chat spam honours ChatDelay", totalChats == 2, tostring(totalChats))
+hub.config.ChatSpam = false
+
+-- ── with the speed hack off the game keeps its own speed ──────────────────
+local liveBody = hub.character()
+local liveHumanoid = liveBody and liveBody:FindFirstChildOfClass("Humanoid")
+if liveHumanoid then
+    hub.config.WalkSpeedEnabled = false
+    for _ = 1, 4 do pump(0.05) end
+    liveHumanoid.WalkSpeed = 22      -- the game's own modifier, e.g. Paintball
+    for _ = 1, 8 do pump(0.05) end
+    check("no speed hack leaves the game's speed alone", liveHumanoid.WalkSpeed == 22,
+        tostring(liveHumanoid.WalkSpeed))
+else
+    check("no speed hack leaves the game's speed alone", false, "no humanoid")
+end
+
+-- ── auto scope presses the button once, not fifty times a second ──────────
+hub.scan(true)
+local scopeTarget = hub.pickTarget()
+if scopeTarget then
+    hub.config.AimEnabled = true
+    hub.config.AutoScope = true
+    hub.state.target = scopeTarget
+    _G.__SCOPE_PRESS, _G.__SCOPE_RELEASE = 0, 0
+    for _ = 1, 10 do pump(0.05) end
+    check("auto scope presses once", _G.__SCOPE_PRESS == 1, tostring(_G.__SCOPE_PRESS))
+    hub.config.AutoScope = false
+    for _ = 1, 4 do pump(0.05) end
+    check("auto scope releases once", _G.__SCOPE_RELEASE == 1, tostring(_G.__SCOPE_RELEASE))
+else
+    check("auto scope presses once", false, "no target")
+    check("auto scope releases once", false, "no target")
+end
+
+-- ── the camera FOV override is off by default and restores what it took ────
+local fovBefore = camera.FieldOfView
+hub.config.CameraFov = 0
+for _ = 1, 3 do pump(0.4) end
+check("camera FOV is left alone by default", camera.FieldOfView == fovBefore, tostring(camera.FieldOfView))
+hub.config.CameraFov = 100
+for _ = 1, 3 do pump(0.4) end
+check("camera FOV override applies", camera.FieldOfView == 100, tostring(camera.FieldOfView))
+hub.config.CameraFov = 0
+for _ = 1, 3 do pump(0.4) end
+check("camera FOV override restores", camera.FieldOfView == fovBefore, tostring(camera.FieldOfView))
+
+-- ── panic undoes the one-shot switches too ────────────────────────────────
+local gravityBefore = _G.workspace.Gravity
+hub.config.LowGravity = true
+hub.gravity(true)
+for _ = 1, 3 do pump(0.4) end
+check("low gravity applies", _G.workspace.Gravity == 80, tostring(_G.workspace.Gravity))
+hub.panic()
+check("panic restores gravity", math.abs(_G.workspace.Gravity - gravityBefore) < 0.01,
+    tostring(_G.workspace.Gravity))
 
 -- ── the safe-mode panel, for when the window cannot be built at all ────────
 local fallbackScreen = hub.fallback("harness check")

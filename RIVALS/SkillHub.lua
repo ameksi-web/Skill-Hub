@@ -52,8 +52,8 @@
 ]]
 
 local META = {
-    version = "v1.2",
-    build   = "RIVALS · free · Update 23 build 17.10 · match aim",
+    version = "v1.3",
+    build   = "RIVALS · free · Update 23 build 17.10 · match aim + teardown",
     author  = "ameksi-web",
     game    = "RIVALS",
 }
@@ -227,7 +227,7 @@ local Config = {
     RemoveVfx           = false,
     FpsBoost            = false,
     Fullbright          = false,
-    CameraFov           = 100,
+    CameraFov           = 0,           -- 0 = leave the game's FOV alone
     CameraDistance      = 0,           -- 0 = leave the game's zoom limit alone
     ChatMessage         = "",
     ChatDelay           = 15,
@@ -2442,6 +2442,9 @@ local function stepAim(record, delta)
     local alpha = 1 - smooth
     if Config.AimHumanize then alpha = alpha * (0.88 + math.random() * 0.24) end
     local limit = math.max(1, tonumber(Config.AimStepLimit) or 9)
+    -- the "Aim rate limit" switch is the one that owns this ceiling; with it off
+    -- the step is still smoothed, it just is not clamped to N degrees a frame
+    if Config.AcAimRateLimit == false then limit = math.huge end
     local step = total > 0.01 and math.min(total * alpha, limit) or 0
 
     if Aim.mouseWorks == false and os.clock() >= (Aim.mouseRetry or 0) then
@@ -2601,8 +2604,17 @@ local function meleeNow()
 end
 
 local function scope(on)
-    if type(mouse2press) == "function" and on then return pcall(mouse2press) end
-    if type(mouse2click) == "function" and not on then return pcall(mouse2click) end
+    on = on and true or false
+    -- the combat loop asks for this fifty times a second; pressing the button
+    -- fifty times a second is not the same thing as holding it
+    if Aim.scoped == on then return false end
+    Aim.scoped = on
+    if on then
+        if type(mouse2press) == "function" then return pcall(mouse2press) end
+        return false
+    end
+    if type(mouse2release) == "function" then return pcall(mouse2release) end
+    if type(mouse2click) == "function" then return pcall(mouse2click) end
     return false
 end
 
@@ -2825,8 +2837,10 @@ local function combatLoop()
                             State.beats.aim = os.clock()
                             stepAim(record, 0.02)
                         end
-                        if Config.AutoScope then scope(true) end
-                    elseif Config.AutoScope then
+                        if Config.AutoScope then scope(true) else scope(false) end
+                    else
+                        -- not just "AutoScope was switched off": the target may
+                        -- simply be gone, and the button must not stay held
                         scope(false)
                     end
                     if Config.TriggerBot and record then
@@ -2989,9 +3003,18 @@ local function movementLoop()
                 if Config.WalkSpeedEnabled then
                     wanted = math.clamp(tonumber(Config.WalkSpeed) or 26, 16, 4000)
                     if Config.AcSafeMode then wanted = math.min(wanted, tonumber(Config.AcSpeedCeiling) or 60) end
+                    setWalkSpeed(wanted)
+                elseif WriteCache.speed and WriteCache.speed ~= 16 then
+                    -- just switched off: hand 16 back once, then stop writing. A
+                    -- hub that keeps pinning WalkSpeed to 16 fights the game's own
+                    -- speed modifiers (paintball, heavy weapons) every tick.
+                    setWalkSpeed(16)
                 end
-                setWalkSpeed(wanted)
-                if Config.JumpPowerEnabled then setJumpPower(Config.JumpPower) end
+                if Config.JumpPowerEnabled then
+                    setJumpPower(Config.JumpPower)
+                elseif WriteCache.jump and WriteCache.jump ~= 50 then
+                    setJumpPower(50)
+                end
                 if Config.AlwaysSprint and humanoid and humanoid.WalkSpeed < wanted then
                     pcall(function() humanoid.WalkSpeed = wanted end)
                 end
@@ -4008,8 +4031,8 @@ local function clearSmoke()
 end
 
 local function setGravity(enabled)
-    local gravity = enabled and 80 or 196.2
     if not Visuals.originalGravity then Visuals.originalGravity = Workspace.Gravity end
+    local gravity = enabled and 80 or (Visuals.originalGravity or 196.2)
     pcall(function() Workspace.Gravity = gravity end)
 end
 
@@ -4033,16 +4056,24 @@ local function utilityLoop()
                 Visuals.fpsApplied = true
                 safeCall("fps", function() return stripEffects() > 0 end)
             end
+            if not Config.FpsBoost then Visuals.fpsApplied = false end
             if Config.RemoveVfx and not Visuals.vfxApplied then
                 Visuals.vfxApplied = true
                 safeCall("vfx", function() return stripEffects() > 0 end)
             end
             if not Config.RemoveVfx then Visuals.vfxApplied = false end
-            if Config.CameraFov then
+            local wantFov = tonumber(Config.CameraFov) or 0
+            if wantFov > 0 then
                 local camera = refreshCamera()
                 if camera then
-                    pcall(function() camera.FieldOfView = math.clamp(tonumber(Config.CameraFov) or 100, 40, 120) end)
+                    if not Visuals.baseFov then Visuals.baseFov = camera.FieldOfView end
+                    pcall(function() camera.FieldOfView = math.clamp(wantFov, 40, 120) end)
                 end
+            elseif Visuals.baseFov then
+                -- the override was turned off: put the game's own FOV back once
+                local camera = refreshCamera()
+                if camera then pcall(function() camera.FieldOfView = Visuals.baseFov end) end
+                Visuals.baseFov = nil
             end
             local distance = tonumber(Config.CameraDistance) or 0
             if distance > 0 and LocalPlayer then
@@ -4052,7 +4083,9 @@ local function utilityLoop()
                     end
                 end)
             end
-            if Config.ChatSpam then safeCall("chat spam", function() sayChat(Config.ChatMessage or "") return true end) end
+            if Config.ChatSpam and os.clock() - (State.lastChat or 0) >= math.max(3, tonumber(Config.ChatDelay) or 15) then
+                safeCall("chat spam", function() sayChat(Config.ChatMessage or "") return true end)
+            end
             if Config.EmoteLoop and os.clock() - (State.lastEmote or 0) > (tonumber(Config.EmoteLoopDelay) or 14) then
                 State.lastEmote = os.clock()
                 local emoteRemote = findRemote({ "emote", "dance" })
@@ -4540,7 +4573,7 @@ local function buildTabs()
     toggleSwitch(utility, "Fullbright", "restores every value when turned off", "Fullbright", "star", function()
         applyFullbright()
     end)
-    slider(utility, "Camera FOV", "70 is the game default", 40, 120, "CameraFov", "°", "eye")
+    slider(utility, "Camera FOV", "0 leaves the game's own FOV (and its scopes) alone", 0, 120, "CameraFov", "°", "eye")
     slider(utility, "Camera distance", "0 leaves the game's zoom limit alone; Ranked may override it", 0, 64, "CameraDistance", "", "compass")
     utility:AddSection("Chat and server")
     toggleSwitch(utility, "Chat spam", "one message every 1.2 s", "ChatSpam", "scroll", nil, true)
@@ -4689,11 +4722,15 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 function panic()
     for _, entry in ipairs(Switches) do
-        pcall(function() entry.api.Set(false, true) end)
+        -- not silent: a few switches undo something when they turn off (gravity,
+        -- FOV, fullbright), and panic has to run those callbacks or the effect
+        -- outlives the panic
+        pcall(function() entry.api.Set(false, false) end)
         Config[entry.key] = false
     end
     Config.AimEnabled, Config.TriggerBot, Config.AutoFire = false, false, false
     State.target = nil
+    scope(false)
     Mov.stopFly()
     setNoclip(false)
     clearEsp()
@@ -5032,7 +5069,10 @@ local function boot()
             local key = input.KeyCode and input.KeyCode.Name or ""
             if key == Config.HideUiKey then
                 local win = getWindow()
-                if win and win.Root then win.Root.Visible = not win.Root.Visible end
+                if win and win.Root then
+                    win.Root.Visible = not win.Root.Visible
+                    Config.UiVisible = win.Root.Visible
+                end
             elseif key == Config.PanicKey then
                 panic()
             elseif key == Config.AimKey then
@@ -5056,6 +5096,11 @@ local function boot()
                 Config.AimEnabled = false
             end
         end)
+    end
+
+    do
+        local win = getWindow()
+        if win and win.Root and Config.UiVisible == false then win.Root.Visible = false end
     end
 
     -- loadout attempt per life
@@ -5118,6 +5163,7 @@ local API = {
     setSpeed = setWalkSpeed, setJump = setJumpPower, noclip = setNoclip,
     silentPosition = silentAimPosition, namecall = namecallFilter,
     bright = applyFullbright, antiFlash = antiFlash, smoke = clearSmoke, strip = stripEffects,
+    gravity = setGravity,
     say = sayChat, hop = serverHop, teleportTo = teleportToPlayer,
     playSound = playSound, killEffect = killEffect, patchWeapons = patchWeaponStats,
     flying = function() return Mov.flyBody ~= nil end,

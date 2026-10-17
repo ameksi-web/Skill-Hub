@@ -14,7 +14,8 @@ probes, and a fake RIVALS server: a duel arena with a wall, two enemies and a
 teammate, a rifle with an ammo value, gameplay and queue remotes, the report
 remotes, four detector scripts and the chat service.
 
-Checked: load · the nine tab pages · every switch on then off · the aim picker
+Checked: load · clicking the nine rail buttons, a toggle, a dropdown option, a
+preset and the aim key in the real ScreenGui · every switch on then off · the aim picker
 (visibility, team filter, crosshair priority, the FOV cone, hysteresis) · the
 per-frame step limit · mouse and silent paths · ESP highlights, tags, tracers,
 boxes and the FOV ring · fire cadence, reload, movement, fly, noclip, anti-void
@@ -242,11 +243,20 @@ _G.typeof = function(value)
     return type(value)
 end
 
-_G.Enum = setmetatable({}, { __index = function(_, group)
-    return setmetatable({}, { __index = function(_, item)
-        return setmetatable({ Name = item, Value = 0, EnumType = group },
+_G.Enum = setmetatable({}, { __index = function(self, group)
+    -- Roblox hands out the same EnumItem every time it is read. A fresh table
+    -- per access makes `input.UserInputType ~= Enum.UserInputType.Keyboard`
+    -- true no matter what the hub compares against, so the group and the item
+    -- are cached here.
+    local items = {}
+    local groupTable = setmetatable(items, { __index = function(store, item)
+        local value = setmetatable({ Name = item, Value = 0, EnumType = group },
             { __index = function() return item end })
+        store[item] = value
+        return value
     end })
+    self[group] = groupTable
+    return groupTable
 end })
 
 -- ═══ instances ═════════════════════════════════════════════════════════════
@@ -1167,6 +1177,170 @@ end)(), "35 keys · Primary")
 end
 """
 
+CHECKS_GUI = r"""-- Clicking the real GUI: every rail button, a toggle, a dropdown and a preset.
+-- The other chunks call the hub's API; this one drives the ScreenGui the way a
+-- player does, so "the tabs do not work" fails here and not in a match.
+local hub = _G.SkillHubRivals
+local function check(label, condition, detail)
+    table.insert(_G.__RESULTS, { label = label, ok = condition == true, detail = detail })
+end
+
+local win = hub.window()
+local root = win and win.Root
+check("gui · the window root exists", root ~= nil)
+
+local function findLabel(text)
+    for _, item in ipairs(root:GetDescendants()) do
+        if item.ClassName == "TextLabel" and item.Text == text then return item end
+    end
+    return nil
+end
+
+-- rail buttons: a TextButton that carries the tab title as a TextLabel
+local switched, correct = 0, 0
+for _, tab in ipairs(hub.tabs) do
+    local label = findLabel(tab.title)
+    local button = label and label.Parent
+    if button and button.ClassName == "TextButton" then
+        button.MouseButton1Click:Fire()
+        switched = switched + 1
+        local visible = 0
+        for _, other in ipairs(hub.tabs) do
+            if other.page.Visible then visible = visible + 1 end
+        end
+        if tab.page.Visible and visible == 1 then correct = correct + 1 end
+    end
+end
+check("gui · every rail button opens its page", switched == #hub.tabs and correct == #hub.tabs,
+    switched .. "/" .. #hub.tabs .. " clicked · " .. correct .. " correct")
+
+-- a toggle card: title label + one full-size TextButton that takes the click
+local aimLabel = findLabel("Aim assist")
+local aimCard = aimLabel and aimLabel.Parent
+local aimClick = nil
+if aimCard then
+    for _, child in ipairs(aimCard:GetChildren()) do
+        if child.ClassName == "TextButton" and child.Text == "" then aimClick = child break end
+    end
+end
+hub.config.AimEnabled = false
+if aimClick then
+    aimClick.MouseButton1Click:Fire()
+    local turnedOn = hub.config.AimEnabled == true
+    aimClick.MouseButton1Click:Fire()
+    local turnedOff = hub.config.AimEnabled == false
+    check("gui · clicking the Aim assist toggle flips the config", turnedOn and turnedOff,
+        tostring(turnedOn) .. "/" .. tostring(turnedOff))
+else
+    check("gui · clicking the Aim assist toggle flips the config", false, "no click target")
+end
+
+-- a dropdown: the selector opens the list, an option writes the config
+local methodLabel = findLabel("Method")
+local methodCard = methodLabel and methodLabel.Parent
+local selector, optionList = nil, nil
+if methodCard then
+    for _, child in ipairs(methodCard:GetChildren()) do
+        if child.ClassName == "TextButton" then
+            selector = child
+        elseif child.ClassName == "Frame" then
+            for _, option in ipairs(child:GetChildren()) do
+                if option.ClassName == "TextButton" and option.Text == "   Camera" then optionList = child end
+            end
+        end
+    end
+end
+if selector and optionList then
+    hub.config.AimMethod = "Hybrid"
+    selector.MouseButton1Click:Fire()
+    local opened = optionList.Visible == true
+    local cameraOption = nil
+    for _, option in ipairs(optionList:GetChildren()) do
+        if option.ClassName == "TextButton" and option.Text == "   Camera" then cameraOption = option end
+    end
+    cameraOption.MouseButton1Click:Fire()
+    check("gui · the Method dropdown sets the config",
+        opened and hub.config.AimMethod == "Camera" and optionList.Visible == false,
+        tostring(opened) .. " · " .. tostring(hub.config.AimMethod))
+    hub.config.AimMethod = "Hybrid"
+else
+    check("gui · the Method dropdown sets the config", false, "no dropdown")
+end
+
+-- a preset button inside the Combat tab
+local duelLabel = findLabel("Duel · 1v1")
+local duelCard = duelLabel and duelLabel.Parent
+local duelButton = nil
+if duelCard then
+    for _, child in ipairs(duelCard:GetChildren()) do
+        if child.ClassName == "TextButton" and child.Text == "RUN" then duelButton = child break end
+    end
+end
+if duelButton then
+    duelButton.MouseButton1Click:Fire()
+    check("gui · a preset button moves the sliders",
+        tonumber(hub.config.AimFov) == 90 and math.abs(tonumber(hub.config.AimSmooth) - 0.5) < 0.001,
+        tostring(hub.config.AimFov) .. "° · " .. tostring(hub.config.AimSmooth))
+    hub.config.AimFov, hub.config.AimSmooth = 140, 0.55
+else
+    check("gui · a preset button moves the sliders", false, "no preset button")
+end
+
+-- the aim key: E toggles aim, the switch follows, and a keystroke that the
+-- game already handled (typing in chat) is ignored
+local userInput = _G.game:GetService("UserInputService")
+local function pressKey(name, processed)
+    userInput.InputBegan:Fire({
+        UserInputType = Enum.UserInputType.Keyboard,
+        KeyCode = { Name = name },
+    }, processed == true)
+end
+hub.config.AimToggle = true
+hub.config.AimEnabled = false
+pressKey("E")
+local onByKey = hub.config.AimEnabled == true
+pressKey("E")
+local offByKey = hub.config.AimEnabled == false
+pressKey("E")                      -- leave aim on
+if aimClick then aimClick.MouseButton1Click:Fire() end   -- the switch must agree
+local synced = hub.config.AimEnabled == false
+check("gui · the aim key toggles aim and syncs the switch", onByKey and offByKey and synced,
+    tostring(onByKey) .. "/" .. tostring(offByKey) .. "/" .. tostring(synced))
+local beforeProcessed = hub.config.AimEnabled
+pressKey("E", true)                -- gameProcessed == true, e.g. typing in chat
+check("gui · keystrokes the game handled are ignored", hub.config.AimEnabled == beforeProcessed,
+    tostring(hub.config.AimEnabled))
+hub.config.AimEnabled = false
+
+-- the keybind widget: click it, press a key, the config follows
+local bindLabel = findLabel("Aim key")
+local bindCard = bindLabel and bindLabel.Parent
+local bindButton = nil
+if bindCard then
+    for _, child in ipairs(bindCard:GetChildren()) do
+        if child.ClassName == "TextButton" then bindButton = child break end
+    end
+end
+if bindButton then
+    hub.config.AimKey = "E"
+    hub.config.AimEnabled = false
+    bindButton.MouseButton1Click:Fire()
+    local armed = bindButton.Text == "press a key…"
+    pressKey("Q")
+    check("gui · the keybind widget rebinds the aim key",
+        armed and hub.config.AimKey == "Q" and bindButton.Text == "Q",
+        tostring(armed) .. " · " .. tostring(hub.config.AimKey) .. " · " .. tostring(bindButton.Text))
+    -- the same keystroke now matches the new binding, so it also toggled aim
+    hub.config.AimKey = "E"
+    hub.config.AimEnabled = false
+else
+    check("gui · the keybind widget rebinds the aim key", false, "no keybind button")
+end
+
+-- back to the first tab so the rest of the run starts where a player would
+pcall(function() hub.tabs[1].Select() end)
+"""
+
 CHECKS_RUN = r"""local hub = _G.SkillHubRivals
 local function check(label, condition, detail)
     table.insert(_G.__RESULTS, { label = label, ok = condition == true, detail = detail })
@@ -1752,6 +1926,7 @@ def main() -> int:
             print("   " + line)
 
     runtime.execute(CHECKS_BOOT)
+    runtime.execute(CHECKS_GUI)
     runtime.execute(CHECKS_RUN)
     runtime.execute(CHECKS_MATCH)
     runtime.execute(CHECKS_AFTER)

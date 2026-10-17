@@ -1488,7 +1488,10 @@ local function makeTab(title, desc, iconKind, accent)
             button.TextColor3 = tab.color
         end)
         if UserInput then
-            UserInput.InputBegan:Connect(function(input)
+            UserInput.InputBegan:Connect(function(input, gameProcessed)
+                -- while a rebind is armed the player is still allowed to type in
+                -- chat; a keystroke the game already consumed must not bind
+                if gameProcessed then return end
                 if capturing and input.UserInputType == Enum.UserInputType.Keyboard then
                     capturing = false
                     button.Text = input.KeyCode.Name
